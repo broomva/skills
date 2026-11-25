@@ -1,0 +1,105 @@
+{
+  "skill": "checkable",
+  "version": 1,
+  "notes": "7 cases: 4 positive, 3 negative (re-derive the counts from this file). Two positives use a documented trigger, two describe the situation without one. Each negative names the skill that should take the request.",
+  "execution_contract": {
+    "advisory": "Documentation only; runner.py does not read this object.",
+    "trials_per_case": 3,
+    "suite_threshold_trial_pass_rate": 0.8,
+    "case_threshold_pass_rate": 0.6
+  },
+  "verification_log": {
+    "advisory": "Documentation only. What was observed, dated.",
+    "date": "2026-11-25",
+    "schema_validation": "runner.py --validate-only accepts this file.",
+    "live_trials": "none run yet. No routing rate is claimed for this skill."
+  },
+  "known_gaps": {
+    "no_live_trials": "The set has been validated for schema only. Whether the description routes these prompts is unmeasured.",
+    "routing_contest_untestable_in_isolation": "The runner installs only the skill under test, so no case measures checkable against cross-review or correct head to head.",
+    "name_in_contract_02": "contract-02 invokes the skill by name on purpose, so it measures name matching, not description matching. The runner warns about it."
+  },
+  "cases": [
+    {
+      "id": "contract-01",
+      "prompt": "state this problem for the fleet before we hand it over: migrate the billing tables to the new schema with zero downtime.",
+      "should_trigger": true,
+      "origin": "golden",
+      "axis": "CONTRACT: a documented trigger phrase. Failure here means the skill cannot be routed to.",
+      "workspace_requires": "the migration problem is in context, as the prompt says.",
+      "expected_checks": [
+        "skill_triggered",
+        "no_clarifying_question_bounced_back"
+      ]
+    },
+    {
+      "id": "contract-02",
+      "prompt": "/checkable close the month's books and file the tax prepayment",
+      "should_trigger": true,
+      "origin": "golden",
+      "axis": "CONTRACT: the skill invoked by name on a problem outside code.",
+      "workspace_requires": "none.",
+      "expected_checks": [
+        "skill_triggered",
+        "no_clarifying_question_bounced_back"
+      ]
+    },
+    {
+      "id": "symptom-01",
+      "prompt": "the agents are going to run this unattended over the weekend and one of the steps emails every customer. how would we know we can rely on what they did without reading all of it?",
+      "should_trigger": true,
+      "origin": "golden",
+      "axis": "SYMPTOM: unattended work with an irreversible step and no stated way to trust the result. No trigger phrase is used.",
+      "workspace_requires": "a description of the weekend job in context.",
+      "expected_checks": [
+        "skill_triggered",
+        "no_clarifying_question_bounced_back"
+      ]
+    },
+    {
+      "id": "symptom-02",
+      "prompt": "write down for this research task what we are actually claiming, what would prove each claim wrong, and what nobody is going to check.",
+      "should_trigger": true,
+      "origin": "golden",
+      "axis": "SYMPTOM: the three questions a statement answers, asked in the user's words.",
+      "workspace_requires": "the research task in context.",
+      "expected_checks": [
+        "skill_triggered",
+        "no_clarifying_question_bounced_back"
+      ]
+    },
+    {
+      "id": "negative-01",
+      "prompt": "the PR is ready. get a second model to review the diff before i merge.",
+      "should_trigger": false,
+      "origin": "negative",
+      "axis": "FINISHED WORK: an independent review of a diff is cross-review, not a problem statement.",
+      "workspace_requires": "an open pull request in context.",
+      "expected_checks": [
+        "final_answer_non_empty"
+      ]
+    },
+    {
+      "id": "negative-02",
+      "prompt": "you keep piping the test run through tail and reading the wrong exit code. make that impossible.",
+      "should_trigger": false,
+      "origin": "negative",
+      "axis": "A REPEATED MISTAKE: turning a correction into a check is the correct skill.",
+      "workspace_requires": "the session history in context.",
+      "expected_checks": [
+        "final_answer_non_empty"
+      ]
+    },
+    {
+      "id": "negative-03",
+      "prompt": "rename the helper function parse_row to parse_line across the repo.",
+      "should_trigger": false,
+      "origin": "negative",
+      "axis": "ONE REVERSIBLE STEP: nothing irreversible and one obvious check; stating it formally is overhead.",
+      "workspace_requires": "a repository in context.",
+      "expected_checks": [
+        "final_answer_non_empty"
+      ]
+    }
+  ]
+}

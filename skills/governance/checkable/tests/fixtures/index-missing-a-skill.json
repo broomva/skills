@@ -1,0 +1,988 @@
+{
+  "version": 1,
+  "about": "Catalog entries by the part of a checkable statement they serve. Tagged from each entry's description, not from its code. A skill with no part in the trust machinery is listed in no_role, so a new skill has to be placed in one list or the other.",
+  "parts": [
+    "ontology",
+    "claims",
+    "verifiers",
+    "evidence",
+    "shield",
+    "flow",
+    "performers",
+    "learning",
+    "base"
+  ],
+  "rungs": [
+    "proof",
+    "replay",
+    "measurement",
+    "judgment",
+    "track-record",
+    "none"
+  ],
+  "domains": [
+    "any",
+    "code",
+    "content",
+    "design",
+    "finance",
+    "health",
+    "infrastructure",
+    "legal",
+    "research",
+    "science",
+    "simulation",
+    "strategy"
+  ],
+  "theory": [
+    {
+      "name": "rcs",
+      "where": "https://github.com/broomva/workspace (research/rcs)",
+      "note": "the controller at each level is itself a controlled system; each level needs its own stability margin"
+    },
+    {
+      "name": "open-kyb",
+      "where": "https://github.com/broomva/open-kyb",
+      "note": "reference design: models read and escalate, deterministic code decides, a person signs"
+    }
+  ],
+  "entries": [
+    {
+      "name": "agentic-control-kernel",
+      "kind": "skill",
+      "parts": [
+        "shield",
+        "ontology",
+        "learning"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "typed plant, action and trace schemas with safety shields"
+    },
+    {
+      "name": "agentic-leadership",
+      "kind": "skill",
+      "parts": [
+        "claims",
+        "flow"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "five-term contract for delegated work: intent, bounds, evidence, escalation, review"
+    },
+    {
+      "name": "agentic-vps",
+      "kind": "skill",
+      "parts": [
+        "shield",
+        "performers"
+      ],
+      "domains": [
+        "infrastructure"
+      ],
+      "note": "a hardened host for autonomous agents"
+    },
+    {
+      "name": "arc",
+      "kind": "skill",
+      "parts": [
+        "flow"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "an unattended run carried to a finished and clean end state"
+    },
+    {
+      "name": "attempt-audit",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "proof"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "finds results that look the same whether the work ran or was skipped"
+    },
+    {
+      "name": "audit-harness-usage",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "measurement"
+      ],
+      "domains": [
+        "infrastructure",
+        "code"
+      ],
+      "note": "token use and cost read from local traces"
+    },
+    {
+      "name": "autonomous",
+      "kind": "skill",
+      "parts": [
+        "flow"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "the full delivery pipeline as one invocation"
+    },
+    {
+      "name": "autoreview",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "judgment"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "multi-lens review of a plan or spec, answered from evidence"
+    },
+    {
+      "name": "bookkeeping",
+      "kind": "skill",
+      "parts": [
+        "evidence"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "scored, cited, linted knowledge entries"
+    },
+    {
+      "name": "bstack",
+      "kind": "skill",
+      "parts": [
+        "shield",
+        "flow",
+        "evidence",
+        "learning",
+        "performers"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "the twenty primitives: gate, pipeline, bridge, crystallize, fanout"
+    },
+    {
+      "name": "ccr",
+      "kind": "skill",
+      "parts": [
+        "evidence"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "reversible compression of a payload before it enters context"
+    },
+    {
+      "name": "checkable",
+      "kind": "skill",
+      "parts": [
+        "claims",
+        "shield",
+        "base"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "binds a problem's claims to their checks, classes its actions by reversibility, and lists what stays unverified"
+    },
+    {
+      "name": "checkit",
+      "kind": "skill",
+      "parts": [
+        "evidence",
+        "flow"
+      ],
+      "domains": [
+        "research"
+      ],
+      "note": "source traversal and verification for an artifact someone points at"
+    },
+    {
+      "name": "correct",
+      "kind": "skill",
+      "parts": [
+        "learning",
+        "verifiers"
+      ],
+      "rungs": [
+        "replay"
+      ],
+      "domains": [
+        "code",
+        "any"
+      ],
+      "note": "a repeated mistake becomes a check that replays the past mistake"
+    },
+    {
+      "name": "creative-review",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "judgment"
+      ],
+      "domains": [
+        "content",
+        "design"
+      ],
+      "note": "generated assets scored against a style brief"
+    },
+    {
+      "name": "cross-review",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "judgment"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "a different model judges the work on a fixed rubric"
+    },
+    {
+      "name": "ctx-core",
+      "kind": "skill",
+      "parts": [
+        "performers"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "a shared read-only board of what each session is doing"
+    },
+    {
+      "name": "data-provider",
+      "kind": "skill",
+      "parts": [
+        "ontology",
+        "evidence"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "tables whose fields are typed observed or simulated when written"
+    },
+    {
+      "name": "decision-log",
+      "kind": "skill",
+      "parts": [
+        "evidence"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "a decision with its alternatives, so it can be scored later"
+    },
+    {
+      "name": "deep-dive-research-orchestrator",
+      "kind": "skill",
+      "parts": [
+        "flow",
+        "performers"
+      ],
+      "domains": [
+        "research"
+      ],
+      "note": "coordinated research sub-agents"
+    },
+    {
+      "name": "disambiguate",
+      "kind": "skill",
+      "parts": [
+        "claims"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "rewrite a requirement so it reads one way and can be tested"
+    },
+    {
+      "name": "dogfood",
+      "kind": "skill",
+      "parts": [
+        "verifiers",
+        "evidence"
+      ],
+      "rungs": [
+        "replay",
+        "measurement"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "exercise the change as a user and keep the receipt"
+    },
+    {
+      "name": "drift-check",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "track-record"
+      ],
+      "domains": [
+        "strategy",
+        "any"
+      ],
+      "note": "stated priorities against where effort went"
+    },
+    {
+      "name": "finance-substrate",
+      "kind": "skill",
+      "parts": [
+        "ontology"
+      ],
+      "domains": [
+        "finance"
+      ],
+      "note": "ledger of transactions and tax objects"
+    },
+    {
+      "name": "first-principles-sim",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "replay",
+        "measurement"
+      ],
+      "domains": [
+        "science",
+        "simulation"
+      ],
+      "note": "each stated quantity checked against something computed outside the model"
+    },
+    {
+      "name": "fleet",
+      "kind": "skill",
+      "parts": [
+        "performers"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "every session, pull request and loop the coordinators drive"
+    },
+    {
+      "name": "fleet-host",
+      "kind": "skill",
+      "parts": [
+        "performers"
+      ],
+      "domains": [
+        "infrastructure"
+      ],
+      "note": "grow and shrink the agent fleet by host"
+    },
+    {
+      "name": "forkable-shell",
+      "kind": "skill",
+      "parts": [
+        "shield"
+      ],
+      "domains": [
+        "code",
+        "infrastructure"
+      ],
+      "note": "a disposable sandbox that can be snapshotted and forked"
+    },
+    {
+      "name": "format-first",
+      "kind": "skill",
+      "parts": [
+        "claims"
+      ],
+      "domains": [
+        "content"
+      ],
+      "note": "decide the content shape and refuse platform folklore stated as fact"
+    },
+    {
+      "name": "governed-autonomy-loop",
+      "kind": "skill",
+      "parts": [
+        "flow",
+        "shield"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "a work queue driven through an enforcement pipeline"
+    },
+    {
+      "name": "handback",
+      "kind": "skill",
+      "parts": [
+        "flow",
+        "base"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "the message that returns work to a person, with what is still open"
+    },
+    {
+      "name": "handoff",
+      "kind": "skill",
+      "parts": [
+        "flow"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "a document for the next session"
+    },
+    {
+      "name": "harness-engineering-playbook",
+      "kind": "skill",
+      "parts": [
+        "learning"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "deterministic smoke, test, lint and typecheck commands for a repo"
+    },
+    {
+      "name": "health",
+      "kind": "skill",
+      "parts": [
+        "ontology"
+      ],
+      "domains": [
+        "health"
+      ],
+      "note": "personal health record with typed sources"
+    },
+    {
+      "name": "keel",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "measurement"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "measures whether verification touches the world or checks itself"
+    },
+    {
+      "name": "kg",
+      "kind": "skill",
+      "parts": [
+        "ontology"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "what the workspace already knows"
+    },
+    {
+      "name": "legal-readiness",
+      "kind": "skill",
+      "parts": [
+        "claims",
+        "verifiers"
+      ],
+      "rungs": [
+        "measurement",
+        "judgment"
+      ],
+      "domains": [
+        "legal"
+      ],
+      "note": "inventory of every public and contractual claim against evidence"
+    },
+    {
+      "name": "make-spec",
+      "kind": "skill",
+      "parts": [
+        "claims"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "the human-readable document the claims live in"
+    },
+    {
+      "name": "p9",
+      "kind": "skill",
+      "parts": [
+        "flow"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "wait on CI or a deploy by event, not by polling"
+    },
+    {
+      "name": "parallax",
+      "kind": "skill",
+      "parts": [
+        "ontology",
+        "evidence",
+        "base"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "proposes an ontology from what is there; every result typed observed or simulated"
+    },
+    {
+      "name": "persist",
+      "kind": "skill",
+      "parts": [
+        "flow"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "progress that survives a context restart"
+    },
+    {
+      "name": "pre-mortem",
+      "kind": "skill",
+      "parts": [
+        "verifiers",
+        "base"
+      ],
+      "rungs": [
+        "judgment"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "assume failure and score the causes"
+    },
+    {
+      "name": "premortem",
+      "kind": "skill",
+      "parts": [
+        "verifiers",
+        "base"
+      ],
+      "rungs": [
+        "judgment"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "assume failure and list the causes; exposes unstated assumptions"
+    },
+    {
+      "name": "prove-the-negative",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "measurement"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "an absence claim needs a positive control that succeeds"
+    },
+    {
+      "name": "provider-manager",
+      "kind": "skill",
+      "parts": [
+        "performers"
+      ],
+      "domains": [
+        "infrastructure"
+      ],
+      "note": "which model account runs where; keeps reviewer and writer apart"
+    },
+    {
+      "name": "reel-loop",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "measurement",
+        "track-record"
+      ],
+      "domains": [
+        "content"
+      ],
+      "note": "breakout measured against the account's own baseline"
+    },
+    {
+      "name": "resume",
+      "kind": "skill",
+      "parts": [
+        "flow"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "rebuild an interrupted run from what it left on disk"
+    },
+    {
+      "name": "role-x",
+      "kind": "skill",
+      "parts": [
+        "performers"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "route a request to the lens that carries its context"
+    },
+    {
+      "name": "skillify",
+      "kind": "skill",
+      "parts": [
+        "learning",
+        "verifiers"
+      ],
+      "rungs": [
+        "proof"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "a working session becomes a tested skill behind a gate"
+    },
+    {
+      "name": "sourcer",
+      "kind": "skill",
+      "parts": [
+        "ontology",
+        "evidence"
+      ],
+      "domains": [
+        "research",
+        "strategy"
+      ],
+      "note": "entity graph where every claim points at the bytes it came from"
+    },
+    {
+      "name": "spec-contract",
+      "kind": "skill",
+      "parts": [
+        "claims"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "what a design doc must contain"
+    },
+    {
+      "name": "strategy-critique",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "judgment"
+      ],
+      "domains": [
+        "strategy"
+      ],
+      "note": "red-team critique of a strategy document"
+    },
+    {
+      "name": "tekton",
+      "kind": "skill",
+      "parts": [
+        "ontology"
+      ],
+      "domains": [
+        "code"
+      ],
+      "note": "one typed architecture graph that human and agent both edit"
+    },
+    {
+      "name": "unhobble",
+      "kind": "skill",
+      "parts": [
+        "learning"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "audit a context surface: rules that should be checks, duplication, contradictions"
+    },
+    {
+      "name": "unslop",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "proof"
+      ],
+      "domains": [
+        "design",
+        "code"
+      ],
+      "note": "a deterministic gate over frontend output"
+    },
+    {
+      "name": "weekly-review",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "track-record"
+      ],
+      "domains": [
+        "any"
+      ],
+      "note": "what changed this week against what was planned"
+    },
+    {
+      "name": "autoany",
+      "kind": "service",
+      "parts": [
+        "learning"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/autoany",
+      "note": "improvement only as far as an evaluator can judge it, with rollback"
+    },
+    {
+      "name": "bstack-arcs",
+      "kind": "contract",
+      "parts": [
+        "ontology"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": ".control/arcs.yaml (arcs.v1)",
+      "note": "a control arc declared as state, actions, sensor, controller and horizon"
+    },
+    {
+      "name": "bstack-policy",
+      "kind": "contract",
+      "parts": [
+        "shield",
+        "verifiers"
+      ],
+      "rungs": [
+        "track-record"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": ".control/policy.yaml (gate.v1, setpoint.v1)",
+      "note": "hard gates, and setpoints measured over time"
+    },
+    {
+      "name": "bstack-verify",
+      "kind": "contract",
+      "parts": [
+        "evidence",
+        "verifiers"
+      ],
+      "rungs": [
+        "measurement",
+        "judgment"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "bstack verify <measurement|claim-review|review-result> <record.json>",
+      "note": "versioned records for a measurement with its positive control and for a review"
+    },
+    {
+      "name": "cuenca",
+      "kind": "service",
+      "parts": [
+        "shield",
+        "claims"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/cuenca",
+      "note": "work happens in a fork and is verified against checks the base declares"
+    },
+    {
+      "name": "identity",
+      "kind": "service",
+      "parts": [
+        "performers"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/identity",
+      "note": "typed identity of hosts, agents and the owner"
+    },
+    {
+      "name": "kinetic",
+      "kind": "service",
+      "parts": [
+        "ontology",
+        "verifiers",
+        "evidence"
+      ],
+      "rungs": [
+        "proof",
+        "track-record"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/kinetic",
+      "note": "typed state with units, guarded actions, invariants as data; simulator and verifier may not depend on each other"
+    },
+    {
+      "name": "lago",
+      "kind": "service",
+      "parts": [
+        "evidence"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/life (crates/lago)",
+      "note": "append-only event log: the log is the state"
+    },
+    {
+      "name": "maestro",
+      "kind": "service",
+      "parts": [
+        "shield",
+        "flow"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/maestro",
+      "note": "agents read and request; owner verbs are not exposed to models; reads the workspace at origin/main"
+    },
+    {
+      "name": "maestro-flow-kernel",
+      "kind": "service",
+      "parts": [
+        "flow",
+        "evidence"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/maestro (crates/flow)",
+      "note": "no stored current step: the next node is derived from receipts"
+    },
+    {
+      "name": "nous",
+      "kind": "service",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "judgment"
+      ],
+      "domains": [
+        "any"
+      ],
+      "where": "https://github.com/broomva/life (crates/nous)",
+      "note": "evaluators that score agent behaviour as it runs"
+    },
+    {
+      "name": "praxis",
+      "kind": "service",
+      "parts": [
+        "shield"
+      ],
+      "domains": [
+        "code",
+        "infrastructure"
+      ],
+      "where": "https://github.com/broomva/life (crates/praxis)",
+      "note": "tool execution inside a sandbox"
+    }
+  ],
+  "no_role": [
+    "arcan-glass",
+    "architecture-design-principles",
+    "bitnet",
+    "blog-post",
+    "braindump",
+    "brainrot-for-good",
+    "brand-icons",
+    "broomva-cli",
+    "broomva-design",
+    "capx-agentic-robotics",
+    "citable",
+    "claude-code-channels",
+    "claude-remote-sessions",
+    "colab-remote",
+    "colombia-conflict",
+    "comprehend",
+    "content-creation",
+    "content-engine",
+    "d1-cli",
+    "design-distill",
+    "design-engineering",
+    "eve-forge",
+    "fleet-reconcile",
+    "founder-mode-oncology",
+    "gasgo",
+    "goodies",
+    "haima",
+    "heretic-abliteration",
+    "investment-management",
+    "launch-video",
+    "liquid-dawn",
+    "liquid-midnight",
+    "livecoding",
+    "ltx-video",
+    "mod-anything",
+    "morning-briefing",
+    "motion-lab",
+    "ocean-genomics",
+    "omnivoice",
+    "openrocket-sim",
+    "orcahand",
+    "phronesis",
+    "procurer",
+    "prompt-library",
+    "remote-gpu",
+    "revenuecast",
+    "sdr-satellite",
+    "seo-llmeo",
+    "skills-catalog",
+    "social-intelligence",
+    "stakeholder-update",
+    "swapit",
+    "talkback",
+    "tribe-v2-agent-alignment",
+    "tribe-v2-bci-applied",
+    "tribe-v2-neuroscience",
+    "video-cut",
+    "wealth-management",
+    "what",
+    "year-in-ai"
+  ]
+}

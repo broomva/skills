@@ -1,0 +1,33 @@
+# A flow definition for the Maestro flow kernel: check a statement against its
+# base, then replay its proof and replay claims at a pinned commit.
+#
+#   maestro flow start --definition checkable.yaml --params \
+#     '{"repo":"<repo>","head":"<sha>","statement":"<path>","base":"origin/main","tool":"<path to checkable.py>"}'
+#
+# `statement` runs in the repository itself, because comparing the claims with
+# the base needs the repository's history. `replay` runs in a snapshot of the
+# pinned commit, so it cannot read uncommitted work.
+flow: checkable
+version: 1
+params: [repo, head, statement, base, tool]
+workdir: "{{params.repo}}"
+
+nodes:
+  pin:
+    class: observe
+    run: [sh, -c, 'test "$(git -C "$1" rev-parse HEAD)" = "$2"', pin, "{{params.repo}}", "{{params.head}}"]
+    fresh_for: 10m
+    inputs: [params.head]
+    exit_map: {0: at_head, 1: moved}
+
+  statement:
+    class: pure
+    needs: [pin]
+    switch: {on: pin, case: at_head}
+    run: [python3, "{{params.tool}}", check, "{{params.statement}}", --base, "{{params.base}}"]
+
+  replay:
+    class: pure
+    needs: [statement]
+    snapshot: "{{params.head}}"
+    run: [python3, "{{params.tool}}", replay, "{{params.statement}}"]

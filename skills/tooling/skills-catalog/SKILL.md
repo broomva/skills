@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 116 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 117 agent skills in the broomva/skills monorepo,
   organized into 23 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -23,11 +23,11 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-116 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
+117 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
-| Governance & control (`governance`) | 12 | agentic-control-kernel, architecture-design-principles, bstack |
+| Governance & control (`governance`) | 13 | agentic-control-kernel, architecture-design-principles, bstack |
 | Orchestration & autonomy (`orchestration`) | 14 | arc, autonomous, eve-forge, governed-autonomy-loop |
 | Skill & prompt tooling (`tooling`) | 10 | audit-harness-usage, broomva-cli, make-spec |
 | Knowledge & memory (`knowledge`) | 9 | bookkeeping, braindump, colombia-conflict |

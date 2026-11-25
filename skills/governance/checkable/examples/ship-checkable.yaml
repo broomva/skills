@@ -1,0 +1,82 @@
+# The statement this skill was shipped under. Paths are relative to the root of
+# the broomva/skills repository, which is where `replay` is run from.
+checkable: 1
+problem: Ship the checkable skill, so that a stated problem is refused when it breaks an invariant.
+domain: [code]
+performers: [model:anthropic]
+
+claims:
+  - id: refuses-each-invariant
+    text: The checker refuses a statement that breaks any one of the eight invariants, and accepts a nearby legitimate one.
+    rung: replay
+    verifier:
+      origin: code
+      check: python3 -m pytest skills/governance/checkable/tests -q
+      rejects: python3 skills/governance/checkable/scripts/checkable.py check skills/governance/checkable/tests/fixtures/broken.json
+      accepts: python3 skills/governance/checkable/scripts/checkable.py check skills/governance/checkable/examples/monthly-close.yaml
+  - id: index-complete
+    text: Every skill in the repository is either indexed by the part it serves or set aside as having none.
+    rung: proof
+    verifier:
+      origin: code
+      check: python3 skills/governance/checkable/scripts/checkable.py index --require-roster
+      rejects: python3 skills/governance/checkable/scripts/checkable.py index --index skills/governance/checkable/tests/fixtures/index-missing-a-skill.json --require-roster
+  - id: skillify-gate
+    text: The skillify gate accepts the skill at the deterministic tier, with its tests run.
+    rung: replay
+    verifier:
+      origin: code
+      check: python3 skills/tooling/skillify/scripts/skillify_check.py skills/governance/checkable --run-tests
+      rejects: d=$(mktemp -d) && printf 'no frontmatter here\n' > "$d/SKILL.md" && python3 skills/tooling/skillify/scripts/skillify_check.py "$d"
+  - id: independent-review
+    text: A model from a different provider scores the change 7 or above with no open blocker.
+    rung: judgment
+    verifier:
+      origin: model:openai
+      rubric: the cross-review rubric, skills/governance/cross-review/references/rubric.md
+      pass_rule: score of 7 or more and no open BLOCKER, recorded on the pull request against the reviewed commit
+  - id: installs
+    text: The published repository lists the skill to an installer.
+    rung: measurement
+    verifier:
+      origin: sensor:skills-cli
+      sensor: npx skills add broomva/skills --skill checkable --list
+      positive_control: the same listing shows cross-review, a skill known to be published
+      falsification_criterion: checkable is absent from the listing while cross-review is present
+  - id: right-claims
+    text: These are the right claims for shipping a skill.
+    rung: none
+
+actions:
+  - id: push-branch
+    text: Push the feature branch to the public repository
+    reversibility: irreversible
+    reach: anyone who can read broomva/skills; a pushed commit can be cached after the branch is deleted
+    gate: human:owner
+  - id: open-pr
+    text: Open the pull request
+    reversibility: reversible
+    reach: one pull request
+    undo: close it
+  - id: merge
+    text: Merge the pull request
+    reversibility: compensable
+    reach: the main branch, and every install made after the merge
+    undo: revert the merge commit; installs made in between keep the old copy until they update
+    requires: [refuses-each-invariant, index-complete, skillify-gate, independent-review]
+
+flow:
+  steps: [refuses-each-invariant, index-complete, skillify-gate, push-branch, open-pr, independent-review, merge, installs]
+
+feeds:
+  - from: the catalog index
+    to: the router's answer for every later statement
+    check: index-complete
+
+learning:
+  on_correction: a review finding that recurs becomes a failing case in tests/, following the correct skill's ladder
+
+unverified:
+  - "right-claims: whether these are the right claims"
+  - whether the index tags are right; they were assigned from each skill's description, not its code
+  - whether a statement that passes describes work that was really done
