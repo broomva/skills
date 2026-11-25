@@ -874,3 +874,89 @@ def test_p20_r5_vfr_mkv_valid_cut_and_packet_probe_failure_fails_closed(tmp_path
             capture_output=True, text=True, env=env, check=False,
         )
         assert r_fault.returncode == 1, f"expected fail-closed exit 1 on packet probe failure, got {r_fault.returncode}"
+
+
+def test_p20_r6_corrupt_probe_stderr_and_mkv_source_packet_probe_failure(tmp_path):
+    """Covers R6 MAJOR 1 (ffprobe stderr error on exit 0 fails verification),
+    R6 MAJOR 2 (MKV source packet probe error does not fall back to 5s audio container duration),
+    and R6 MINOR (clear packet verification failure message, never 'only None frames')."""
+    import os, shutil, stat
+    real_ffprobe = shutil.which("ffprobe")
+    real_ffmpeg = shutil.which("ffmpeg")
+    if not (real_ffprobe and real_ffmpeg):
+        return
+
+    # 1. Source MKV (2s video + 5s audio) with packet probe forced to fail -> validate_plan(check_files=True) MUST fail!
+    mkv = tmp_path / "v2_a5_r6.mkv"
+    subprocess.run(
+        [
+            real_ffmpeg, "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=green:s=64x64:r=24:d=2.0",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=5.0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(mkv),
+        ],
+        check=True,
+    )
+    bin_fail = tmp_path / "bin_fail_pkt"
+    bin_fail.mkdir()
+    (bin_fail / "ffmpeg").symlink_to(real_ffmpeg)
+    w_fail = bin_fail / "ffprobe"
+    w_fail.write_text(
+        '#!/bin/sh' + chr(10)
+        + 'for a in "$@"; do' + chr(10)
+        + '  case "$a" in *packet=*) exit 1 ;; esac' + chr(10)
+        + 'done' + chr(10)
+        + f'exec "{real_ffprobe}" "$@"' + chr(10),
+        encoding="utf-8",
+    )
+    w_fail.chmod(w_fail.stat().st_mode | stat.S_IXUSR)
+    p_mkv = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "m1", "source": str(mkv), "in_s": 3.5, "out_s": 4.5}],
+    }
+    pf = tmp_path / "p_mkv_r6.json"
+    pf.write_text(json.dumps(p_mkv), encoding="utf-8")
+    env_fail = dict(os.environ)
+    env_fail["PATH"] = f"{bin_fail}:{env_fail.get('PATH', '')}"
+    r_val = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "validate", str(pf), "--check-files"],
+        capture_output=True, text=True, env=env_fail, check=False,
+    )
+    assert r_val.returncode == 1, f"MKV validation fell back to audio tail on packet probe failure: {r_val.stdout}"
+
+    # 2. Output packet probe writing error to stderr while exiting 0 -> render MUST fail closed with clear message!
+    clip = tmp_path / "ok1s.mp4"
+    subprocess.run(
+        [real_ffmpeg, "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=24:d=1.0", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip)],
+        check=True,
+    )
+    bin_err = tmp_path / "bin_stderr_pkt"
+    bin_err.mkdir()
+    (bin_err / "ffmpeg").symlink_to(real_ffmpeg)
+    w_err = bin_err / "ffprobe"
+    w_err.write_text(
+        '#!/bin/sh' + chr(10)
+        + 'for a in "$@"; do' + chr(10)
+        + '  case "$a" in *packet=*) echo "partial file" >&2; exec "' + real_ffprobe + '" "$@" ;; esac' + chr(10)
+        + 'done' + chr(10)
+        + f'exec "{real_ffprobe}" "$@"' + chr(10),
+        encoding="utf-8",
+    )
+    w_err.chmod(w_err.stat().st_mode | stat.S_IXUSR)
+    p_ok = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "c1", "source": str(clip), "in_s": 0.0, "out_s": 0.5}],
+    }
+    pf2 = tmp_path / "p_ok_r6.json"
+    pf2.write_text(json.dumps(p_ok), encoding="utf-8")
+    env_err = dict(os.environ)
+    env_err["PATH"] = f"{bin_err}:{env_err.get('PATH', '')}"
+    r_rend = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf2), "-o", str(tmp_path / "out_r6.mp4")],
+        capture_output=True, text=True, env=env_err, check=False,
+    )
+    assert r_rend.returncode == 1
+    assert "partial file" in r_rend.stderr
+    assert "only None frames" not in r_rend.stderr

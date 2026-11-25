@@ -179,6 +179,10 @@ def validate_plan(
                     if info is not None:
                         if not info["has_video"]:
                             errors.append(f"{prefix}.source has no video stream: {resolved}")
+                        elif info.get("packet_probe_error") and info["video_dur_s"] is None:
+                            errors.append(
+                                f"{prefix}.source video duration could not be verified ({info['packet_probe_error']}): {resolved}"
+                            )
                         elif (
                             info["video_dur_s"] is not None
                             and info["video_end_s"] is not None
@@ -521,6 +525,7 @@ def _probe_media_streams(src: Path, *, count_video_packets: bool = False) -> dic
     v_dur = None
     v_start = 0.0
     v_packets = None
+    packet_probe_error = None
     if v_streams:
         vs0 = v_streams[0]
         raw_vd = vs0.get("duration")
@@ -563,7 +568,8 @@ def _probe_media_streams(src: Path, *, count_video_packets: bool = False) -> dic
                 stdin=subprocess.DEVNULL,
                 check=False,
             )
-            if pkt_proc.returncode == 0:
+            pkt_err = pkt_proc.stderr.strip()
+            if pkt_proc.returncode == 0 and not pkt_err:
                 lines = [ln.strip() for ln in pkt_proc.stdout.splitlines() if ln.strip()]
                 v_packets = len(lines)
                 if v_dur is None and lines:
@@ -595,10 +601,12 @@ def _probe_media_streams(src: Path, *, count_video_packets: bool = False) -> dic
                     if min_pts is not None and max_end is not None and max_end > min_pts:
                         v_start = max(0.0, min_pts)
                         v_dur = max_end - v_start
-            elif count_video_packets:
-                # Fail closed: do not trust stale header nb_frames if live packet verification errored
+            else:
+                # Fail closed: never trust header nb_frames or container duration (which may reflect a longer audio tail)
+                # when live packet inspection reported errors or exited nonzero.
                 v_packets = None
-    eff_v_dur = v_dur if v_dur is not None else fmt_dur
+                packet_probe_error = pkt_err or f"ffprobe packet probe exited {pkt_proc.returncode}"
+    eff_v_dur = v_dur if v_dur is not None else (None if packet_probe_error else fmt_dur)
     v_end = (v_start + eff_v_dur) if eff_v_dur is not None else None
     return {
         "has_video": bool(v_streams),
@@ -607,6 +615,7 @@ def _probe_media_streams(src: Path, *, count_video_packets: bool = False) -> dic
         "video_dur_s": eff_v_dur,
         "video_end_s": v_end,
         "video_packets": v_packets,
+        "packet_probe_error": packet_probe_error,
         "format_dur_s": fmt_dur,
     }
 
@@ -1021,7 +1030,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         min_frames = max(1, int(math.floor(exp_dur * fps_val)) - 2)
-        if out_info["video_packets"] is None or out_info["video_packets"] < min_frames:
+        if out_info["video_packets"] is None:
+            detail = out_info.get("packet_probe_error") or "packet probe failed"
+            print(f"error: output video packet verification failed ({detail})", file=sys.stderr)
+            return 1
+        if out_info["video_packets"] < min_frames:
             print(
                 f"error: rendered video has only {out_info['video_packets']} frames (expected >= {min_frames} for {exp_dur:.3f}s @ {fps_val}fps)",
                 file=sys.stderr,
