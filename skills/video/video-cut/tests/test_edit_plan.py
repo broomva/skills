@@ -209,7 +209,7 @@ def test_build_ffmpeg_command_is_deterministic_and_complete():
 
     fc = argv1[argv1.index("-filter_complex") + 1]
     assert "trim=start=0.5:end=2,setpts=PTS-STARTPTS" in fc
-    assert "crop=w='min(iw,max(1,trunc(iw/1.3/2)*2))'" in fc
+    assert "crop=w='max(min(2,iw),trunc(iw/1.3/2)*2)'" in fc
     assert "x='max(0,min(iw-ow,0.5*iw-ow/2))'" in fc
     assert "apad=pad_dur=0.75" in fc
     assert "sidechaincompress=" in fc
@@ -550,3 +550,124 @@ def test_p20_render_caption_punctuation_percent_silent_broll_no_duck_and_short_a
         capture_output=True, text=True, check=False,
     )
     assert r_b.returncode == 0, f"1x1 punch-in render failed: {r_b.stderr}"
+
+
+def test_p20_r2_compiled_inline_argv_draws_apostrophe_colon_and_percent(tmp_path):
+    """Executing compile_plan() inline argv directly must draw pixels for apostrophes, colons, and %."""
+    clip = tmp_path / "black.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=black:s=640x360:r=24:d=2.0",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=2.0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            str(clip),
+        ],
+        check=True,
+    )
+    plan = {
+        "version": 1,
+        "canvas": {"width": 640, "height": 360, "fps": 24, "safe_area": "16:9-youtube"},
+        "clips": [{"id": "c1", "source": str(clip), "in_s": 0.0, "out_s": 2.0}],
+        "captions": {
+            "enabled": True,
+            "safe_zone_check": True,
+            "entries": [
+                {"start_s": 0.0, "end_s": 0.6, "text": "It's live: cut 1", "y_frac": 0.5},
+                {"start_s": 0.6, "end_s": 1.2, "text": "O'Brien", "y_frac": 0.5},
+                {"start_s": 1.2, "end_s": 1.9, "text": "a:b 50% off", "y_frac": 0.5},
+            ],
+        },
+    }
+    out_mp4 = tmp_path / "compiled_inline.mp4"
+    argv = edit_plan.build_ffmpeg_command(plan, out_mp4)
+    r = subprocess.run(argv, capture_output=True, text=True, check=False)
+    assert r.returncode == 0, f"compiled inline argv failed: {r.stderr}"
+    for ts in ("0.3", "0.9", "1.5"):
+        raw = subprocess.run(
+            ["ffmpeg", "-v", "error", "-ss", ts, "-i", str(out_mp4), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+            capture_output=True, check=True,
+        ).stdout
+        bright = sum(1 for b in raw if b > 180)
+        assert bright > 50, f"inline compiled caption at t={ts}s drew {bright} bright pixels"
+
+
+def test_p20_r2_rejects_out_of_bounds_video_trim_and_wide_glyph_safe_area_and_handles_short_and_2x2(tmp_path):
+    """Covers BLOCKER 2 (4-5s cut from 3s video rejected), MAJOR 1 (1-2s cut with 0.5s audio + music bed),
+    MAJOR 2 (wide WWWWWWWWMMM on 180x320 rejected), MINOR 1 (2x2 yuv420p scale=2)."""
+    # 1. Wide glyphs on 180x320 Reels rejected
+    p_wide = _valid_plan()
+    p_wide["canvas"] = {"width": 180, "height": 320, "fps": 30, "safe_area": "9:16-reels"}
+    p_wide["captions"] = {
+        "enabled": True,
+        "safe_zone_check": True,
+        "entries": [{"start_s": 0.1, "end_s": 0.9, "text": "WWWWWWWWMMM", "x_frac": 0.5, "y_frac": 0.5}],
+    }
+    assert edit_plan.validate_plan(p_wide)["valid"] is False
+
+    # 2. Out-of-bounds trim (4-5s on 2s video-only source) rejected by validate_plan(check_files=True)
+    v2s = tmp_path / "v2s.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64:r=24:d=2.0", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(v2s)],
+        check=True,
+    )
+    p_oob = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "oob", "source": str(v2s), "in_s": 4.0, "out_s": 5.0}],
+    }
+    res_oob = edit_plan.validate_plan(p_oob, check_files=True)
+    assert res_oob["valid"] is False
+
+    # 3. 1-2s video cut whose audio ends at 0.5s + music bed (with ducking) renders cleanly
+    v_short = tmp_path / "v3_a05.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=black:s=64x64:r=24:d=3.0",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            str(v_short),
+        ],
+        check=True,
+    )
+    bed = tmp_path / "bed.wav"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=2.0", "-ar", "48000", "-ac", "2", str(bed)],
+        check=True,
+    )
+    p_late = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "c1", "source": str(v_short), "in_s": 1.0, "out_s": 2.0}],
+        "audio": {"music": {"source": str(bed), "gain_db": -12.0, "duck_db": -8.0, "pad_tail_s": 0.75}},
+    }
+    pf = tmp_path / "p_late.json"
+    pf.write_text(json.dumps(p_late), encoding="utf-8")
+    out_late = tmp_path / "out_late.mp4"
+    r_late = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf), "-o", str(out_late)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r_late.returncode == 0, f"short-audio cut failed: {r_late.stderr}"
+
+    # 4. 2x2 yuv420p source with scale=2 punch-in renders cleanly
+    v2x2 = tmp_path / "v2x2.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=2x2:r=24:d=1.0", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(v2x2)],
+        check=True,
+    )
+    p_2x2 = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "t2", "source": str(v2x2), "in_s": 0.0, "out_s": 0.5, "punch_in": {"scale": 2.0}}],
+    }
+    pf2 = tmp_path / "p2x2.json"
+    pf2.write_text(json.dumps(p_2x2), encoding="utf-8")
+    out2 = tmp_path / "out2x2.mp4"
+    r2 = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf2), "-o", str(out2)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r2.returncode == 0, f"2x2 yuv420p punch-in failed: {r2.stderr}"

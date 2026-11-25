@@ -341,3 +341,39 @@ def test_p20_opposite_phase_stereo_wav_preserves_energy(tmp_path):
     assert rate == sr
     frames = unheard.compute_rms_envelope(samples, rate)
     assert max(f["db"] if isinstance(f, dict) else f[2] for f in frames) > -12.0
+
+
+def test_p20_r2_exact_path_disambiguation_and_list_index_clip_and_alac_antiphase(tmp_path):
+    """Covers MAJOR 3 (exact path over duplicate stem, list numeric --clip index) and MINOR 2 (ALAC anti-phase)."""
+    tr = {
+        "clips": [
+            {"source": "/a/voice.wav", "words": [{"word": "from_a", "start": 0.0, "end": 1.0}]},
+            {"source": "/b/voice.wav", "words": [{"word": "from_b", "start": 2.0, "end": 3.0}]},
+        ]
+    }
+    w_b, _ = unheard.load_transcript_spans(tr, media_path="/b/voice.wav")
+    assert [w["word"] for w in w_b] == ["from_b"]
+    w_idx, _ = unheard.load_transcript_spans(tr, clip_name="1")
+    assert [w["word"] for w in w_idx] == ["from_b"]
+    with pytest.raises(ValueError, match="ambiguous"):
+        unheard.load_transcript_spans(tr, media_path="/c/voice.wav")
+
+    # Anti-phase stereo encoded as lossless ALAC in M4A must preserve RMS energy
+    import array, math, wave
+    sr = 16000
+    pcm = array.array("h")
+    for i in range(sr):
+        v = int(14000 * math.sin(2.0 * math.pi * 440.0 * i / sr))
+        pcm.append(v)
+        pcm.append(-v)
+    wav_p = tmp_path / "ap.wav"
+    with wave.open(str(wav_p), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(pcm.tobytes())
+    m4a_p = tmp_path / "ap.m4a"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav_p), "-c:a", "alac", str(m4a_p)], check=True)
+    samples, rate = unheard.decode_pcm_mono(m4a_p)
+    frames = unheard.compute_rms_envelope(samples, rate)
+    assert max(f["db"] if isinstance(f, dict) else f[2] for f in frames) > -12.0

@@ -173,6 +173,17 @@ def validate_plan(
                 resolved = _resolve_path(src, base)
                 if not resolved.exists():
                     errors.append(f"{prefix}.source file not found: {resolved}")
+                else:
+                    info = _probe_media_streams(resolved)
+                    if info is not None:
+                        if not info["has_video"]:
+                            errors.append(f"{prefix}.source has no video stream: {resolved}")
+                        elif info["video_dur_s"] is not None and _is_number(clip.get("in_s")):
+                            in_v = float(clip["in_s"])
+                            if info["video_dur_s"] > 0.1 and in_v >= info["video_dur_s"] - 1e-6:
+                                errors.append(
+                                    f"{prefix}.in_s ({in_v:.3f}s) is at/past source video duration ({info['video_dur_s']:.3f}s)"
+                                )
 
             in_s = clip.get("in_s")
             out_s = clip.get("out_s")
@@ -378,9 +389,13 @@ def validate_plan(
                         cw = int(canvas["width"]) if isinstance(canvas, dict) and _is_int(canvas.get("width")) and int(canvas["width"]) > 0 else 1080
                         ch = int(canvas["height"]) if isinstance(canvas, dict) and _is_int(canvas.get("height")) and int(canvas["height"]) > 0 else 1920
                         fs = max(20, int(round(ch * 0.042)))
-                        text_len = len(txt.strip()) if isinstance(txt, str) else 0
-                        half_h = (fs * 1.25) / (2.0 * ch)
-                        half_w = min(0.5, (max(1, text_len) * fs * 0.62) / (2.0 * cw))
+                        clean_t = txt.strip() if isinstance(txt, str) else ""
+                        est_px = sum(
+                            1.08 if ch_i in "WM@%#" else (0.78 if ch_i.isupper() else 0.66)
+                            for ch_i in (clean_t or "X")
+                        ) * fs + 8.0
+                        half_h = (fs * 1.35) / (2.0 * ch)
+                        half_w = est_px / (2.0 * cw)
                         if y_ok:
                             yf = float(y_frac)
                             min_y = safe_area_box["top"]
@@ -411,17 +426,17 @@ def validate_plan(
 # Deterministic FFmpeg filter_complex compiler
 # ---------------------------------------------------------------------------
 def _escape_drawtext(text: str) -> str:
-    """Escape text for FFmpeg drawtext filter (used with expansion=none)."""
+    """Escape text for FFmpeg filtergraph + drawtext option parser (with expansion=none)."""
     cleaned = text.replace("\r", "").replace("\n", " ")
-    # In FFmpeg filtergraph av_get_token, escaping filter-special characters
-    # unquoted handles apostrophes, colons, commas, brackets, and semicolons cleanly.
-    out = []
-    for ch in cleaned:
-        if ch in ("\\", ":", "'", ",", ";", "[", "]"):
-            out.append("\\" + ch)
-        else:
-            out.append(ch)
-    return "".join(out)
+    return (
+        cleaned.replace("\\", "\\\\\\\\")
+        .replace("'", "\\\\\\'")
+        .replace(":", "\\\\\\:")
+        .replace(",", "\\,")
+        .replace(";", "\\;")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
 
 
 def _escape_filter_path(path: Path) -> str:
@@ -430,22 +445,20 @@ def _escape_filter_path(path: Path) -> str:
     return s.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace(",", "\\,").replace(";", "\\;")
 
 
-def _probe_has_audio(src: Path) -> bool:
-    """Return True if media file has at least one audio stream (defaults True if file absent)."""
+def _probe_media_streams(src: Path) -> dict[str, Any] | None:
+    """Probe video/audio stream presence and video duration via ffprobe."""
     if not src.exists():
-        return True
+        return None
     try:
         proc = subprocess.run(
             [
                 "ffprobe",
                 "-v",
                 "error",
-                "-select_streams",
-                "a",
                 "-show_entries",
-                "stream=index",
+                "stream=codec_type,duration,nb_frames,codec_name:format=duration",
                 "-of",
-                "csv=p=0",
+                "json",
                 str(src),
             ],
             capture_output=True,
@@ -454,10 +467,49 @@ def _probe_has_audio(src: Path) -> bool:
             check=False,
         )
     except FileNotFoundError:
-        return True
+        return None
     if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    streams = data.get("streams") or []
+    v_streams = [s for s in streams if s.get("codec_type") == "video"]
+    a_streams = [s for s in streams if s.get("codec_type") == "audio"]
+    fmt_dur = None
+    raw_fmt = (data.get("format") or {}).get("duration")
+    if raw_fmt is not None:
+        try:
+            v = float(raw_fmt)
+            if math.isfinite(v) and v > 0:
+                fmt_dur = v
+        except (TypeError, ValueError):
+            pass
+    v_dur = None
+    if v_streams:
+        raw_vd = v_streams[0].get("duration")
+        if raw_vd is not None:
+            try:
+                v = float(raw_vd)
+                if math.isfinite(v) and v > 0:
+                    v_dur = v
+            except (TypeError, ValueError):
+                pass
+    return {
+        "has_video": bool(v_streams),
+        "has_audio": bool(a_streams),
+        "video_dur_s": v_dur if v_dur is not None else fmt_dur,
+        "format_dur_s": fmt_dur,
+    }
+
+
+def _probe_has_audio(src: Path) -> bool:
+    """Return True if media file has at least one audio stream (defaults True if file absent)."""
+    info = _probe_media_streams(src)
+    if info is None:
         return True
-    return bool(proc.stdout.strip())
+    return bool(info["has_audio"])
 
 
 def _punch_in_crop_filter(punch_in: dict[str, Any]) -> str:
@@ -467,8 +519,8 @@ def _punch_in_crop_filter(punch_in: dict[str, Any]) -> str:
     ay = float(punch_in.get("anchor_y", 0.5))
     return (
         f"crop="
-        f"w='min(iw,max(1,trunc(iw/{_fmt_num(scale)}/2)*2))':"
-        f"h='min(ih,max(1,trunc(ih/{_fmt_num(scale)}/2)*2))':"
+        f"w='max(min(2,iw),trunc(iw/{_fmt_num(scale)}/2)*2)':"
+        f"h='max(min(2,ih),trunc(ih/{_fmt_num(scale)}/2)*2)':"
         f"x='max(0,min(iw-ow,{_fmt_num(ax)}*iw-ow/2))':"
         f"y='max(0,min(ih-oh,{_fmt_num(ay)}*ih-oh/2))'"
     )
@@ -548,12 +600,10 @@ def compile_plan(
             has_audio = _probe_has_audio(src_path)
         if has_audio:
             a_ops = [
-                f"atrim=start={_fmt_num(in_s)}:end={_fmt_num(out_s)}",
-                "asetpts=PTS-STARTPTS",
-                "aresample=48000",
+                "aresample=48000:async=1:first_pts=0",
                 "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo",
-                f"apad=whole_dur={_fmt_num(clip_dur)}",
-                f"atrim=start=0:end={_fmt_num(clip_dur)}",
+                f"apad=whole_dur={_fmt_num(out_s + 0.1)}",
+                f"atrim=start={_fmt_num(in_s)}:end={_fmt_num(out_s)}",
                 "asetpts=PTS-STARTPTS",
             ]
             gain_db = clip.get("gain_db")
@@ -839,6 +889,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+        out_info = _probe_media_streams(out_path)
+        if out_info is not None and not out_info["has_video"]:
+            print("error: rendered output contains no video stream (check clip in_s/out_s bounds)", file=sys.stderr)
+            return 1
         print(str(out_path.resolve()))
         return 0
 

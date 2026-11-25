@@ -103,6 +103,9 @@ def decode_pcm_mono(
     if direct is not None:
         return direct
 
+    # Decode to uncompressed multi-channel 16-bit PCM WAV so opposite-phase stereo
+    # in ALAC/AAC/M4A preserves RMS energy rather than cancelling under `-ac 1`.
+    import io
     cmd = [
         "ffmpeg",
         "-v",
@@ -110,12 +113,12 @@ def decode_pcm_mono(
         "-i",
         str(path),
         "-vn",
-        "-ac",
-        "1",
         "-ar",
         str(sample_rate),
+        "-c:a",
+        "pcm_s16le",
         "-f",
-        "s16le",
+        "wav",
         "pipe:1",
     ]
     try:
@@ -129,14 +132,28 @@ def decode_pcm_mono(
         err = proc.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"ffmpeg audio decode failed (exit {proc.returncode}): {err}")
 
-    raw = proc.stdout
+    with wave.open(io.BytesIO(proc.stdout), "rb") as wf:
+        nch = wf.getnchannels()
+        sr_out = wf.getframerate()
+        raw = wf.readframes(wf.getnframes())
     if len(raw) % 2 != 0:
         raw = raw[: len(raw) - 1]
     samples = array.array("h")
     samples.frombytes(raw)
     if sys.byteorder == "big":
         samples.byteswap()
-    return samples, sample_rate
+    if nch == 1:
+        return samples, sr_out
+    total_frames = len(samples) // nch
+    mono = array.array("h")
+    for i in range(0, total_frames * nch, nch):
+        acc_sq = 0
+        for c in range(nch):
+            s = samples[i + c]
+            acc_sq += s * s
+        rms_val = int(round(math.sqrt(acc_sq / nch)))
+        mono.append(32767 if rms_val > 32767 else rms_val)
+    return mono, sr_out
 
 
 def compute_rms_envelope(
@@ -390,11 +407,24 @@ def _extract_from_single_transcript(
     return words, phrases
 
 
+def _path_matches_exact(source_val: Any, media_path: Path) -> bool:
+    if not source_val:
+        return False
+    sp = Path(str(source_val))
+    if str(sp) == str(media_path):
+        return True
+    try:
+        return sp.resolve() == media_path.resolve()
+    except OSError:
+        return False
+
+
 def _select_clip_entry(
     clips: Any, clip_name: str | None, media_path: str | Path | None
 ) -> list[dict[str, Any]]:
     """Select the target clip dict(s) from a `clips` dict or list."""
-    stem = Path(media_path).stem if media_path is not None else None
+    mp = Path(media_path) if media_path is not None else None
+    stem = mp.stem if mp is not None else None
 
     if isinstance(clips, dict):
         if clip_name is not None:
@@ -405,13 +435,24 @@ def _select_clip_entry(
                 )
             entry = clips[clip_name]
             return [entry] if isinstance(entry, dict) else []
-        if stem is not None:
-            if stem in clips and isinstance(clips[stem], dict):
-                return [clips[stem]]
-            for entry in clips.values():
-                if isinstance(entry, dict) and entry.get("source"):
-                    if Path(str(entry["source"])).stem == stem:
-                        return [entry]
+        if mp is not None:
+            exact = [v for v in clips.values() if isinstance(v, dict) and _path_matches_exact(v.get("source"), mp)]
+            if len(exact) == 1:
+                return exact
+            if len(exact) > 1:
+                raise ValueError(
+                    f"ambiguous multi-clip transcript for {mp} (available: {sorted(clips.keys())}); pass --clip <name>"
+                )
+            stem_matches = [
+                v for k, v in clips.items()
+                if isinstance(v, dict) and (k == stem or (v.get("source") and Path(str(v["source"])).stem == stem))
+            ]
+            if len(stem_matches) == 1:
+                return stem_matches
+            if len(stem_matches) > 1:
+                raise ValueError(
+                    f"ambiguous stem match {stem!r} across multiple clips (available: {sorted(clips.keys())}); pass --clip <name>"
+                )
         if len(clips) == 1:
             only = next(iter(clips.values()))
             return [only] if isinstance(only, dict) else []
@@ -424,21 +465,34 @@ def _select_clip_entry(
 
     if isinstance(clips, list):
         dict_entries = [c for c in clips if isinstance(c, dict)]
+        avail = [str(c.get("id") or c.get("name") or c.get("clip") or i) for i, c in enumerate(dict_entries)]
         if clip_name is not None:
             for c in dict_entries:
                 if c.get("id") == clip_name or c.get("name") == clip_name or c.get("clip") == clip_name:
                     return [c]
-            raise KeyError(f"clip {clip_name!r} not found in transcript clips list")
-        if stem is not None:
-            for c in dict_entries:
-                if c.get("id") == stem or c.get("name") == stem or c.get("clip") == stem:
-                    return [c]
-                if c.get("source") and Path(str(c["source"])).stem == stem:
-                    return [c]
+            if clip_name.isdigit():
+                idx = int(clip_name)
+                if 0 <= idx < len(dict_entries):
+                    return [dict_entries[idx]]
+            raise KeyError(f"clip {clip_name!r} not found in transcript clips list (available: {avail})")
+        if mp is not None:
+            exact = [c for c in dict_entries if _path_matches_exact(c.get("source"), mp)]
+            if len(exact) == 1:
+                return exact
+            if len(exact) > 1:
+                raise ValueError(f"ambiguous multi-clip transcript for {mp} (available: {avail}); pass --clip <name>")
+            stem_matches = [
+                c for c in dict_entries
+                if c.get("id") == stem or c.get("name") == stem or c.get("clip") == stem
+                or (c.get("source") and Path(str(c["source"])).stem == stem)
+            ]
+            if len(stem_matches) == 1:
+                return stem_matches
+            if len(stem_matches) > 1:
+                raise ValueError(f"ambiguous stem match {stem!r} across multiple clips (available: {avail}); pass --clip <name>")
         if len(dict_entries) == 1:
             return dict_entries
         if len(dict_entries) > 1:
-            avail = [str(c.get("id") or c.get("name") or c.get("clip") or i) for i, c in enumerate(dict_entries)]
             raise ValueError(
                 f"ambiguous multi-clip transcript (available: {avail}); "
                 "pass --clip <name> to select one clip"
