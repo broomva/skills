@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkApp,
+  electronEnv,
   doctor,
   lintHtml,
   main,
@@ -138,4 +139,11 @@ test("every file SKILL.md tells an agent to run or read exists", () => {
   const refs = [...text.matchAll(/(?<![\w./-])((?:scripts|assets|references)\/[\w./-]+\.[a-z]+)/g)].map((m) => m[1]);
   assert.ok(refs.length > 3);
   for (const ref of new Set(refs)) assert.ok(fs.existsSync(path.join(SKILL, ref)), `${ref} is referenced but missing`);
+});
+
+test("electronEnv strips ELECTRON_RUN_AS_NODE while preserving other variables", () => {
+  const clean = electronEnv({ ELECTRON_RUN_AS_NODE: "1", PATH: "/usr/bin", HOME: "/tmp/h" });
+  assert.equal(Object.hasOwn(clean, "ELECTRON_RUN_AS_NODE"), false);
+  assert.equal(clean.PATH, "/usr/bin");
+  assert.equal(clean.HOME, "/tmp/h");
 });
