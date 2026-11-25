@@ -29,8 +29,10 @@ defaults:
 
 jobs:
   test:
-    name: pytest + render E2E + mutation proof
+    name: pytest + render and video QA E2E + mutation proof
     runs-on: ubuntu-latest
+    env:
+      MOTION_LAB_REQUIRE_FFMPEG: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,7 +44,7 @@ jobs:
       - name: Install test deps
         run: |
           pip install pytest
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg  # the GIF timing receipt test
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg  # render export, GIF timing and video QA
       - name: Install Playwright (outside the skill tree)
         run: |
           mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
@@ -57,8 +59,11 @@ jobs:
       - name: Mutation proof (every load-bearing line is covered)
         env:
           MOTION_LAB_NODE_DIR: ${{ runner.temp }}/pw
+          MOTION_LAB_REQUIRE_RENDER: '1'
         run: python tests/mutation_proof.py
       - name: Self-check (shipped assets and fixtures obey the linter)
         run: |
           python scripts/motion_lint.py assets/motion.js tests/fixtures/good.html
-          python scripts/motion_lint.py tests/fixtures/bad.html && exit 1 || test $? -eq 1
+          code=0
+          python scripts/motion_lint.py tests/fixtures/bad.html || code=$?
+          test "$code" -eq 1

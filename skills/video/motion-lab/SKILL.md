@@ -97,6 +97,9 @@ and this skill is built to keep them:
    | MC08 | web fonts with no `document.fonts.ready` wait | WARN |
    | MC09 | `@keyframes` animating width / height / top / left | WARN |
    | MC10 | something on its own clock: GSAP with no paused timeline or seek, an autoplaying `<video>`/`<audio>` | WARN |
+   | MC11 | `clip-path: inset()` with fewer than four explicit sides | WARN |
+   | MC12 | CSS-driven `stroke-dashoffset` with SVG `pathLength="1"` | WARN |
+   | MC13 | CSS transform animation or transition in a file that also sets transform from JavaScript or GSAP | WARN |
 
    It also lints code outside `<script>`: inline `on*` event handlers and `srcdoc`
    documents. It lints a bare `.js` / `.tsx` module (a Remotion component) too,
@@ -141,6 +144,13 @@ and this skill is built to keep them:
    could not finish (a timeout), `verify.pure` is `null` and the run exits 5. `--every N` puts
    every Nth frame on the contact sheet and always ends it on frame N-1, the seam. Add `--mp4` for an
    H.264 file (needs ffmpeg).
+
+   Add `--serve` for an HTML entry point with local ES modules, fonts or shaders.
+   It serves the input directory over temporary loopback HTTP using the same
+   real-path boundary as file mode. `--workers N` runs up to N independent pages
+   in one browser and compares the resulting frames against a fresh page when
+   verification is enabled. The default is one page. Add `--webgl` to request
+   ANGLE and WebGL flags for shader-based scenes.
 
    | Exit | Meaning |
    |---|---|
@@ -205,7 +215,13 @@ and this skill is built to keep them:
    picture, mix to −14 LUFS with peaks at −1 dBTP, then check each hit by decoding
    the finished MP4. The picture must work muted first: the feed autoplays silent.
 
-7. **Export and check.** Commands are in
+7. **Export and check.** Use `scripts/video_qa.py scan` to review every decoded
+   frame, `hero` for a larger view of selected beats, and `grade` for stream
+   format, endpoint luma and per-beat CIELAB checks. See
+   [the film architecture](references/film-architecture.md) for the commands and
+   thresholds.
+
+   Export commands are in
    [`references/motion-numbers.md`](references/motion-numbers.md#export-for-x). Then
    measure the GIF rather than trusting the encoder:
 
@@ -284,6 +300,8 @@ later. Ambient motion stays under 5% of the hero's travel.
 
 | With | How |
 |---|---|
+| `liquid-midnight` | establish the film’s palette, materials and type direction |
+| `soundcraft` | score cue frames, mix stems and check the muxed delivery |
 | `remotion` / `remotion-best-practices` | the engine for series and data-driven video; lint its components in module mode |
 | `launch-video` | a Remotion recipe with a fixed Liquid Glass look (dark void, glow, particles). Those are on this ban list: use launch-video when that look is the brief, and this skill when the brief is your own direction |
 | `adaptive-video-ingest` (via `checkit`) | the same contact-sheet instrument, used to read video rather than grade your own |
@@ -292,7 +310,7 @@ later. Ambient motion stays under 5% of the hero's travel.
 ## Tests
 
 ```bash
-python3 -m pytest tests/ -q                                  # lint + math (render tests skip without playwright)
+python3 -m pytest tests/ -q                                  # lint, math and video QA (needs FFmpeg)
 MOTION_LAB_NODE_DIR=/path/with/playwright python3 -m pytest tests/ -q   # + end-to-end render tests
 python3 tests/mutation_proof.py                              # each listed mechanism has a test that fails without it
 ```
