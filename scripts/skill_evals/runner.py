@@ -1852,6 +1852,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "'underpowered' rather than a number a reader would act on")
     p.add_argument("--ablation-margin", type=float, default=ablation_mod.ABLATION_MARGIN,
                    help="a lift interval entirely below this marks a retirement candidate")
+    p.add_argument("--noise-band", action="store_true",
+                   help="BRO-4110: with --ablate, run the with-skill arm a second time and "
+                        "report how far two identical arms land apart; a lift must clear "
+                        "that spread (adds one arm of trials)")
     p.add_argument("--fail-on-retire-candidate", action="store_true",
                    help="exit non-zero when the ablation verdict is retire-candidate "
                         "(opt-in; --ablate is report-only by default)")
@@ -2048,7 +2052,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         len(_baseline_cases(prompt_set, args.ablate_baseline)) * args.trials
         if args.ablate else 0
     )
-    planned = len(prompt_set.cases) * args.trials + ablate_trials
+    # BRO-4110: the noise band re-runs the with-skill arm on the POSITIVE cases, the
+    # only ones the lift is computed from.
+    replicate_trials = len(prompt_set.positives) * args.trials if args.noise_band else 0
+    planned = len(prompt_set.cases) * args.trials + ablate_trials + replicate_trials
+
+    if args.noise_band and not args.ablate:
+        print("error: --noise-band measures the noise of an ablation; pass --ablate too",
+              file=sys.stderr)
+        return EXIT_USAGE
 
     if args.ablate:
         if args.visibility != "present":
@@ -2083,7 +2095,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"[skill-evals] ABLATION: {len(prompt_set.cases)}x{args.trials} present + "
             f"{len(_baseline_cases(prompt_set, args.ablate_baseline))}x{args.trials} "
-            f"{args.ablate_baseline} = {planned} "
+            f"{args.ablate_baseline}"
+            + (f" + {len(prompt_set.positives)}x{args.trials} replicate"
+               if args.noise_band else "")
+            + f" = {planned} "
             f"trials ({'replay' if args.replay else 'LIVE — this costs money'})\n"
             f"[skill-evals] baseline={args.ablate_baseline} — measuring {measures}",
             file=sys.stderr,
@@ -2288,15 +2303,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             mode=runner.mode, threshold=args.threshold, exit_code=0,
             meta={"arm": args.ablate_baseline},
         )
+        replicate_report = None
+        if args.noise_band:
+            # BRO-4110: the same with-skill arm, again, on the same cases. The spread
+            # between two identical arms is the yardstick the lift has to clear.
+            replicate_cfg = RunConfig(
+                skill=skill, skill_dir=skill_dir, trials=args.trials,
+                visibility=VISIBILITY_REGISTRY["present"], jobs=max(1, args.jobs),
+                keep_workspaces=args.keep_workspaces,
+            )
+            print("[skill-evals] running the REPLICATE arm (skill installed, again) "
+                  "for the noise band", file=sys.stderr)
+            replicate_set = PromptSet(
+                skill=prompt_set.skill, version=prompt_set.version,
+                cases=list(prompt_set.positives),
+                notes=prompt_set.notes, path=prompt_set.path,
+            )
+            replicate_results = run_suite(runner, replicate_set, replicate_cfg)
+            replicate_report = build_report(
+                replicate_set, replicate_results,
+                aggregate(replicate_results, case_threshold=args.case_threshold),
+                mode=runner.mode, threshold=args.threshold, exit_code=0,
+                meta={"arm": "present-replicate"},
+            )
         comparison = ablation_mod.compare(
             report, absent_report,
             non_pass=sorted(NON_PASS_ERRORS),
             builtin_names=BUILTIN_SKILL_NAMES,
             min_trials=args.ablation_min_trials,
             margin=args.ablation_margin,
+            replicate_report=replicate_report,
         )
         report["ablation"] = comparison
         report["ablation_absent_arm"] = absent_report
+        if replicate_report is not None:
+            report["ablation_replicate_arm"] = replicate_report
         if not args.json:
             print(ablation_mod.format_comparison(comparison))
 

@@ -344,6 +344,7 @@ which is in `NON_PASS_ERRORS` and so drops out of `graded_trials` for free.
 | `inconclusive-no-trigger` | present-arm trigger rate < 0.5 — cannot separate absorption from a trigger failure |
 | `inconclusive-weak-checks` | the graded checks are CONSTANT — none failed in either arm, or none passed. Lift is 0.0 by construction either way, so the checks cannot tell the arms apart. (A check that *raises* is recorded as failed, so one buggy predicate would otherwise read as 'retire everything'.) |
 | `inconclusive-name-collision` | the name is a CLI built-in, so there is no absent arm |
+| `inconclusive-noisy` | with `--noise-band`: two identical with-skill arms differed beyond sampling, so no interval from this run can be trusted |
 
 Every inconclusive verdict serialises `"skill_lift": null` — **never `0.0`**, because a
 defaulted zero reads as perfect absorption, the most dangerous vacuity available here.
@@ -364,6 +365,20 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
   of zero. At the default 3 trials the interval is roughly ±0.28 wide, so most honest
   verdicts are `indeterminate`; a real retirement decision needs ~30 positive trials
   per arm (≈60 live CLI runs per skill).
+
+**The noise band (`--noise-band`, BRO-4110).** The interval assumes every trial is an
+independent coin; repeated prompts, drift and flaky checks break that, and none of it
+shows up in a binomial interval. `--ablate --noise-band` runs the with-skill arm a
+second time on the positive cases and reports how far two identical arms landed apart,
+next to the lift. Three rules apply only when the band was measured: identical arms
+that differ beyond sampling give `inconclusive-noisy`; `load-bearing` also needs the
+lift to exceed the spread; `retire-candidate` also needs the spread below the margin.
+It adds one arm of trials. Without it the report says `noise band NOT MEASURED` and
+serialises `"noise_band": null`, never `0.0`.
+
+```bash
+python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --noise-band
+```
 
 `--ablate` is **report-only** and can never soften the existing gate. An unusable
 baseline gets its own exit code (`4`), because nothing is wrong with the skill — the

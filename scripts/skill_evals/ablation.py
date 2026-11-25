@@ -37,6 +37,28 @@ harness can remove:
   guessing. At the default 3 trials the interval is roughly ±0.28 wide, so most
   honest verdicts will be ``indeterminate``.
 
+THE NOISE BAND (BRO-4110)
+-------------------------
+The interval above assumes every trial is an independent coin. Real trials are not:
+the same prompt is repeated, the model and the harness drift within a run, and a
+check can be flaky. None of that shows up in a binomial interval, so the interval can
+be narrower than the harness's real noise. ``--noise-band`` measures that noise
+directly: it runs the with-skill arm a SECOND time, identically, and the difference
+between the two identical arms is the yardstick a lift has to clear. Both arms have
+the same size as the baseline, so the spread and the lift are measured on equal
+footing. Three rules follow, and only when the band was measured:
+
+* identical arms that differ beyond what sampling explains (their own interval
+  excludes zero) make every number from this run untrustworthy: ``inconclusive-noisy``;
+* ``load-bearing`` also needs the lift to exceed the spread;
+* ``retire-candidate`` also needs the spread to sit below the margin, because a
+  harness that cannot tell two identical runs apart to within the margin cannot
+  establish that a skill adds less than the margin.
+
+The idea is Uber's (2026-11-23 Uber Engineering post on skill evals, which reports a
+per-skill noise band "how much two identical runs differ" beside each with/without win
+share); the three rules are ours. An unmeasured band serialises ``noise_band: null``.
+
 A missing or unusable measurement serialises ``skill_lift: null``, never ``0.0``.
 A defaulted zero reads as perfect absorption, which is the single most dangerous
 vacuity available here.
@@ -70,6 +92,7 @@ VERDICT_WEAK_CHECKS = "inconclusive-weak-checks"
 VERDICT_RETIRE = "retire-candidate"
 VERDICT_LOAD_BEARING = "load-bearing"
 VERDICT_INDETERMINATE = "indeterminate"
+VERDICT_NOISY = "inconclusive-noisy"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +233,45 @@ def newcombe_difference(s1: int, n1: int, s2: int, n2: int) -> tuple[float, floa
     return (max(-1.0, lower), min(1.0, upper))
 
 
+@dataclass(frozen=True)
+class NoiseBand:
+    """Two identical with-skill arms, and how far apart they landed (BRO-4110)."""
+
+    first: ArmStats
+    second: ArmStats
+
+    @property
+    def spread(self) -> float | None:
+        a, b = self.first.outcome_pass_rate, self.second.outcome_pass_rate
+        if a is None or b is None:
+            return None
+        return abs(a - b)
+
+    @property
+    def spread_ci(self) -> tuple[float, float]:
+        return newcombe_difference(
+            self.first.outcome_passes, self.first.graded_positive_trials,
+            self.second.outcome_passes, self.second.graded_positive_trials,
+        )
+
+    @property
+    def exceeds_sampling(self) -> bool:
+        """True when two IDENTICAL arms differ by more than sampling explains."""
+        if self.spread is None:
+            return False
+        lo, hi = self.spread_ci
+        return lo > 0 or hi < 0
+
+    def to_dict(self) -> dict[str, Any]:
+        lo, hi = self.spread_ci
+        return {
+            "replicate": self.second.to_dict(),
+            "spread": None if self.spread is None else round(self.spread, 4),
+            "spread_ci": [round(lo, 4), round(hi, 4)],
+            "exceeds_sampling": self.exceeds_sampling,
+        }
+
+
 # ---------------------------------------------------------------------------
 # verdict
 # ---------------------------------------------------------------------------
@@ -223,6 +285,7 @@ def decide_verdict(
     leaked: int = 0,
     min_trials: int = ABLATION_MIN_TRIALS,
     margin: float = ABLATION_MARGIN,
+    noise: NoiseBand | None = None,
 ) -> dict[str, Any]:
     """The verdict, and — always — the reason it is what it is.
 
@@ -231,7 +294,7 @@ def decide_verdict(
     """
     def undecided(name: str, why: str) -> dict[str, Any]:
         return {"verdict": name, "why": why, "skill_lift": None, "skill_lift_ci": None,
-                "end_to_end_lift": None}
+                "end_to_end_lift": None, "noise_band": None}
 
     if name_collision:
         return undecided(
@@ -250,6 +313,12 @@ def decide_verdict(
             f"fewer than {min_trials} graded positive trials in an arm "
             f"(present={present.graded_positive_trials}, absent={absent.graded_positive_trials}); "
             "raise --trials or add positive cases",
+        )
+    if noise is not None and noise.second.graded_positive_trials < min_trials:
+        return undecided(
+            VERDICT_UNDERPOWERED,
+            f"fewer than {min_trials} graded positive trials in the noise-band replicate "
+            f"(replicate={noise.second.graded_positive_trials}); raise --trials",
         )
     # Order matters: a skill that never FIRES is diagnosed as a trigger problem, not
     # as a check problem, because the remedies are opposite. This gate used to sit
@@ -299,23 +368,46 @@ def decide_verdict(
             "recorded as failed) or an environment-invariant failure, not absorption",
         )
 
+    # Two identical arms that disagree beyond sampling mean the interval below is
+    # narrower than this harness's real noise, so no verdict from it can be trusted.
+    if noise is not None and noise.exceeds_sampling:
+        lo_n, hi_n = noise.spread_ci
+        return undecided(
+            VERDICT_NOISY,
+            f"two identical with-skill arms differed by {noise.spread:.2f} "
+            f"(95% CI [{lo_n:+.2f}, {hi_n:+.2f}] excludes zero) — this run is noisier "
+            "than sampling explains, so its interval cannot support a verdict",
+        )
+
     lift = (present.outcome_pass_rate or 0.0) - (absent.outcome_pass_rate or 0.0)
     lo, hi = newcombe_difference(
         present.outcome_passes, present.graded_positive_trials,
         absent.outcome_passes, absent.graded_positive_trials,
     )
+    band = noise.spread if noise is not None else None
     result = {
         "skill_lift": round(lift, 4),
         "skill_lift_ci": [round(lo, 4), round(hi, 4)],
         "end_to_end_lift": None,
+        "noise_band": None if band is None else round(band, 4),
     }
-    if hi < margin:
+    if hi < margin and band is not None and band >= margin:
+        result.update(verdict=VERDICT_INDETERMINATE, why=(
+            f"the interval sits below the {margin} margin, but two identical arms "
+            f"differed by {band:.2f} — this harness cannot resolve a difference as small "
+            "as the margin, so it cannot establish absorption"))
+    elif hi < margin:
         result.update(verdict=VERDICT_RETIRE, why=(
             f"the whole 95% interval for the lift sits below the {margin} margin — the "
             "base model does about as well without it"))
+    elif lo > 0 and band is not None and lift <= band:
+        result.update(verdict=VERDICT_INDETERMINATE, why=(
+            f"the lift {lift:+.2f} is inside the noise band: two identical with-skill "
+            f"arms differed by {band:.2f}"))
     elif lo > 0:
         result.update(verdict=VERDICT_LOAD_BEARING, why=(
-            "the 95% interval for the lift is entirely above zero"))
+            "the 95% interval for the lift is entirely above zero"
+            + ("" if band is None else f" and the lift exceeds the {band:.2f} noise band")))
     else:
         result.update(verdict=VERDICT_INDETERMINATE, why=(
             f"the interval [{lo:.2f}, {hi:.2f}] straddles the {margin} margin; more trials "
@@ -331,11 +423,21 @@ def compare(
     builtin_names: Iterable[str] = (),
     min_trials: int = ABLATION_MIN_TRIALS,
     margin: float = ABLATION_MARGIN,
+    replicate_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The full two-arm comparison, as it lands in the JSON report."""
+    """The full two-arm comparison, as it lands in the JSON report.
+
+    ``replicate_report`` is an optional second with-skill arm run identically to the
+    first (``--noise-band``). Without it the noise band is not measured and the
+    comparison carries ``noise: null`` and ``noise_band: null``.
+    """
     skill = str(present_report.get("skill") or "")
     present = arm_stats(present_report, non_pass)
     absent = arm_stats(absent_report, non_pass)
+    noise = (
+        NoiseBand(present, arm_stats(replicate_report, non_pass))
+        if replicate_report is not None else None
+    )
     leaked = sum(
         1
         for case in absent_report.get("cases") or []
@@ -348,6 +450,7 @@ def compare(
         leaked=leaked,
         min_trials=min_trials,
         margin=margin,
+        noise=noise,
     )
     # Trigger-inclusive, and reported SEPARATELY on purpose: a low end-to-end lift
     # with a high skill lift means "fix the description", not "retire the skill".
@@ -362,6 +465,7 @@ def compare(
         "present": present.to_dict(),
         "absent": absent.to_dict(),
         "leaked_baseline_trials": leaked,
+        "noise": None if noise is None else noise.to_dict(),
         **verdict,
     }
 
@@ -381,8 +485,15 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         f"{rate(p['outcome_pass_rate']):>9}{rate(p['trigger_rate']):>9}",
         f"  {'absent':10}{a['graded_positive_trials']:>8}"
         f"{rate(a['outcome_pass_rate']):>9}{'  n/a':>9}",
-        "-" * 68,
     ]
+    noise = cmp.get("noise")
+    if noise:
+        r = noise["replicate"]
+        lines.append(
+            f"  {'replicate':10}{r['graded_positive_trials']:>8}"
+            f"{rate(r['outcome_pass_rate']):>9}{rate(r['trigger_rate']):>9}"
+        )
+    lines.append("-" * 68)
     if cmp.get("skill_lift") is None:
         lines.append(f"  skill lift   NOT MEASURED — {cmp['verdict']}")
     else:
@@ -390,6 +501,14 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         lines.append(f"  skill lift   {cmp['skill_lift']:+.2f}  95% CI [{lo:+.2f}, {hi:+.2f}]")
         if cmp.get("end_to_end_lift") is not None:
             lines.append(f"  end-to-end   {cmp['end_to_end_lift']:+.2f}  (trigger-inclusive)")
+    if noise and noise.get("spread") is not None:
+        lo_n, hi_n = noise["spread_ci"]
+        lines.append(
+            f"  noise band   {noise['spread']:.2f}  (two identical with-skill arms; "
+            f"95% CI [{lo_n:+.2f}, {hi_n:+.2f}])"
+        )
+    else:
+        lines.append("  noise band   NOT MEASURED (run with --noise-band)")
     lines.append(f"  VERDICT      {cmp['verdict']}")
     lines.append(f"               {cmp['why']}")
     lines.append("")
@@ -400,6 +519,7 @@ __all__ = [
     "ABLATION_MARGIN",
     "ABLATION_MIN_TRIALS",
     "ArmStats",
+    "NoiseBand",
     "arm_stats",
     "compare",
     "decide_verdict",
