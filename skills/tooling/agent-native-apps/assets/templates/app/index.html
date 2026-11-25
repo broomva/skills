@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>__APP_NAME__</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>__APP_NAME__</h1>
+      <span id="meta" class="muted"></span>
+    </header>
+    <div id="log" aria-live="polite"></div>
+    <form id="form">
+      <textarea id="prompt" rows="3" placeholder="Ask this app's agent. It can change this app's own files."></textarea>
+      <div class="row">
+        <button type="submit" id="send">Send</button>
+        <button type="button" id="stop" disabled>Stop</button>
+        <span id="status" class="muted"></span>
+      </div>
+    </form>
+    <script src="app.js"></script>
+  </body>
+</html>

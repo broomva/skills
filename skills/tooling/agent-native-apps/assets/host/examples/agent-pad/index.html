@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agent Pad</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1 id="name">Agent Pad</h1>
+      <span id="version" class="muted"></span>
+    </header>
+    <form id="form">
+      <textarea id="prompt" rows="4" placeholder="Ask the agent. With “edit this app” on, it may change this app's own files."></textarea>
+      <div class="row">
+        <select id="harness">
+          <option value="claude">Claude Code</option>
+          <option value="codex">Codex</option>
+          <option value="t3">T3 (any provider; a T3 thread)</option>
+        </select>
+        <label><input type="checkbox" id="edit" /> edit this app</label>
+        <button type="submit" id="run">Run</button>
+        <button type="button" id="cancel" disabled>Stop</button>
+      </div>
+    </form>
+    <pre id="out" aria-live="polite"></pre>
+    <section id="perms"></section>
+    <script src="app.js"></script>
+  </body>
+</html>

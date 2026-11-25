@@ -1,0 +1,10 @@
+{
+  "name": "Agent Pad",
+  "icon": "✦",
+  "permissions": ["notifications", "menu-bar", "shortcuts", "agent", "agent-edit"],
+  "agent": {
+    "harness": "claude",
+    "harnesses": ["claude", "codex", "t3"],
+    "model": "sonnet"
+  }
+}

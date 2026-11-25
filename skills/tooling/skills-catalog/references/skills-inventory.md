@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 116 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 117 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (12)
 
@@ -38,7 +38,7 @@
 | `fleet-reconcile` | **Deprecated** alias of `fleet` (renamed in fleet 0.6.0, BRO-3122); forwards its scripts there for one release |
 | `fleet` | The Broomva fleet: every Claude Code and Paseo session, PR and loop the coordinators drive, and the workflows that manage it. reconcile is the hourly launchd tick (observe, classify, report, owner… |
 
-## Skill & prompt tooling — `skills/tooling/` (10)
+## Skill & prompt tooling — `skills/tooling/` (11)
 
 | Skill | What it does |
 |---|---|
@@ -50,8 +50,9 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 116 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 117 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
+| `agent-native-apps` | Build an agent-native app — a small web app installed as its own macOS app (Dock icon, menu bar) through Electron app shims, with a T3 Code thread, Claude Code or Codex wired in as the app's agent behind a tiered, version-bound permission gate; ships a host kit, a scaffold, a validator and an end-to-end check |
 
 ## Knowledge & memory — `skills/knowledge/` (9)
 
@@ -237,7 +238,7 @@
 
 ## Aggregates
 
-- **Total skills**: 116
+- **Total skills**: 117
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science
