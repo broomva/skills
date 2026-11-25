@@ -671,3 +671,60 @@ def test_p20_r2_rejects_out_of_bounds_video_trim_and_wide_glyph_safe_area_and_ha
         capture_output=True, text=True, check=False,
     )
     assert r2.returncode == 0, f"2x2 yuv420p punch-in failed: {r2.stderr}"
+
+
+def test_p20_r3_video_bounds_offset_start_and_lowercase_wide_glyphs(tmp_path):
+    """Covers R3 BLOCKER (1.99-2.49s & 1-6s on 2s source rejected), R3 MAJOR 1 (2.2-2.7s on 1-3s offset video passes),
+    and R3 MAJOR 2 (lowercase mmmmmmmmmm rejected on 180x320 Reels)."""
+    # 1. Lowercase wide glyphs rejected on 180x320 Reels
+    p_m = _valid_plan()
+    p_m["canvas"] = {"width": 180, "height": 320, "fps": 30, "safe_area": "9:16-reels"}
+    p_m["captions"] = {
+        "enabled": True,
+        "safe_zone_check": True,
+        "entries": [{"start_s": 0.1, "end_s": 0.9, "text": "mmmmmmmmmm", "x_frac": 0.5, "y_frac": 0.5}],
+    }
+    assert edit_plan.validate_plan(p_m)["valid"] is False
+
+    # 2. 1.99-2.49s and 1-6s on 2.0s video rejected by validate_plan(check_files=True)
+    v2s = tmp_path / "src2s.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=24:d=2.0", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(v2s)],
+        check=True,
+    )
+    for lo, hi in ((1.99, 2.49), (1.0, 6.0)):
+        p_bad = {
+            "version": 1,
+            "canvas": {"width": 64, "height": 64, "fps": 24},
+            "clips": [{"id": "c1", "source": str(v2s), "in_s": lo, "out_s": hi}],
+        }
+        assert edit_plan.validate_plan(p_bad, check_files=True)["valid"] is False
+
+    # 3. Source whose video starts at 1.0s (spans 1.0-3.0s) while audio starts at 0.0s: 2.2-2.7s cut must PASS and render!
+    v_off = tmp_path / "offset_v1_3.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-itsoffset", "1.0", "-f", "lavfi", "-i", "color=c=green:s=64x64:r=24:d=2.0",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=3.0",
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            str(v_off),
+        ],
+        check=True,
+    )
+    p_ok = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "off", "source": str(v_off), "in_s": 2.2, "out_s": 2.7}],
+    }
+    res_ok = edit_plan.validate_plan(p_ok, check_files=True)
+    assert res_ok["valid"] is True, res_ok["errors"]
+    pf = tmp_path / "p_off.json"
+    pf.write_text(json.dumps(p_ok), encoding="utf-8")
+    out_off = tmp_path / "out_off.mp4"
+    r = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf), "-o", str(out_off)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r.returncode == 0, f"offset render failed: {r.stderr}"

@@ -178,11 +178,28 @@ def validate_plan(
                     if info is not None:
                         if not info["has_video"]:
                             errors.append(f"{prefix}.source has no video stream: {resolved}")
-                        elif info["video_dur_s"] is not None and _is_number(clip.get("in_s")):
+                        elif (
+                            info["video_dur_s"] is not None
+                            and info["video_end_s"] is not None
+                            and info["video_dur_s"] > 0.1
+                            and _is_number(clip.get("in_s"))
+                            and _is_number(clip.get("out_s"))
+                        ):
                             in_v = float(clip["in_s"])
-                            if info["video_dur_s"] > 0.1 and in_v >= info["video_dur_s"] - 1e-6:
+                            out_v = float(clip["out_s"])
+                            v_start = float(info["video_start_s"])
+                            v_end = float(info["video_end_s"])
+                            if in_v < v_start - 0.05:
                                 errors.append(
-                                    f"{prefix}.in_s ({in_v:.3f}s) is at/past source video duration ({info['video_dur_s']:.3f}s)"
+                                    f"{prefix}.in_s ({in_v:.3f}s) starts before source video stream ({v_start:.3f}s)"
+                                )
+                            if in_v >= v_end - 1e-6:
+                                errors.append(
+                                    f"{prefix}.in_s ({in_v:.3f}s) is at/past source video end ({v_end:.3f}s)"
+                                )
+                            elif out_v > v_end + 0.05:
+                                errors.append(
+                                    f"{prefix}.out_s ({out_v:.3f}s) exceeds source video end ({v_end:.3f}s)"
                                 )
 
             in_s = clip.get("in_s")
@@ -391,7 +408,7 @@ def validate_plan(
                         fs = max(20, int(round(ch * 0.042)))
                         clean_t = txt.strip() if isinstance(txt, str) else ""
                         est_px = sum(
-                            1.08 if ch_i in "WM@%#" else (0.78 if ch_i.isupper() else 0.66)
+                            1.08 if ch_i in "WMwm@%#" else (0.78 if ch_i.isupper() else 0.66)
                             for ch_i in (clean_t or "X")
                         ) * fs + 8.0
                         half_h = (fs * 1.35) / (2.0 * ch)
@@ -456,7 +473,7 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
                 "-v",
                 "error",
                 "-show_entries",
-                "stream=codec_type,duration,nb_frames,codec_name:format=duration",
+                "stream=codec_type,duration,start_time,nb_frames,codec_name:format=duration",
                 "-of",
                 "json",
                 str(src),
@@ -487,6 +504,7 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
         except (TypeError, ValueError):
             pass
     v_dur = None
+    v_start = 0.0
     if v_streams:
         raw_vd = v_streams[0].get("duration")
         if raw_vd is not None:
@@ -496,10 +514,22 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
                     v_dur = v
             except (TypeError, ValueError):
                 pass
+        raw_vs = v_streams[0].get("start_time")
+        if raw_vs is not None:
+            try:
+                vs = float(raw_vs)
+                if math.isfinite(vs) and vs >= 0:
+                    v_start = vs
+            except (TypeError, ValueError):
+                pass
+    eff_v_dur = v_dur if v_dur is not None else fmt_dur
+    v_end = (v_start + eff_v_dur) if eff_v_dur is not None else None
     return {
         "has_video": bool(v_streams),
         "has_audio": bool(a_streams),
-        "video_dur_s": v_dur if v_dur is not None else fmt_dur,
+        "video_start_s": v_start,
+        "video_dur_s": eff_v_dur,
+        "video_end_s": v_end,
         "format_dur_s": fmt_dur,
     }
 
@@ -567,7 +597,10 @@ def compile_plan(
     for i, clip in enumerate(clips):
         src_path = _resolve_path(clip["source"], base)
         src = str(src_path)
-        inputs.extend(["-i", src])
+        if src_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            inputs.extend(["-loop", "1", "-framerate", _fmt_num(fps), "-i", src])
+        else:
+            inputs.extend(["-i", src])
         in_s = float(clip["in_s"])
         out_s = float(clip["out_s"])
         clip_dur = out_s - in_s
@@ -890,9 +923,19 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         out_info = _probe_media_streams(out_path)
-        if out_info is not None and not out_info["has_video"]:
-            print("error: rendered output contains no video stream (check clip in_s/out_s bounds)", file=sys.stderr)
-            return 1
+        if out_info is not None:
+            if not out_info["has_video"]:
+                print("error: rendered output contains no video stream (check clip in_s/out_s bounds)", file=sys.stderr)
+                return 1
+            exp_dur = sum(float(c["out_s"]) - float(c["in_s"]) for c in plan["clips"])
+            fps_val = float(plan["canvas"]["fps"])
+            tol = max(0.2, 2.0 / max(1.0, fps_val))
+            if out_info["video_dur_s"] is None or abs(out_info["video_dur_s"] - exp_dur) > tol:
+                print(
+                    f"error: rendered video duration ({out_info['video_dur_s']}s) differs from planned {exp_dur:.3f}s by > {tol:.3f}s",
+                    file=sys.stderr,
+                )
+                return 1
         print(str(out_path.resolve()))
         return 0
 

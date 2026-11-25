@@ -126,7 +126,7 @@ ffmpeg specifics. Summary:
 4. **Propose strategy** — 4–8 sentences; wait for confirmation (Hard Rule 10).
 5. **Build EDL or `editPlan.json`** — author `edl.json` (for per-segment concat + Remotion overlays) or a typed `editPlan.json` v1 (for punch-in framing, safe-area-checked captions, and ducked music beds; validate with `edit_plan.py validate`).
 6. **Render** — `render.py edl.json --preview` (or `edit_plan.py render edit/editPlan.json -o edit/final.mp4`, inspecting `--dry-run` first).
-7. **Self-eval** — `self_eval.py` before showing the user; correct, ≤3 passes.
+7. **Self-eval / QA** — run `self_eval.py` for `edit/edl.json` builds (or `ffprobe` / `motion-lab` `video_qa.py` + `soundcraft` `audio_qa.py` / `filmcraft.py verify` for `editPlan.json` renders) before showing the user; correct, ≤3 passes.
 8. **Iterate** — natural-language feedback → re-render; append to `project.md`.
 
 ## Composition map
