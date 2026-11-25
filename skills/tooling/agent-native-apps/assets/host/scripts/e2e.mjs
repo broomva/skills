@@ -105,7 +105,10 @@ async function main() {
   const host = spawn(
     ELECTRON,
     [ROOT, "install", appDir, `--home=${home}`, `--apps-dir=${appsDir}`, "--selftest"],
-    { stdio: ["ignore", "ignore", "inherit"] },
+    {
+      stdio: ["ignore", "ignore", "inherit"],
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "ELECTRON_RUN_AS_NODE")),
+    },
   );
   hostChild = host;
   const installed = await waitFor((e) => e.event === "installed", 120000, "install");

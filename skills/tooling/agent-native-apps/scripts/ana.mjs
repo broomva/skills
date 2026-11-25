@@ -39,6 +39,17 @@ export const MIN_ELECTRON = [45, 3, 0];
 
 export class UsageError extends Error {}
 
+/**
+ * Child environment for Electron launches: strip ELECTRON_RUN_AS_NODE so
+ * calling ana from T3 Code, VS Code, or another Electron terminal boots
+ * Electron as Electron rather than plain Node. Pure.
+ */
+export function electronEnv(env = process.env) {
+  const out = { ...env };
+  delete out.ELECTRON_RUN_AS_NODE;
+  return out;
+}
+
 // ------------------------------------------------------------------ pure parts
 
 /** `--name value`, `--name=value` and bare `--flag`; everything else positional. Pure. */
@@ -293,7 +304,7 @@ async function install(appDir, { kit, home, appsDir }) {
   const args = [k.kit, "install", appDir, ...(home ? [`--home=${home}`] : []), ...(appsDir ? [`--apps-dir=${appsDir}`] : [])];
   const before = readRegistry(home).find((a) => a.appDir === appDir)?.installedAt ?? 0;
   // Detached: the host keeps serving after this command returns.
-  spawn(k.electronBin, args, { detached: true, stdio: "ignore" }).unref();
+  spawn(k.electronBin, args, { detached: true, stdio: "ignore", env: electronEnv() }).unref();
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
     const record = readRegistry(home).find((a) => a.appDir === appDir);
@@ -380,13 +391,13 @@ export async function main(argv) {
     }
     case "e2e": {
       const k = requireKit(kit);
-      const r = spawnSync(process.execPath, [path.join(k.kit, "scripts", "e2e.mjs")], { cwd: k.kit, stdio: "inherit" });
+      const r = spawnSync(process.execPath, [path.join(k.kit, "scripts", "e2e.mjs")], { cwd: k.kit, stdio: "inherit", env: electronEnv() });
       return r.status ?? 1;
     }
     case "uninstall": {
       if (!target) throw new UsageError("Usage: ana uninstall <id>");
       const k = requireKit(kit);
-      execFileSync(k.electronBin, [k.kit, "uninstall", target, ...(home ? [`--home=${home}`] : [])], { stdio: "inherit" });
+      execFileSync(k.electronBin, [k.kit, "uninstall", target, ...(home ? [`--home=${home}`] : [])], { stdio: "inherit", env: electronEnv() });
       return 0;
     }
     case undefined:
