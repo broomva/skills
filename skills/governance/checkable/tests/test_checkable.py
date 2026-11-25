@@ -94,6 +94,8 @@ def test_a_good_statement_has_no_findings():
         lambda d: d.update(performers=["claude"]),
         lambda d: d.update(claims=[]),
         lambda d: d["claims"][0].pop("text"),
+        lambda d: d["claims"][3].pop("id"),
+        lambda d: d["actions"][0].pop("id"),
         lambda d: d["claims"][0].update(rung="vibes"),
         lambda d: d["claims"][0].update(status="done"),
         lambda d: d["claims"].append(copy.deepcopy(d["claims"][0])),
@@ -217,6 +219,12 @@ def test_c5_steps_name_known_ids():
     assert "C5" in codes(doc)
 
 
+def test_c5_an_empty_flow_declares_nothing():
+    doc = good()
+    doc["flow"] = {"steps": []}
+    assert "C5" in codes(doc)
+
+
 def test_c5_a_flow_reference_is_enough():
     doc = good()
     doc["flow"] = {"ref": "flows/checkable.yaml"}
@@ -262,6 +270,18 @@ def test_c6_a_replay_claim_can_gate_an_irreversible_action():
     assert codes(doc) == set()
 
 
+def test_c6_requires_names_a_known_claim():
+    doc = good()
+    doc["actions"][1]["requires"].append("ghost")
+    assert "C6" in codes(doc)
+
+
+def test_c6_a_gate_claim_is_also_required():
+    doc = good()
+    doc["actions"][1].update(gate="claim:tests", requires=["review"])
+    assert "C6" in codes(doc)
+
+
 def test_c6_an_unchecked_claim_guards_only_reversible_actions():
     doc = good()
     doc["actions"][1]["requires"].append("taste")
@@ -291,6 +311,12 @@ def test_c7_a_hop_names_the_claim_that_checks_it():
     assert "C7" in codes(doc)
 
 
+def test_c7_a_hop_names_both_ends():
+    doc = good()
+    del doc["feeds"][0]["to"]
+    assert "C7" in codes(doc)
+
+
 def test_c7_an_unchecked_claim_cannot_guard_a_hop():
     doc = good()
     doc["feeds"][0]["check"] = "taste"
@@ -313,6 +339,13 @@ def test_c7_no_hops_is_a_legitimate_answer():
 
 def test_c8_the_unverified_list_is_required():
     doc = good()
+    del doc["unverified"]
+    assert "C8" in codes(doc)
+
+
+def test_c8_the_list_is_required_even_when_every_claim_has_a_check():
+    doc = good()
+    doc["claims"].pop()
     del doc["unverified"]
     assert "C8" in codes(doc)
 
@@ -425,9 +458,18 @@ def test_replay_with_nothing_to_run_is_invalid_not_a_pass(tmp_path: Path):
 
 def test_replay_treats_a_timeout_as_invalid(tmp_path: Path):
     doc = good()
-    doc["claims"][0]["verifier"]["rejects"] = "sleep 5"
+    doc["claims"][0]["verifier"]["rejects"] = "sleep 30"
     _, code = checkable.replay(doc, tmp_path, 1)
     assert code == checkable.EXIT_INVALID
+
+
+def test_a_timeout_also_stops_what_the_command_started(tmp_path: Path):
+    import time
+
+    started = time.monotonic()
+    code, tail = checkable._run("sh -c 'sleep 30' & wait", tmp_path, 1)
+    assert code is None and "timed out" in tail
+    assert time.monotonic() - started < 10
 
 
 # --- route ----------------------------------------------------------------

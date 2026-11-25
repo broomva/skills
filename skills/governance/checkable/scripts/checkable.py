@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -372,14 +374,29 @@ def coverage(doc: dict) -> dict:
 
 
 def _run(command: str, cwd: Path, timeout: int) -> tuple[int | None, str]:
+    # The command gets its own process group, so a timeout stops what it
+    # started as well. Killing only the shell would leave a child holding the
+    # output pipe, and the wait would outlast the timeout.
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
     try:
-        done = subprocess.run(
-            command, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout
-        )
+        output, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
         return None, f"timed out after {timeout}s"
-    tail = (done.stdout + done.stderr).strip().splitlines()[-3:]
-    return done.returncode, " | ".join(tail)
+    tail = output.strip().splitlines()[-3:]
+    return proc.returncode, " | ".join(tail)
 
 
 def replay(doc: dict, cwd: Path, timeout: int) -> tuple[list[dict], int]:

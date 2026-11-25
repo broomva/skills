@@ -7,6 +7,7 @@ removed is not testing that refusal.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -19,10 +20,16 @@ REFUSAL = re.compile(r'add\("(C\d)", "FAIL",')
 
 
 def run_suite(copy: Path) -> int:
+    # No bytecode cache: two mutants of the same length written in the same
+    # second would otherwise share one cached module, and a result would be
+    # credited to the wrong refusal.
+    for cache in copy.rglob("__pycache__"):
+        shutil.rmtree(cache, ignore_errors=True)
     return subprocess.run(
-        [sys.executable, "-m", "pytest", str(copy / "tests" / "test_checkable.py"), "-q", "-x", "-p", "no:cacheprovider"],
+        [sys.executable, "-B", "-m", "pytest", str(copy / "tests" / "test_checkable.py"), "-q", "-x", "-p", "no:cacheprovider"],
         capture_output=True,
         text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     ).returncode
 
 
@@ -33,8 +40,10 @@ def main() -> int:
         shutil.copytree(SKILL, copy, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
         target = copy / "scripts" / "checkable.py"
         original = target.read_text(encoding="utf-8")
-        if run_suite(copy) != 0:
-            print("the unmutated suite fails; nothing can be concluded")
+        # Three clean runs first: a suite that fails now and then would report
+        # a kill it did not earn.
+        if any(run_suite(copy) != 0 for _ in range(3)):
+            print("the unmutated suite fails at least once in three runs; nothing can be concluded")
             return 2
         sites = list(REFUSAL.finditer(original))
         if not sites:
