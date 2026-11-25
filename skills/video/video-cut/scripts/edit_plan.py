@@ -552,11 +552,10 @@ def _probe_media_streams(src: Path, *, count_video_packets: bool = False) -> dic
                     "error",
                     "-select_streams",
                     "v:0",
-                    "-count_packets",
                     "-show_entries",
-                    "stream=nb_read_packets,avg_frame_rate,r_frame_rate",
+                    "packet=pts_time,dts_time,duration_time",
                     "-of",
-                    "json",
+                    "csv=p=0",
                     str(src),
                 ],
                 capture_output=True,
@@ -565,20 +564,40 @@ def _probe_media_streams(src: Path, *, count_video_packets: bool = False) -> dic
                 check=False,
             )
             if pkt_proc.returncode == 0:
-                try:
-                    pdata = json.loads(pkt_proc.stdout)
-                    pstreams = pdata.get("streams") or []
-                    if pstreams:
-                        ps0 = pstreams[0]
-                        raw_np = ps0.get("nb_read_packets")
-                        if raw_np is not None and str(raw_np).isdigit():
-                            v_packets = int(raw_np)
-                            if v_dur is None:
-                                fps_v = _parse_fps_ratio(ps0.get("avg_frame_rate")) or _parse_fps_ratio(ps0.get("r_frame_rate"))
-                                if fps_v and v_packets > 0:
-                                    v_dur = v_packets / fps_v
-                except json.JSONDecodeError:
-                    pass
+                lines = [ln.strip() for ln in pkt_proc.stdout.splitlines() if ln.strip()]
+                v_packets = len(lines)
+                if v_dur is None and lines:
+                    min_pts = None
+                    max_end = None
+                    for ln in lines:
+                        parts = [p.strip() for p in ln.split(",")]
+                        t_raw = parts[0] if len(parts) > 0 else ""
+                        if not t_raw or t_raw == "N/A":
+                            t_raw = parts[1] if len(parts) > 1 else ""
+                        d_raw = parts[2] if len(parts) > 2 else ""
+                        try:
+                            t_val = float(t_raw)
+                        except (TypeError, ValueError):
+                            continue
+                        if not math.isfinite(t_val):
+                            continue
+                        try:
+                            d_val = float(d_raw) if d_raw and d_raw != "N/A" else 0.0
+                            if not math.isfinite(d_val) or d_val < 0:
+                                d_val = 0.0
+                        except (TypeError, ValueError):
+                            d_val = 0.0
+                        if min_pts is None or t_val < min_pts:
+                            min_pts = t_val
+                        end_t = t_val + d_val
+                        if max_end is None or end_t > max_end:
+                            max_end = end_t
+                    if min_pts is not None and max_end is not None and max_end > min_pts:
+                        v_start = max(0.0, min_pts)
+                        v_dur = max_end - v_start
+            elif count_video_packets:
+                # Fail closed: do not trust stale header nb_frames if live packet verification errored
+                v_packets = None
     eff_v_dur = v_dur if v_dur is not None else fmt_dur
     v_end = (v_start + eff_v_dur) if eff_v_dur is not None else None
     return {
@@ -1002,7 +1021,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         min_frames = max(1, int(math.floor(exp_dur * fps_val)) - 2)
-        if out_info["video_packets"] is not None and out_info["video_packets"] < min_frames:
+        if out_info["video_packets"] is None or out_info["video_packets"] < min_frames:
             print(
                 f"error: rendered video has only {out_info['video_packets']} frames (expected >= {min_frames} for {exp_dur:.3f}s @ {fps_val}fps)",
                 file=sys.stderr,

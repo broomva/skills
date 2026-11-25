@@ -801,3 +801,76 @@ def test_p20_r4_offset_video_only_mp4_mkv_video_duration_and_fail_closed_ffprobe
         )
         assert r_np.returncode == 1
         assert "ffprobe" in r_np.stderr.lower()
+
+
+def test_p20_r5_vfr_mkv_valid_cut_and_packet_probe_failure_fails_closed(tmp_path):
+    """Covers R5 BLOCKER (VFR Matroska with few packets spanning 0-3.8s accepts 3.0-3.5s cut)
+    and R5 MAJOR (failing packet count probe fails closed instead of exiting 0)."""
+    # Create a VFR MKV: 0-2.0s @ 2fps (4 frames) + 2.0-3.8s @ 24fps (~43 frames) -> ~47 packets total, end ~3.8s
+    seg1 = tmp_path / "slow.mkv"
+    seg2 = tmp_path / "fast.mkv"
+    vfr = tmp_path / "vfr.mkv"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=64x64:r=2:d=2.0", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(seg1)],
+        check=True,
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=24:d=1.8", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(seg2)],
+        check=True,
+    )
+    lst = tmp_path / "list.txt"
+    lst.write_text(f"file '{seg1}'" + chr(10) + f"file '{seg2}'" + chr(10), encoding="utf-8")
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(vfr)],
+        check=True,
+    )
+    p_vfr = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "v1", "source": str(vfr), "in_s": 3.0, "out_s": 3.5}],
+    }
+    res_vfr = edit_plan.validate_plan(p_vfr, check_files=True)
+    assert res_vfr["valid"] is True, f"VFR MKV valid 3.0-3.5s cut rejected: {res_vfr}"
+    pf = tmp_path / "p_vfr.json"
+    pf.write_text(json.dumps(p_vfr), encoding="utf-8")
+    out_vfr = tmp_path / "out_vfr.mp4"
+    r_vfr = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf), "-o", str(out_vfr)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r_vfr.returncode == 0, r_vfr.stderr
+
+    # Fault injection: ffprobe wrapper that fails ONLY on packet-inspection probe -> render must fail closed (exit 1)!
+    import os, shutil, stat
+    real_ffprobe = shutil.which("ffprobe")
+    real_ffmpeg = shutil.which("ffmpeg")
+    if real_ffprobe and real_ffmpeg:
+        bin_dir = tmp_path / "fault_bin"
+        bin_dir.mkdir()
+        (bin_dir / "ffmpeg").symlink_to(real_ffmpeg)
+        wrapper = bin_dir / "ffprobe"
+        wrapper.write_text(
+            '#!/bin/sh' + chr(10)
+            + 'for a in "$@"; do' + chr(10)
+            + '  case "$a" in *packet=*) exit 1 ;; esac' + chr(10)
+            + 'done' + chr(10)
+            + f'exec "{real_ffprobe}" "$@"' + chr(10),
+            encoding="utf-8",
+        )
+        wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+        out_fail = tmp_path / "out_fault.mp4"
+        # Use a simple MP4 fixture whose header has stream.duration so only post-render packet probe fails
+        p_ok = {
+            "version": 1,
+            "canvas": {"width": 64, "height": 64, "fps": 24},
+            "clips": [{"id": "c1", "source": str(out_vfr), "in_s": 0.0, "out_s": 0.4}],
+        }
+        pf2 = tmp_path / "p_ok.json"
+        pf2.write_text(json.dumps(p_ok), encoding="utf-8")
+        r_fault = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf2), "-o", str(out_fail)],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        assert r_fault.returncode == 1, f"expected fail-closed exit 1 on packet probe failure, got {r_fault.returncode}"
