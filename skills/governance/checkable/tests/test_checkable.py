@@ -92,6 +92,9 @@ def test_a_good_statement_has_no_findings():
         lambda d: d.update(problem=" "),
         lambda d: d.update(performers=[]),
         lambda d: d.update(performers=["claude"]),
+        lambda d: d.update(performers=["code"]),
+        lambda d: d.update(performers=["model:"]),
+        lambda d: d.update(performers=["sensor:probe"]),
         lambda d: d.update(claims=[]),
         lambda d: d["claims"][0].pop("text"),
         lambda d: d["claims"][3].pop("id"),
@@ -149,7 +152,25 @@ def test_c2_a_claim_with_no_check_cannot_be_accepted():
 
 def test_c2_a_refuted_claim_carries_its_failing_receipt():
     doc = good()
-    doc["claims"][0].update(status="refuted", receipt={"revision": "abc", "replay": "false", "result": "fail"})
+    doc["claims"][0].update(status="refuted", receipt={"revision": "abc", "replay": "true", "result": "fail"})
+    assert codes(doc) == set()
+
+
+def test_c2_a_refuted_claim_cannot_carry_a_passing_receipt():
+    doc = good()
+    doc["claims"][0].update(status="refuted", receipt={"revision": "abc", "replay": "true", "result": "pass"})
+    assert "C2" in codes(doc)
+
+
+def test_c2_the_receipt_of_a_command_claim_names_that_claims_check():
+    doc = good()
+    doc["claims"][0].update(status="accepted", receipt={"revision": "abc", "replay": "exit 0", "result": "pass"})
+    assert "C2" in codes(doc)
+
+
+def test_c2_the_receipt_of_a_judgment_says_how_to_look_again():
+    doc = good()
+    doc["claims"][1].update(status="accepted", receipt={"revision": "abc", "replay": "read review 12 on the pull request", "result": "pass"})
     assert codes(doc) == set()
 
 
@@ -173,6 +194,12 @@ def test_c3_track_record_needs_the_prediction_written_first():
     assert codes(doc) == set()
 
 
+def test_a_prediction_carries_a_date_not_a_promise():
+    doc = good()
+    doc["claims"].append({"id": "forecast", "text": "Cash stays above zero.", "rung": "track-record", "verifier": {"origin": "code", "scored_by": "next month's balance", "prediction_recorded": "after I see the result"}})
+    assert codes(doc) == {"C0"}
+
+
 # --- C4 independence ------------------------------------------------------
 
 def test_c4_a_performer_cannot_judge_its_own_work():
@@ -187,10 +214,18 @@ def test_c4_a_judgment_is_not_made_by_code():
     assert "C4" in codes(doc)
 
 
-def test_c4_origin_is_required_and_typed():
+def test_c4_origin_is_required():
     doc = good()
-    doc["claims"][0]["verifier"]["origin"] = "somebody"
+    del doc["claims"][0]["verifier"]["origin"]
     assert "C4" in codes(doc)
+
+
+@pytest.mark.parametrize("origin", ["somebody", "model: anthropic", "Model:Anthropic", "model:", " model:openai", "human:the owner"])
+def test_an_origin_that_is_not_in_canonical_form_is_refused(origin):
+    # "model: anthropic" and "model:anthropic" would name one performer twice.
+    doc = good()
+    doc["claims"][1]["verifier"]["origin"] = origin
+    assert codes(doc) == {"C0"}
 
 
 def test_c4_a_human_reviewer_is_independent_of_a_model_performer():
@@ -203,6 +238,13 @@ def test_c4_a_human_reviewer_is_independent_of_a_model_performer():
 
 def test_c5_two_actions_need_a_declared_order():
     doc = good()
+    del doc["flow"]
+    assert "C5" in codes(doc)
+
+
+def test_c5_one_irreversible_action_needs_a_declared_order():
+    doc = good()
+    doc["actions"] = [doc["actions"][1]]
     del doc["flow"]
     assert "C5" in codes(doc)
 
@@ -225,10 +267,30 @@ def test_c5_an_empty_flow_declares_nothing():
     assert "C5" in codes(doc)
 
 
-def test_c5_a_flow_reference_is_enough():
+def test_c5_a_flow_reference_does_not_replace_the_steps():
     doc = good()
     doc["flow"] = {"ref": "flows/checkable.yaml"}
-    assert codes(doc) == set()
+    assert "C5" in codes(doc)
+
+
+def test_c5_a_flow_reference_must_be_a_file(tmp_path: Path):
+    doc = good()
+    doc["flow"]["ref"] = "flow.yaml"
+    assert "C5" in {f["invariant"] for f in checkable.check(doc, PINNED, tmp_path)}
+    (tmp_path / "flow.yaml").write_text("flow: x\n")
+    assert checkable.check(doc, PINNED, tmp_path) == []
+
+
+def test_c5_a_step_is_listed_once():
+    doc = good()
+    doc["flow"]["steps"].append("push")
+    assert "C5" in codes(doc)
+
+
+def test_c5_a_required_claim_comes_before_its_action():
+    doc = good()
+    doc["flow"]["steps"] = ["push", "deploy", "tests", "review", "live"]
+    assert "C5" in codes(doc)
 
 
 def test_c5_one_reversible_action_needs_no_flow():
@@ -291,6 +353,41 @@ def test_c6_an_unchecked_claim_guards_only_reversible_actions():
     assert codes(doc) == set()
 
 
+def test_c6_an_unchecked_claim_cannot_guard_a_compensable_action():
+    doc = good()
+    doc["actions"][0].update(reversibility="compensable", requires=["taste"])
+    assert "C6" in codes(doc)
+
+
+def test_c6_the_performer_is_not_its_own_gate():
+    doc = good()
+    doc["performers"].append("human:owner")
+    assert "C6" in codes(doc)
+    doc["actions"][1]["gate"] = "human:reviewer"
+    assert codes(doc) == set()
+
+
+def test_coverage_counts_only_gates_that_hold():
+    doc = good()
+    assert checkable.coverage(doc)["actions_irreversible_gated"] == 1
+    doc["actions"][1]["gate"] = "nobody"
+    assert checkable.coverage(doc)["actions_irreversible_gated"] == 0
+
+
+def test_coverage_counts():
+    numbers = checkable.coverage(good())
+    assert numbers["claims"] == 4
+    assert numbers["claims_with_a_check_that_can_fail"] == 3
+    assert numbers["claims_accepted"] == 0
+    assert numbers["claims_by_rung"] == {"proof": 0, "replay": 1, "measurement": 1, "judgment": 1, "track-record": 0, "none": 1}
+    assert numbers["actions"] == 2 and numbers["actions_irreversible"] == 1
+    doc = good()
+    del doc["claims"][0]["verifier"]["rejects"]
+    doc["claims"][1].update(status="accepted")
+    numbers = checkable.coverage(doc)
+    assert numbers["claims_with_a_check_that_can_fail"] == 2 and numbers["claims_accepted"] == 1
+
+
 def test_c6_reach_is_stated():
     doc = good()
     del doc["actions"][1]["reach"]
@@ -311,10 +408,10 @@ def test_c7_a_hop_names_the_claim_that_checks_it():
     assert "C7" in codes(doc)
 
 
-def test_c7_a_hop_names_both_ends():
+def test_a_hop_names_both_ends():
     doc = good()
     del doc["feeds"][0]["to"]
-    assert "C7" in codes(doc)
+    assert codes(doc) == {"C0"}
 
 
 def test_c7_an_unchecked_claim_cannot_guard_a_hop():
@@ -348,6 +445,105 @@ def test_c8_the_list_is_required_even_when_every_claim_has_a_check():
     doc["claims"].pop()
     del doc["unverified"]
     assert "C8" in codes(doc)
+
+
+def test_c8_a_claim_id_inside_another_word_does_not_name_the_claim():
+    doc = good()
+    doc["claims"][3]["id"] = "c"
+    doc["unverified"] = ["receipts are verified"]
+    assert "C8" in codes(doc)
+    doc["unverified"] = ["c: whether the design is right"]
+    assert codes(doc) == set()
+    doc["unverified"] = ["c"]
+    assert codes(doc) == set()
+
+
+def test_c3_a_claim_with_no_check_carries_no_verifier():
+    doc = good()
+    doc["claims"][3]["verifier"] = {"origin": "code", "check": "true", "rejects": "false"}
+    assert "C3" in codes(doc)
+
+
+def test_c6_a_human_gate_names_someone():
+    doc = good()
+    doc["actions"][1]["gate"] = "human:"
+    assert "C6" in codes(doc)
+    doc["actions"][1]["gate"] = "anyone"
+    assert "C6" in codes(doc)
+
+
+# --- shape: nothing is skipped ---------------------------------------------
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d["actions"].append("delete production"),
+        lambda d: d["claims"].append("an unchecked claim"),
+        lambda d: d["performers"].append(42),
+        lambda d: d.update(actions="deploy"),
+        lambda d: d.update(feeds={"from": "a", "to": "b"}),
+        lambda d: d.update(unverified="everything"),
+        lambda d: d.update(unverified=[["nested"]]),
+        lambda d: d.update(claims=None),
+        lambda d: d.update(flow=["tests", "deploy"]),
+        lambda d: d["flow"].update(steps="tests"),
+        lambda d: d["claims"][0].update(verifier="pytest"),
+        lambda d: d["claims"][0].update(receipt="it passed"),
+        lambda d: d["claims"][0].update(id=7),
+        lambda d: d["claims"][0].update(id="Tests"),
+        lambda d: d["actions"][1].update(requires="tests"),
+        lambda d: d["claims"][0]["verifier"].update(rejects_exit="1"),
+        lambda d: d["claims"][0]["verifier"].update(rejects_exit=True),
+        lambda d: d.update(learning="fix it"),
+        lambda d: d.update(checkable=True),
+    ],
+)
+def test_a_value_of_the_wrong_type_is_refused_not_skipped(mutate):
+    doc = good()
+    mutate(doc)
+    assert codes(doc) == {"C0"}
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d.update(notes="free text"),
+        lambda d: d["claims"][0].update(owner="me"),
+        lambda d: d["claims"][0]["verifier"].update(command="true"),
+        lambda d: d["claims"][0].update(receipt={"revision": "a", "replay": "b", "result": "pass", "by": "me"}),
+        lambda d: d["actions"][0].update(reversable="yes"),
+        lambda d: d["flow"].update(order=["tests"]),
+        lambda d: d["feeds"][0].update(note="x"),
+        lambda d: d["learning"].update(owner="me"),
+    ],
+)
+def test_a_key_outside_the_format_is_refused(mutate):
+    doc = good()
+    mutate(doc)
+    assert codes(doc) == {"C0"}
+
+
+def test_shape_errors_are_reported_alone():
+    doc = good()
+    doc["actions"].append("delete production")
+    del doc["unverified"]
+    assert {f["invariant"] for f in checkable.check(doc, UNKNOWN)} == {"C0"}
+
+
+def test_a_key_written_twice_is_refused(tmp_path: Path):
+    twice = tmp_path / "s.json"
+    twice.write_text('{"checkable": 1, "problem": "a", "problem": "b"}')
+    with pytest.raises(checkable.InputError, match="appears twice"):
+        checkable.load_doc(twice)
+    assert checkable.main(["check", str(twice)]) == checkable.EXIT_INVALID
+
+
+def test_a_yaml_key_written_twice_is_refused(tmp_path: Path):
+    _yaml_or_skip()
+    twice = tmp_path / "s.yaml"
+    twice.write_text("checkable: 1\nproblem: a\nproblem: b\n")
+    with pytest.raises(checkable.InputError, match="appears twice"):
+        checkable.load_doc(twice)
 
 
 def test_c8_an_unchecked_claim_is_named_as_unverified():
@@ -411,6 +607,67 @@ def test_pin_reports_a_statement_missing_at_the_base(repo: Path):
     assert checkable.pin_state(path, "main", good())[0] == "absent"
 
 
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda d: d["actions"][1].update(reversibility="reversible", undo="roll back"),
+        lambda d: d["actions"][1].pop("requires"),
+        lambda d: d["performers"].append("model:openai"),
+        lambda d: d["unverified"].pop(),
+        lambda d: d["flow"]["steps"].reverse(),
+        lambda d: d.update(problem="A different problem."),
+        lambda d: d["claims"][0].update(text="Something else."),
+        lambda d: d["claims"][0].update(rung="proof"),
+        lambda d: d["claims"].pop(1),
+    ],
+)
+def test_pin_covers_the_whole_statement(repo: Path, edit):
+    path = repo / "statement.json"
+    doc = good()
+    edit(doc)
+    path.write_text(json.dumps(doc))
+    assert checkable.pin_state(path, "main", doc)[0] == "changed"
+
+
+def test_base_on_the_command_line(repo: Path, capsys):
+    path = repo / "statement.json"
+    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_OK
+    assert "pin: pinned" in capsys.readouterr().out
+    doc = good()
+    doc["claims"][0]["verifier"]["check"] = "echo trust me"
+    path.write_text(json.dumps(doc))
+    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_FINDING
+    assert "pin: changed" in capsys.readouterr().out
+
+
+def test_a_statement_that_is_not_on_the_base_exits_3_when_a_base_is_given(repo: Path):
+    path = repo / "new.json"
+    path.write_text(json.dumps(good()))
+    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_NO_COMPARISON
+    assert checkable.main(["check", str(path)]) == checkable.EXIT_OK
+
+
+def test_pin_does_not_pass_an_option_to_git_as_a_revision(repo: Path):
+    path = repo / "statement.json"
+    assert checkable.pin_state(path, "--output=/tmp/x", good())[0] == "unknown"
+
+
+def test_pin_is_unknown_for_a_link_that_leaves_the_repository(repo: Path, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside") / "statement.json"
+    outside.write_text(json.dumps(good()))
+    link = repo / "linked.json"
+    link.symlink_to(outside)
+    assert checkable.pin_state(link, "main", good())[0] == "unknown"
+
+
+def test_pin_sees_a_verifier_field_added_to_a_claim(repo: Path):
+    path = repo / "statement.json"
+    doc = good()
+    doc["claims"][0]["verifier"]["rejects_exit"] = 1
+    path.write_text(json.dumps(doc))
+    assert checkable.pin_state(path, "main", doc)[0] == "changed"
+
+
 def test_pin_is_unknown_without_a_base_or_with_a_bad_one(repo: Path):
     path = repo / "statement.json"
     assert checkable.pin_state(path, None, good())[0] == "unknown"
@@ -445,8 +702,60 @@ def test_replay_is_invalid_when_the_known_bad_case_passes(tmp_path: Path):
 def test_replay_is_invalid_when_the_known_good_case_is_refused(tmp_path: Path):
     doc = good()
     doc["claims"][0]["verifier"]["accepts"] = "false"
-    _, code = checkable.replay(doc, tmp_path, 30)
+    rows, code = checkable.replay(doc, tmp_path, 30)
     assert code == checkable.EXIT_INVALID
+    assert rows[0]["verdict"] == "INVALID" and "known-good case was refused" in rows[0]["why"]
+
+
+def test_replay_a_known_bad_case_that_could_not_run_proves_nothing(tmp_path: Path):
+    doc = good()
+    doc["claims"][0]["verifier"]["rejects"] = "a-command-that-does-not-exist-zzz"
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert code == checkable.EXIT_INVALID
+    assert rows[0]["verdict"] == "INVALID" and "could not run" in rows[0]["why"]
+
+
+def test_replay_holds_the_known_bad_case_to_its_stated_exit(tmp_path: Path):
+    doc = good()
+    doc["claims"][0]["verifier"].update(rejects="exit 3", rejects_exit=1)
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert code == checkable.EXIT_INVALID
+    assert rows[0]["verdict"] == "INVALID" and "not the stated 1" in rows[0]["why"]
+    doc["claims"][0]["verifier"]["rejects_exit"] = 3
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert code == checkable.EXIT_OK and rows[0]["verdict"] == "PASS"
+
+
+def test_replay_and_route_refuse_a_malformed_statement(tmp_path: Path, capsys):
+    doc = good()
+    doc["actions"].append("delete production")
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(doc))
+    assert checkable.main(["replay", str(path)]) == checkable.EXIT_INVALID
+    assert checkable.main(["route", str(path)]) == checkable.EXIT_INVALID
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_replay_a_check_that_hangs_is_a_failure(tmp_path: Path):
+    doc = good()
+    doc["claims"][0]["verifier"]["check"] = "sleep 30"
+    rows, code = checkable.replay(doc, tmp_path, 1)
+    assert code == checkable.EXIT_FINDING and rows[0]["verdict"] == "FAIL"
+
+
+def test_replay_reports_the_first_invalid_claim_and_still_runs_the_rest(tmp_path: Path):
+    doc = good()
+    doc["claims"].append({"id": "second", "text": "x", "rung": "proof", "verifier": {"origin": "code", "check": "false", "rejects": "false"}})
+    doc["claims"][0]["verifier"]["rejects"] = "true"
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert [r["verdict"] for r in rows] == ["INVALID", "FAIL"] and code == checkable.EXIT_INVALID
+
+
+def test_replay_a_claim_without_its_commands_is_invalid(tmp_path: Path):
+    doc = good()
+    del doc["claims"][0]["verifier"]["rejects"]
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert rows[0]["verdict"] == "INVALID" and code == checkable.EXIT_INVALID
 
 
 def test_replay_with_nothing_to_run_is_invalid_not_a_pass(tmp_path: Path):
@@ -456,11 +765,12 @@ def test_replay_with_nothing_to_run_is_invalid_not_a_pass(tmp_path: Path):
     assert rows == [] and code == checkable.EXIT_INVALID
 
 
-def test_replay_treats_a_timeout_as_invalid(tmp_path: Path):
+def test_replay_a_known_bad_case_that_hangs_is_invalid(tmp_path: Path):
     doc = good()
     doc["claims"][0]["verifier"]["rejects"] = "sleep 30"
-    _, code = checkable.replay(doc, tmp_path, 1)
+    rows, code = checkable.replay(doc, tmp_path, 1)
     assert code == checkable.EXIT_INVALID
+    assert rows[0]["verdict"] == "INVALID" and "timed out" in rows[0]["why"]
 
 
 def test_a_timeout_also_stops_what_the_command_started(tmp_path: Path):
@@ -497,6 +807,87 @@ def test_route_follows_the_statement_domain():
     doc = good()
     doc["domain"] = ["finance"]
     assert [r["name"] for r in checkable.route(doc, INDEX)["ontology"]] == ["ledger"]
+
+
+def test_route_and_json_on_the_command_line(tmp_path: Path, capsys):
+    statement = tmp_path / "s.json"
+    statement.write_text(json.dumps(good()))
+    index = tmp_path / "index.json"
+    index.write_text(json.dumps(INDEX))
+    assert checkable.main(["route", str(statement), "--index", str(index)]) == checkable.EXIT_OK
+    out = capsys.readouterr().out
+    assert "verifiers   judge[judgment]" in out and "shield      sandbox" in out
+    assert "ontology    (nothing indexed for these domains)" in out
+    assert checkable.main(["route", str(statement), "--index", str(index), "--json"]) == checkable.EXIT_OK
+    assert json.loads(capsys.readouterr().out)["verifiers"] == [{"name": "judge", "kind": "skill", "rungs": ["judgment"]}]
+    assert checkable.main(["check", str(statement), "--json"]) == checkable.EXIT_OK
+    report = json.loads(capsys.readouterr().out)
+    assert report["checkable"] is True and report["coverage"]["claims"] == 4
+    doc = good()
+    del doc["unverified"]
+    statement.write_text(json.dumps(doc))
+    assert checkable.main(["check", str(statement), "--json"]) == checkable.EXIT_FINDING
+    report = json.loads(capsys.readouterr().out)
+    assert report["checkable"] is False
+    assert {f["invariant"] for f in report["findings"] if f["level"] == "FAIL"} == {"C8"}
+    assert checkable.main(["replay", str(statement), "--cwd", str(tmp_path), "--json"]) == checkable.EXIT_OK
+    assert json.loads(capsys.readouterr().out)["rows"][0]["verdict"] == "PASS"
+
+
+def test_a_yaml_statement_without_pyyaml_exits_2(tmp_path: Path, monkeypatch, capsys):
+    path = tmp_path / "s.yaml"
+    path.write_text("checkable: 1\n")
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    assert checkable.main(["check", str(path)]) == checkable.EXIT_INVALID
+    assert "PyYAML is not installed" in capsys.readouterr().err
+
+
+GOOD_ENTRY = {"name": "x", "kind": "skill", "parts": ["claims"], "domains": ["any"]}
+
+
+@pytest.mark.parametrize(
+    "entries, no_role",
+    [
+        ([{**GOOD_ENTRY, "kind": "tool"}], []),
+        ([{**GOOD_ENTRY, "parts": ["claims", "magic"]}], []),
+        ([{**GOOD_ENTRY, "parts": ["verifiers"], "rungs": ["vibes"]}], []),
+        ([{**GOOD_ENTRY, "parts": []}], []),
+        ([{**GOOD_ENTRY, "parts": ["verifiers"]}], []),
+        ([{**GOOD_ENTRY, "domains": []}], []),
+        ([{**GOOD_ENTRY, "kind": "service"}], []),
+        ([GOOD_ENTRY, GOOD_ENTRY], []),
+        ([GOOD_ENTRY], ["x"]),
+    ],
+)
+def test_each_index_rule_refuses(entries, no_role):
+    report, code = checkable.index_report({"entries": entries, "no_role": no_role}, None)
+    assert report["problems"] and code == checkable.EXIT_FINDING
+
+
+def test_an_index_that_leaves_a_part_empty_is_refused():
+    report, code = checkable.index_report({"entries": [GOOD_ENTRY], "no_role": []}, None)
+    assert report["problems"] == []
+    assert "verifiers" in report["empty_parts"] and "claims" not in report["empty_parts"]
+    assert code == checkable.EXIT_FINDING
+
+
+def test_a_sound_index_passes():
+    entries = [{"name": part, "kind": "service", "parts": [part], "domains": ["any"], "where": "here", **({"rungs": ["proof"]} if part == "verifiers" else {})} for part in checkable.PARTS]
+    report, code = checkable.index_report({"entries": entries, "no_role": ["set-aside"]}, None)
+    assert report == {"entries": 9, "no_role": 1, "problems": [], "empty_parts": [], "roster_checked": False}
+    assert code == checkable.EXIT_OK
+
+
+def test_the_flow_definition_runs_check_then_replay():
+    _yaml_or_skip()
+    import yaml
+
+    flow = yaml.safe_load((SKILL / "assets" / "flows" / "checkable.yaml").read_text())
+    assert flow["flow"] == "checkable" and list(flow["nodes"]) == ["pin", "statement", "replay"]
+    assert flow["nodes"]["statement"]["needs"] == ["pin"] and flow["nodes"]["replay"]["needs"] == ["statement"]
+    assert " check " in flow["nodes"]["statement"]["run"][2] and "--base" in flow["nodes"]["statement"]["run"][2]
+    assert " replay " in flow["nodes"]["replay"]["run"][2]
+    assert flow["nodes"]["replay"]["snapshot"] == "{{params.head}}"
 
 
 # --- the shipped index and examples ---------------------------------------
@@ -589,6 +980,132 @@ def test_unreadable_input_exits_2(tmp_path: Path, capsys):
     bad.write_text("{not json")
     assert checkable.main(["check", str(bad)]) == checkable.EXIT_INVALID
     assert checkable.main(["check", str(tmp_path / "missing.json")]) == checkable.EXIT_INVALID
+
+
+# --- the exit status is the contract: never a traceback --------------------
+
+def test_a_base_that_cannot_be_compared_exits_3(repo: Path, capsys):
+    path = repo / "statement.json"
+    assert checkable.main(["check", str(path), "--base", "origin/not-fetched"]) == checkable.EXIT_NO_COMPARISON
+    assert "could not be compared" in capsys.readouterr().err
+    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_OK
+    assert checkable.main(["check", str(path)]) == checkable.EXIT_OK
+
+
+def test_a_finding_outranks_a_comparison_that_could_not_be_made(repo: Path):
+    path = repo / "statement.json"
+    doc = good()
+    del doc["unverified"]
+    path.write_text(json.dumps(doc))
+    assert checkable.main(["check", str(path), "--base", "origin/not-fetched"]) == checkable.EXIT_FINDING
+
+
+@pytest.mark.parametrize(
+    "name, content",
+    [
+        ("bytes.json", b"\xff\xfe not text"),
+        ("deep.json", b"[" * 100000),
+        ("list.json", b"[1, 2, 3]"),
+        ("empty.json", b""),
+    ],
+)
+def test_input_that_cannot_be_read_exits_2(tmp_path: Path, name, content):
+    path = tmp_path / name
+    path.write_bytes(content)
+    for command in ("check", "replay", "route"):
+        assert checkable.main([command, str(path)]) == checkable.EXIT_INVALID
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "checkable: 1\nwhen: 2026-13-45\n",
+        "checkable: 1\nproblem: [unclosed\n",
+        "- just\n- a list\n",
+    ],
+)
+def test_yaml_that_cannot_be_read_exits_2(tmp_path: Path, text):
+    _yaml_or_skip()
+    path = tmp_path / "s.yaml"
+    path.write_text(text)
+    assert checkable.main(["check", str(path)]) == checkable.EXIT_INVALID
+
+
+def test_a_value_yaml_typed_as_a_date_is_a_shape_error_not_a_crash(tmp_path: Path):
+    _yaml_or_skip()
+    import yaml
+
+    doc = good()
+    doc["claims"][0]["text"] = "PLACEHOLDER"
+    path = tmp_path / "s.yaml"
+    path.write_text(yaml.safe_dump(doc).replace("PLACEHOLDER", "2026-01-01"))
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "s.yaml")
+    _git(tmp_path, "commit", "-q", "-m", "x")
+    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_FINDING
+
+
+def test_replay_in_a_folder_that_does_not_exist_exits_2(tmp_path: Path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(good()))
+    assert checkable.main(["replay", str(path), "--cwd", str(tmp_path / "gone")]) == checkable.EXIT_INVALID
+
+
+def test_replay_survives_output_that_is_not_text(tmp_path: Path):
+    doc = good()
+    doc["claims"][0]["verifier"]["check"] = "printf '\\377\\376'; false"
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert code == checkable.EXIT_FINDING and rows[0]["verdict"] == "FAIL"
+
+
+def test_a_timeout_is_a_bound_even_when_a_child_leaves_the_group(tmp_path: Path):
+    import time
+
+    leaver = f"{sys.executable} -c 'import os, time; os.setsid(); time.sleep(30)' & sleep 30"
+    started = time.monotonic()
+    code, tail = checkable._run(leaver, tmp_path, 1)
+    assert code is None and "timed out" in tail
+    assert time.monotonic() - started < 15
+
+
+def test_a_timeout_survives_a_group_that_cannot_be_signalled(tmp_path: Path, monkeypatch):
+    def refuse(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(checkable.os, "killpg", refuse)
+    code, tail = checkable._run("sleep 2", tmp_path, 1)
+    assert code is None and "timed out" in tail
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        {"entries": ["x"], "no_role": []},
+        {"entries": [{"kind": "skill", "parts": ["claims"], "domains": ["any"]}], "no_role": []},
+        {"entries": [{"name": "x", "kind": "skill", "parts": "claims", "domains": ["any"]}], "no_role": []},
+        {"entries": [], "no_role": [1]},
+        {"entries": {}, "no_role": []},
+    ],
+)
+def test_a_malformed_index_exits_2(tmp_path: Path, index):
+    path = tmp_path / "index.json"
+    path.write_text(json.dumps(index))
+    statement = tmp_path / "s.json"
+    statement.write_text(json.dumps(good()))
+    assert checkable.main(["index", "--index", str(path)]) == checkable.EXIT_INVALID
+    assert checkable.main(["route", str(statement), "--index", str(path)]) == checkable.EXIT_INVALID
+
+
+def test_index_with_a_root_that_has_no_skills_exits_2(tmp_path: Path):
+    assert checkable.main(["index", "--root", str(tmp_path)]) == checkable.EXIT_INVALID
+
+
+@pytest.mark.skipif(ROOT is None, reason="installed outside the monorepo: there is no roster to compare")
+def test_an_untagged_skill_is_reported_with_the_file_to_edit(capsys):
+    fixture = SKILL / "tests" / "fixtures" / "index-missing-a-skill.json"
+    assert checkable.main(["index", "--index", str(fixture), "--root", str(ROOT)]) == checkable.EXIT_FINDING
+    out = capsys.readouterr().out
+    assert "untagged:" in out and "fix: give each untagged skill an entry in" in out
 
 
 def test_index_without_a_roster_exits_3_when_one_is_required(tmp_path: Path):

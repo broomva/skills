@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
-"""Mutation check: remove each refusal in the checker, one at a time, and
-expect the suite to fail every time. A suite that still passes with a refusal
-removed is not testing that refusal.
+"""Mutation check for scripts/checkable.py.
 
-    python3 tests/mutate.py        # exit 0 when every mutant is killed
+Two kinds of mutant, one at a time:
+
+  refusal    a statement that records a refusal (`add(...)`, `invalid(...)`)
+             is replaced by `pass`
+  condition  the test of an `if` or `elif` is negated
+
+in the functions that decide something: shape, check, replay, pin_state,
+index_report and route. A mutant is killed only when pytest exits 1, which
+means a test failed. Any other status (a collection error, an interrupted
+run) is reported as an error and fails this check, because it is not
+evidence that a test noticed the change.
+
+    python3 tests/mutate.py            # exit 0 when every mutant is killed
+    python3 tests/mutate.py --list     # print the mutation sites and stop
 """
 from __future__ import annotations
 
+import argparse
+import ast
+import concurrent.futures
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -16,22 +29,76 @@ import tempfile
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
+DECIDERS = ("shape", "check", "replay", "pin_state", "index_report", "route")
+REFUSERS = ("add", "invalid")
+
 # The suite runs on a copy outside the repository, so the settings that make
 # CI require the repository's roster do not apply to it.
 SUITE_ENV = {k: v for k, v in os.environ.items() if not k.startswith("CHECKABLE_REQUIRE_")}
 SUITE_ENV["PYTHONDONTWRITEBYTECODE"] = "1"
 
-REFUSAL = re.compile(r'add\("(C\d)", "FAIL",')
+# The timing tests exercise _run, which is not mutated, and they dominate the
+# suite's run time.
+SUITE_ARGS = ["-q", "-x", "-p", "no:cacheprovider", "-k", "not timeout"]
+
+
+def sites(source: str) -> list[dict]:
+    """Every mutation site, each with the lines that replace its span."""
+    tree = ast.parse(source)
+    lines = source.splitlines(keepends=True)
+    found: list[dict] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef) or function.name not in DECIDERS:
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                called = node.value.func
+                if isinstance(called, ast.Name) and called.id in REFUSERS:
+                    indent = lines[node.lineno - 1][: node.col_offset]
+                    found.append(
+                        {
+                            "kind": "refusal",
+                            "function": function.name,
+                            "line": node.lineno,
+                            "start": (node.lineno, 0),
+                            "end": (node.end_lineno, len(lines[node.end_lineno - 1].rstrip("\n"))),
+                            "text": f"{indent}pass",
+                        }
+                    )
+            if isinstance(node, ast.If):
+                test = node.test
+                original = ast.get_source_segment(source, test)
+                found.append(
+                    {
+                        "kind": "condition",
+                        "function": function.name,
+                        "line": test.lineno,
+                        "start": (test.lineno, test.col_offset),
+                        "end": (test.end_lineno, test.end_col_offset),
+                        "text": f"not ({original})",
+                    }
+                )
+    found.sort(key=lambda s: (s["start"], s["kind"]))
+    return found
+
+
+def apply(source: str, site: dict) -> str:
+    lines = source.splitlines(keepends=True)
+    (start_line, start_col), (end_line, end_col) = site["start"], site["end"]
+    # ast columns are UTF-8 byte offsets.
+    head = lines[start_line - 1].encode()[:start_col].decode()
+    tail = lines[end_line - 1].encode()[end_col:].decode()
+    return "".join(lines[: start_line - 1]) + head + site["text"] + tail + "".join(lines[end_line:])
 
 
 def run_suite(copy: Path) -> int:
     # No bytecode cache: two mutants of the same length written in the same
     # second would otherwise share one cached module, and a result would be
-    # credited to the wrong refusal.
+    # credited to the wrong site.
     for cache in copy.rglob("__pycache__"):
         shutil.rmtree(cache, ignore_errors=True)
     return subprocess.run(
-        [sys.executable, "-B", "-m", "pytest", str(copy / "tests" / "test_checkable.py"), "-q", "-x", "-p", "no:cacheprovider"],
+        [sys.executable, "-B", "-m", "pytest", str(copy / "tests" / "test_checkable.py"), *SUITE_ARGS],
         capture_output=True,
         text=True,
         env=SUITE_ENV,
@@ -39,33 +106,67 @@ def run_suite(copy: Path) -> int:
 
 
 def main() -> int:
-    survivors = []
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--list", action="store_true", help="print the mutation sites and stop")
+    parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
+    args = parser.parse_args()
+
+    original = (SKILL / "scripts" / "checkable.py").read_text(encoding="utf-8")
+    all_sites = sites(original)
+    if args.list:
+        for site in all_sites:
+            print(f"{site['kind']:<9} {site['function']}:{site['line']}")
+        print(f"{len(all_sites)} sites")
+        return 0
+    if not all_sites:
+        print("no mutation site found; the checker's shape no longer matches this script")
+        return 2
+
     with tempfile.TemporaryDirectory() as tmp:
-        copy = Path(tmp) / "checkable"
-        shutil.copytree(SKILL, copy, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
-        target = copy / "scripts" / "checkable.py"
-        original = target.read_text(encoding="utf-8")
+        copies = []
+        for worker in range(max(1, args.workers)):
+            copy = Path(tmp) / f"w{worker}" / "checkable"
+            shutil.copytree(SKILL, copy, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+            copies.append(copy)
         # Three clean runs first: a suite that fails now and then would report
         # a kill it did not earn.
-        if any(run_suite(copy) != 0 for _ in range(3)):
-            print("the unmutated suite fails at least once in three runs; nothing can be concluded")
-            return 2
-        sites = list(REFUSAL.finditer(original))
-        if not sites:
-            print("no refusal found to remove; the pattern no longer matches the checker")
-            return 2
-        for site in sites:
-            line = original.count("\n", 0, site.start()) + 1
-            mutant = original[: site.start()] + "(lambda *a: None)(" + original[site.start() + len("add(") :]
-            target.write_text(mutant, encoding="utf-8")
-            if run_suite(copy) == 0:
-                survivors.append(f"{site.group(1)} at line {line}")
+        for _ in range(3):
+            status = run_suite(copies[0])
+            if status != 0:
+                print(f"the unmutated suite exits {status}; nothing can be concluded")
+                return 2
+
+        def judge(job: tuple[int, dict]) -> tuple[dict, int]:
+            number, site = job
+            copy = copies[number % len(copies)]
+            return site, _mutant_status(copy, original, site)
+
+        # One mutant per copy at a time: a worker owns its copy for the whole run.
+        results: list[tuple[dict, int]] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(copies)) as pool:
+            queues = [[(n, s) for n, s in enumerate(all_sites) if n % len(copies) == w] for w in range(len(copies))]
+            futures = [pool.submit(lambda jobs=jobs: [judge(job) for job in jobs]) for jobs in queues]
+            for future in futures:
+                results.extend(future.result())
+
+    survived = [site for site, status in results if status == 0]
+    errors = [(site, status) for site, status in results if status not in (0, 1)]
+    killed = sum(1 for _, status in results if status == 1)
+    print(f"{killed}/{len(all_sites)} mutants killed")
+    for site in sorted(survived, key=lambda s: s["start"]):
+        print(f"  survived: {site['kind']} in {site['function']} at line {site['line']}")
+    for site, status in sorted(errors, key=lambda e: e[0]["start"]):
+        print(f"  error (pytest exit {status}, not a kill): {site['kind']} in {site['function']} at line {site['line']}")
+    return 1 if survived or errors else 0
+
+
+def _mutant_status(copy: Path, original: str, site: dict) -> int:
+    target = copy / "scripts" / "checkable.py"
+    target.write_text(apply(original, site), encoding="utf-8")
+    try:
+        return run_suite(copy)
+    finally:
         target.write_text(original, encoding="utf-8")
-    killed = len(sites) - len(survivors)
-    print(f"{killed}/{len(sites)} mutants killed")
-    for survivor in survivors:
-        print(f"  survived: {survivor}")
-    return 1 if survivors else 0
 
 
 if __name__ == "__main__":

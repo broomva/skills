@@ -152,3 +152,16 @@ npx remotion render SkillsShowcase out/skills-showcase.gif --every-nth-frame=3
 ## Code of Conduct
 
 Be respectful and constructive. We follow the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
+
+## Adding or removing a skill: place it in the checkable index
+
+`skills/governance/checkable/references/index.json` lists every skill either as
+an entry (the part of a checkable statement it serves) or under `no_role`. The
+`test-checkable` workflow fails when a skill on disk is in neither list, or when
+the index names a skill that is gone. When you add a skill, add its name to
+`no_role` unless it verifies, gates, orders or records agent work; when you
+remove one, remove its name. Check with:
+
+```bash
+python3 skills/governance/checkable/scripts/checkable.py index --require-roster
+```

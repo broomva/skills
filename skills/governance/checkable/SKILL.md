@@ -81,19 +81,26 @@ under, and a monthly close.
 
 | Code | Invariant | Refused when |
 |---|---|---|
-| C1 | Claims are pinned to a base | The claims differ from `--base`, or a claim is accepted while the statement is not at the base |
-| C2 | An accepted claim carries a receipt | `receipt.revision`, `receipt.replay` or `receipt.result` is missing or contradicts the status |
+| C1 | The statement matches the base | Anything except a claim's `status` and `receipt` differs from `--base`, or a claim is accepted while the statement is not at the base |
+| C2 | An accepted claim carries a receipt | `receipt.revision`, `receipt.replay` or `receipt.result` is missing or contradicts the status; for a proof or replay claim, `receipt.replay` is not the claim's own `check` |
 | C3 | Every check can fail | A verifier lacks the fields that let it fail for its rung |
 | C4 | The verifier's origin differs from the performer's | A performer judges its own work, or a judgment names no model or person |
-| C5 | Order is declared | Two actions, or one irreversible action, with no `flow` |
-| C6 | Actions are classed by reversibility | No class, no `undo` for a reversible action, or no gate on an irreversible one |
+| C5 | Order is declared | Two actions, or one irreversible action, with no `flow.steps`; an action missing from the steps; a required claim placed after its action |
+| C6 | Actions are classed by reversibility | No class, no `undo` for a reversible or compensable action, or an irreversible action whose gate is missing, is a performer, or is a claim weaker than proof or replay |
 | C7 | Every hand-off passes a check | A `feeds` hop names no checking claim, or no place is given for corrections |
-| C8 | The remainder is written down | `unverified` is missing, or a claim on rung `none` is not named in it |
+| C8 | The remainder is written down | `unverified` is missing, or a claim on rung `none` does not start one of its entries as `<id>: ...` |
 
-C1 is the one that makes a claims file something the performer cannot quietly
-edit: the base revision declares the claims, and changing one means landing the
-change on the base first. Status and receipts are excluded from the comparison,
-because they move as the work proceeds.
+C0 comes first: the statement is read strictly. A value of the wrong type, a
+key this format does not define, or a key written twice is refused, and the
+other invariants are not decided until the shape is right. Ids are lower-case
+letters, digits and hyphens. An origin is `code`, `sensor:<name>`,
+`model:<provider>` or `human:<role>`, in lower case with no spaces, so the same
+performer cannot be written two ways.
+
+C1 is what stops a performer quietly editing its own contract: the base
+revision declares the statement, and changing it means landing the change on
+the base first. With `--base`, `check` exits 3 when the comparison could not be
+made, including when the statement is not on the base yet.
 
 ## The verification ladder
 
@@ -105,13 +112,15 @@ Give each claim the strongest rung it can afford.
 | `replay` | same inputs, same result | `check`, `rejects` | tests | recomputing a tax from the ledger |
 | `measurement` | an independent sensor on the world | `sensor`, `positive_control`, `falsification_criterion` | production metrics | a bank statement, a lab assay |
 | `judgment` | an independent judge and a fixed rubric | `rubric`, `pass_rule` | cross-model review | a second medical opinion |
-| `track-record` | a prediction scored later | `prediction_recorded`, `scored_by` | revert rate | forecast calibration, a trial period |
-| `none` | nothing; confinement only | nothing | n/a | taste, strategy |
+| `track-record` | a prediction scored later | `prediction_recorded` (a date), `scored_by` | revert rate | forecast calibration, a trial period |
+| `none` | nothing; confinement only | no verifier | n/a | taste, strategy |
 
 `rejects` is a command that must exit non-zero: a recorded case the check
-refuses. A claim on rung `none` may guard only reversible actions, cannot be
-accepted, and must appear in `unverified`. Only a `proof` or `replay` claim, or
-a named person, can gate an irreversible action.
+refuses. `rejects_exit` optionally fixes the exact status it must end with, and
+`accepts` optionally adds a case that must pass. A claim on rung `none` may
+guard only reversible actions, cannot be accepted, and must be named in
+`unverified`. Only a `proof` or `replay` claim, or a named person who is not a
+performer, can gate an irreversible action.
 
 ## Procedure
 
@@ -122,13 +131,14 @@ a named person, can gate an irreversible action.
    and who or what looks. If the answer is the performer, find another origin.
 4. **Class every action.** Can it be undone, and how far does it reach? Gate
    the irreversible ones.
-5. **Declare the order.** Either `flow.steps`, or `flow.ref` to a flow
-   definition.
+5. **Declare the order** as `flow.steps`. A claim an action requires comes
+   before that action. `flow.ref` may also name a flow definition file.
 6. **List what stays unverified.** An empty list needs a stated reason.
-7. **Land the statement on the base before any claim is accepted.** Then run
-   the work, record receipts, and send each correction to `learning`.
+7. **Land the statement on the base before the work starts.** Then run the
+   work, record receipts, and send each correction to `learning`.
 
-Run `check` after step 6 and `route` to see what to load.
+Run `check` after step 6 while drafting, `check --base` once the statement has
+landed, and `route` to see what to load.
 
 ## Commands
 
@@ -141,13 +151,18 @@ python3 scripts/checkable.py index  [--require-roster]
 
 | Command | Decides | Exit |
 |---|---|---|
-| `check` | whether the statement breaks an invariant; prints coverage | 0 holds, 1 a finding, 2 unreadable |
-| `replay` | for each `proof` and `replay` claim: the known-bad case is refused, the known-good case accepted, then the check runs | 0 all pass, 1 a check failed, 2 a control did not behave or nothing ran |
-| `route` | which indexed skills and services serve each part, for the statement's domains and rungs | 0 |
-| `index` | that every skill on disk is indexed or set aside, and nothing indexed is gone | 0, 1, or 3 when a roster was required and not found |
+| `check` | whether the statement breaks an invariant; prints coverage | 0 holds, 1 a finding, 2 unreadable, 3 `--base` was given and the comparison could not be made |
+| `replay` | for each `proof` and `replay` claim: the known-bad case is refused, the known-good case accepted when one is given, then the check runs | 0 all pass, 1 a check failed, 2 a control did not behave or nothing ran |
+| `route` | which indexed skills and services serve each part, for the statement's domains and rungs | 0, or 2 for a malformed statement |
+| `index` | that every skill on disk is indexed or set aside, and nothing indexed is gone | 0, 1, 2, or 3 when a roster was required and not found |
 
+Unreadable input exits 2 with one line on stderr, never a traceback.
 Statements are JSON, or YAML when PyYAML is installed. A YAML statement without
 PyYAML exits 2 and says so.
+
+In `replay`, a known-bad case that could not run proves nothing, so it is
+INVALID, not a refusal: a missing command (exit 126 or 127), a signal, or a
+timeout. A timeout stops the command's whole process group.
 
 `replay` runs the commands written in the statement, through a shell. Run it
 only on a statement you would run as a script.
@@ -182,11 +197,12 @@ rung can point at a record that `bstack verify measurement` accepts.
 
 `assets/flows/checkable.yaml` is a flow definition for the Maestro flow kernel.
 It has three steps. `pin` confirms the repository is at the commit you named.
-`statement` runs `check` against the base. `replay` runs the statement's proof
-and replay claims in a snapshot of that commit, so uncommitted work cannot
-satisfy them. The kernel records the exit status and an output hash for each
-step, and a passing `replay` prints the same text every time, so the hash can
-be compared with a run by hand.
+`statement` runs `check --base`, so it fails with exit 3 until the statement is
+on the base. `replay` runs the statement's proof and replay claims in a
+snapshot of that commit, so uncommitted work cannot satisfy them. The kernel
+records the exit status and an output hash for each step, and a passing
+`replay` prints the same text every time, so the hash can be compared with a
+run by hand.
 
 ```bash
 maestro flow start --definition assets/flows/checkable.yaml --params '{
@@ -197,8 +213,8 @@ maestro flow start --definition assets/flows/checkable.yaml --params '{
 ```
 
 Then drive it with `maestro flow next`, `claim` and `complete` until its status
-is terminal. Without Maestro, run `check` and then `replay` by hand in the same
-order.
+is terminal. Without Maestro, run `check --base` and then `replay` by hand in
+the same order.
 
 ## What the checker cannot tell
 
@@ -206,9 +222,20 @@ order.
 |---|---|
 | each claim has a check that could fail | that these are the right claims |
 | a verifier names an origin other than the performer | that the named judge ever ran |
-| a receipt names a revision and a replay command | that the receipt describes something that happened, unless you run `replay` |
+| origin `code` is accepted as independent | who wrote the code; a check the performer wrote is still the performer's |
+| `rejects` exits non-zero and `check` exits zero | that the two exercise the same thing; `check: "true"` with `rejects: "false"` passes `replay` |
+| a receipt names a revision, a replay and a result | that the receipt describes something that happened; `replay` runs the check now and does not read receipts |
 | an irreversible action names a gate | that the gate was honoured; that is the job of a hook or a flow kernel |
-| the claims match the base | who wrote the base; a base the performer committed alone proves only that the claims did not drift |
+| the statement matches the base | who wrote the base; a base the performer committed alone proves only that the statement did not drift |
+| a prediction carries a date | that it was written before the outcome was known |
+
+**Fields that only have to be present.** The checker requires these and cannot
+judge what they say, so any text satisfies it: `problem`, a claim's `text`,
+`rubric`, `pass_rule`, `sensor`, `positive_control`, `falsification_criterion`,
+`scored_by`, `reach`, `undo`, the two ends of a `feeds` hop,
+`learning.on_correction`, every `unverified` entry and
+`nothing_unverified_because`. They exist so a reader can judge them. A review
+of the statement, by someone other than its writer, is what gives them weight.
 
 The index was tagged from each skill's description, not its code.
 
@@ -234,5 +261,7 @@ python3 skills/governance/checkable/tests/mutate.py
 python3 skills/tooling/skillify/scripts/skillify_check.py skills/governance/checkable --run-tests
 ```
 
-`tests/mutate.py` removes each invariant's check in turn and expects the suite
-to fail every time.
+`tests/mutate.py` changes the checker one place at a time, in the functions
+that decide something: it removes each refusal and negates each `if`
+condition. It counts a mutant as killed only when a test fails, and any other
+pytest status as an error.

@@ -12,7 +12,7 @@
 # pinned commit, so it cannot read uncommitted work.
 flow: checkable
 version: 1
-params: [repo, head, statement, base, tool, bin?]
+params: [repo, head, statement, base, tool, "bin?"]
 workdir: "{{params.repo}}"
 
 nodes:
