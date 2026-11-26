@@ -149,8 +149,8 @@ and this skill is built to keep them:
    It serves the input directory over temporary loopback HTTP using the same
    real-path boundary as file mode. `--workers N` runs up to N independent pages
    in one browser and compares the resulting frames against a fresh page when
-   verification is enabled. The default is one page. Add `--webgl` / `--transparent` (RGBA PNG alpha via `omitBackground: true`)` to request
-   ANGLE and WebGL flags for shader-based scenes.
+   verification is enabled. The default is one page. Add `--webgl` to request ANGLE and WebGL flags for shader-based scenes, and
+   `--transparent` for RGBA PNG alpha (`omitBackground: true`).
 
    | Exit | Meaning |
    |---|---|
