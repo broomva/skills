@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "broomva-skills",
-      "description": "Every broomva/skills skill in one plugin: 116 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
+      "description": "Every broomva/skills skill in one plugin: 120 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
       "source": {
         "source": "local",
         "path": "./"
@@ -33,7 +33,7 @@
     },
     {
       "name": "audio",
-      "description": "Audio & music skills from broomva/skills: livecoding, omnivoice, talkback.",
+      "description": "Audio & music skills from broomva/skills: livecoding, omnivoice, soundcraft, talkback.",
       "source": {
         "source": "local",
         "path": "./skills"
@@ -117,7 +117,7 @@
     },
     {
       "name": "governance",
-      "description": "Governance & control skills from broomva/skills: agentic-control-kernel, architecture-design-principles, autoreview, bstack, correct, cross-review, dogfood, harness-engineering-playbook, keel, legal-readiness, spec-contract, unhobble.",
+      "description": "Governance & control skills from broomva/skills: agentic-control-kernel, architecture-design-principles, autoreview, bstack, checkable, correct, cross-review, dogfood, harness-engineering-playbook, keel, legal-readiness, spec-contract, unhobble.",
       "source": {
         "source": "local",
         "path": "./skills"
@@ -299,7 +299,7 @@
     },
     {
       "name": "tooling",
-      "description": "Skill & prompt tooling skills from broomva/skills: attempt-audit, audit-harness-usage, broomva-cli, disambiguate, make-spec, mod-anything, prompt-library, prove-the-negative, skillify, skills-catalog.",
+      "description": "Skill & prompt tooling skills from broomva/skills: agent-native-apps, attempt-audit, audit-harness-usage, broomva-cli, disambiguate, make-spec, mod-anything, prompt-library, prove-the-negative, skillify, skills-catalog.",
       "source": {
         "source": "local",
         "path": "./skills"
@@ -327,7 +327,7 @@
     },
     {
       "name": "video",
-      "description": "Video & multimedia skills from broomva/skills: brainrot-for-good, content-engine, creative-review, launch-video, ltx-video, motion-lab, reel-loop, video-cut.",
+      "description": "Video & multimedia skills from broomva/skills: brainrot-for-good, content-engine, creative-review, filmcraft, launch-video, ltx-video, motion-lab, reel-loop, video-cut.",
       "source": {
         "source": "local",
         "path": "./skills"

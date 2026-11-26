@@ -3,6 +3,7 @@
 //
 //   node render.mjs anim.html --seconds 6 --fps 24 [--width 1080 --height 1080]
 //        [--scale 1] [--out out] [--every 12] [--verify | --verify-all] [--mp4] [--no-sheet] [--allow-static]
+//        [--serve] [--workers 1] [--webgl] [--transparent]
 //
 // Frames are 0..N-1 (N = seconds * fps): frame N is frame 0 again, and rendering
 // it is the hiccup at a loop seam. Each frame is the page frozen at t = i / fps: the
@@ -54,12 +55,13 @@
 
 import { createRequire } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { mkdirSync, writeFileSync, rmSync, existsSync, statSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { createReadStream, mkdirSync, writeFileSync, rmSync, existsSync, statSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 function parseArgs(argv) {
-  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, verifyAll: false, mp4: false, sheet: true, allowStatic: false };
+  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, verifyAll: false, mp4: false, sheet: true, allowStatic: false, serve: false, workers: 1, webgl: false, transparent: false };
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -79,6 +81,13 @@ function parseArgs(argv) {
     else if (a === '--mp4') o.mp4 = true;
     else if (a === '--no-sheet') o.sheet = false;
     else if (a === '--allow-static') o.allowStatic = true;
+    else if (a === '--serve') o.serve = true;
+    else if (a === '--workers') {
+      o.workers = Number(val());
+      if (!Number.isSafeInteger(o.workers) || o.workers < 1) throw new Error('--workers must be a positive integer');
+    }
+    else if (a === '--webgl') o.webgl = true;
+    else if (a === '--transparent') o.transparent = true;
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
     else pos.push(a);
   }
@@ -89,6 +98,67 @@ function parseArgs(argv) {
   }
   if (Math.round(o.seconds * o.fps) < 1) throw new Error('--seconds x --fps rounds to zero frames');
   return o;
+}
+
+const MIME_TYPES = new Map(Object.entries({
+  '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.avif': 'image/avif',
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.otf': 'font/otf',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.glsl': 'text/plain; charset=utf-8', '.vert': 'text/plain; charset=utf-8',
+  '.frag': 'text/plain; charset=utf-8', '.wasm': 'application/wasm',
+}));
+
+async function serveDirectory(file, blocked) {
+  const root = path.dirname(file);
+  let host;
+  const server = createServer((req, res) => {
+    let real, stats;
+    try {
+      if (req.headers.host !== host || !['GET', 'HEAD'].includes(req.method)) throw new Error();
+      const pathname = decodeURIComponent(req.url.split('?')[0]);
+      if (!pathname.startsWith('/') || pathname.includes('\\')
+          || pathname.split('/').some((seg) => seg.startsWith('.'))) throw new Error();
+      real = realpathSync(path.resolve(root, '.' + pathname));
+      const rel = path.relative(root, real);
+      if (!rel || path.isAbsolute(rel) || rel.split(path.sep).some((seg) => seg.startsWith('.'))) throw new Error();
+      stats = statSync(real);
+      if (!stats.isFile()) throw new Error();
+    } catch {
+      blocked.add('http://' + host + req.url);
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': MIME_TYPES.get(path.extname(real).toLowerCase()) || 'application/octet-stream',
+      'Content-Length': stats.size,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (req.method === 'HEAD') {
+      res.end();
+    } else {
+      const stream = createReadStream(real);
+      stream.on('error', () => res.destroy());
+      res.on('close', () => stream.destroy());
+      stream.pipe(res);
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  host = '127.0.0.1:' + server.address().port;
+  return { server, url: new URL('http://' + host + '/' + encodeURIComponent(path.basename(file))) };
+}
+
+async function stopServer(server) {
+  await new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  });
 }
 
 async function loadPlaywright() {
@@ -260,7 +330,7 @@ async function openAt(browser, o, url, probeTimes = []) {
     }
     const first = await frameAt(page, 0, errors);
     if (first.timedOut) return { page, errors, blocked, createdAnimations, aborted: true };
-    await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+    await page.screenshot({ omitBackground: Boolean(o.transparent), timeout: FRAME_TIMEOUT_MS });
   } catch (e) {
     errors.push(String(e.message || e).split('\n')[0]);
     return { page, errors, blocked, createdAnimations, aborted: true };
@@ -287,14 +357,14 @@ async function frameAt(page, t, errors = []) {
   }
 }
 
-async function drifts(page, t, errors) {
+async function drifts(page, t, errors, transparent = false) {
   // Seek t, capture, wait, capture again: a frozen frame must not change.
   const info = await frameAt(page, t, errors);
   if (info.timedOut) return { drift: false, timedOut: true };
   try {
-    const a = await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+    const a = await page.screenshot({ omitBackground: Boolean(transparent), timeout: FRAME_TIMEOUT_MS });
     await page.waitForTimeout(DRIFT_WAIT_MS);
-    const b = await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+    const b = await page.screenshot({ omitBackground: Boolean(transparent), timeout: FRAME_TIMEOUT_MS });
     return { drift: !a.equals(b), timedOut: false };
   } catch (e) {
     errors.push(`drift capture t=${t}: ${String(e.message || e).split('\n')[0]}`);
@@ -371,8 +441,8 @@ async function main() {
   const framesDir = path.join(outDir, 'frames');
   const framePath = (i) => path.join(framesDir, `${String(i).padStart(4, '0')}.png`);
 
-  const url = new URL(pathToFileURL(realpathSync(path.resolve(o.file))).href); // a symlinked input loads its target
-  url.searchParams.set('t', '0');
+  const file = realpathSync(path.resolve(o.file)); // a symlinked input loads its target
+  const workers = Math.min(N, o.workers);
 
   const { chromium } = await loadPlaywright();
   // Only now touch the output: remove earlier frame PNGs (NNNN.png) and nothing else.
@@ -386,15 +456,22 @@ async function main() {
   // and this renderer's own earlier outputs, so an aborted or --no-sheet run never
   // leaves a previous run's contact sheet, MP4 or manifest looking current
   for (const f of ['contact.png', 'anim.mp4', 'manifest.json']) rmSync(path.join(outDir, f), { force: true });
-  const browser = await chromium.launch();
+  let browser, served;
+  const httpBlocked = new Set();
   const manifest = { file: o.file, seconds: o.seconds, fps: o.fps, frames: N, render_range: [0, N - 1],
     ...(Math.abs(o.seconds * o.fps - N) > 1e-9 ? { note: `seconds x fps = ${o.seconds * o.fps}, rounded to ${N} frames` } : {}),
-    width: o.width, height: o.height, scale: o.scale, frames_dir: framesDir };
+    width: o.width, height: o.height, scale: o.scale, frames_dir: framesDir,
+    ...(o.workers > 1 ? { workers } : {}) };
   // Findings are collected first and turned into ONE exit code at the end, so an
   // error raised by a late pass (drift, verify) still counts.
   const flags = { impure: false, errors: false, drift: false, static: false, mp4: false };
   let aborted = false;
   try {
+    if (o.serve) served = await serveDirectory(file, httpBlocked);
+    const url = served?.url || pathToFileURL(file);
+    url.searchParams.set('t', '0');
+    const args = o.webgl ? ['--use-gl=angle', '--enable-webgl', '--ignore-gpu-blocklist'] : [];
+    browser = await chromium.launch({ args });
     const probeTimes = Array.from({ length: N }, (_, i) => i / o.fps);
     const opened = await openAt(browser, o, url.href, probeTimes);
     const { page, errors, blocked, createdAnimations } = opened;
@@ -404,35 +481,74 @@ async function main() {
     // Early drift sample, before the frame loop: a one-shot intro that plays for a
     // while after load and then stops corrupts the first frames and is gone by the
     // time the post-render sample runs (P20 round 5).
-    const early = aborted ? { drift: false, timedOut: false } : await drifts(page, 0, errors);
+    const early = aborted ? { drift: false, timedOut: false } : await drifts(page, 0, errors, o.transparent);
     if (early.timedOut) { aborted = true; manifest.aborted_at_frame = 0; }
     const before = aborted ? { raf: 0, interval: 0 }
       : await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
-    let drive = null;
-    for (let i = 0; i < N && !aborted; i++) {
-      const info = await frameAt(page, i / o.fps, errors);
-      if (info.timedOut) {
-        // A hung renderAt hangs every later frame too (a never-settling promise, or
-        // a synchronous loop that also blocks screenshots): stop instead of paying
-        // the timeout N times, and still write the manifest.
-        aborted = true;
-        manifest.aborted_at_frame = i;
-        break;
+    const renderFrames = async (worker, start) => {
+      const { page: workerPage, errors: workerErrors } = worker;
+      let drive = null;
+      for (let i = start; i < N && !aborted; i += workers) {
+        const info = await frameAt(workerPage, i / o.fps, workerErrors);
+        if (info.timedOut) {
+          // A hung renderAt hangs every later frame too. Stop all workers and
+          // keep the manifest with the frame where the timeout occurred.
+          aborted = true;
+          manifest.aborted_at_frame = Math.min(manifest.aborted_at_frame ?? i, i);
+          break;
+        }
+        if (drive === null && !info.threw) drive = info;
+        try {
+          await workerPage.screenshot({ path: framePath(i), omitBackground: Boolean(o.transparent), timeout: FRAME_TIMEOUT_MS });
+        } catch (e) {
+          workerErrors.push(`screenshot(${i}): ${String(e.message || e).split('\n')[0]}`);
+          aborted = true;
+          manifest.aborted_at_frame = Math.min(manifest.aborted_at_frame ?? i, i);
+          break;
+        }
       }
-      if (drive === null && !info.threw) drive = info;
-      try {
-        await page.screenshot({ path: framePath(i), timeout: FRAME_TIMEOUT_MS });
-      } catch (e) {
-        errors.push(`screenshot(${i}): ${String(e.message || e).split('\n')[0]}`);
+      return drive;
+    };
+    let drive = null;
+    let additional = [];
+    let workerRafDelta = 0;
+    let workerIntervals = 0;
+    if (!aborted) {
+      // Each fresh page runs the same ownership probe before seeking its own
+      // disjoint frame indices. The verification page stays independent.
+      additional = await Promise.all(Array.from({ length: workers - 1 },
+        () => openAt(browser, o, url.href, probeTimes)));
+      if (additional.some((worker) => worker.aborted)) {
         aborted = true;
-        manifest.aborted_at_frame = i;
-        break;
+        manifest.aborted_at_frame = 0;
+      }
+      const workerBefore = aborted ? additional.map(() => ({ raf: 0, interval: 0 }))
+        : await Promise.all(additional.map((w) =>
+            w.page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }))
+          ));
+      const drives = await Promise.all([opened, ...additional].map(renderFrames));
+      drive = drives.find(Boolean) || null;
+      for (let wi = 0; wi < additional.length; wi++) {
+        const worker = additional[wi];
+        errors.push(...worker.errors);
+        blocked.push(...worker.blocked);
+        if (!aborted) {
+          try {
+            const wa = await worker.page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
+            workerRafDelta += Math.max(0, wa.raf - workerBefore[wi].raf);
+            workerIntervals += wa.interval;
+          } catch {}
+          await worker.page.close();
+        }
       }
     }
     manifest.driven_by = drive
       ? { renderAt: drive.drew, animations: drive.anims, smil: drive.smil, page_owned: drive.page_owned } : null;
     // the probe's findings first, then the capture calls'
-    const created = [...createdAnimations, ...(page.__mlCaptureCreated || [])];
+    const created = [
+      ...createdAnimations, ...(page.__mlCaptureCreated || []),
+      ...additional.flatMap((worker) => [...worker.createdAnimations, ...(worker.page.__mlCaptureCreated || [])]),
+    ];
     if (created.length) {
       manifest.renderat_running_animations = created;
       manifest.warning = `${describeCreatedAnimation(created[0])} was running after the renderAt call at frame t=${created[0].frame_time}: it runs on the wall clock`;
@@ -443,7 +559,7 @@ async function main() {
       const after = await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
       // Diagnostic: a paused GSAP timeline keeps its ticker scheduling frames while
       // drawing nothing, so a count alone is not evidence of a live loop.
-      manifest.loop_probe = { raf_during_render: after.raf - before.raf, intervals: after.interval };
+      manifest.loop_probe = { raf_during_render: (after.raf - before.raf) + workerRafDelta, intervals: after.interval + workerIntervals };
       // page-owned animations are not driven by the renderer; with no renderAt
       // there are none (the probe only runs when renderAt exists)
       if (drive && !drive.drew && drive.anims - drive.page_owned === 0 && drive.smil === 0) {
@@ -463,7 +579,7 @@ async function main() {
       const driftPicks = [...new Set([0, Math.floor(N / 2), N - 1])];
       const drifting = [];
       for (const i of driftPicks) {
-        const d = await drifts(page, i / o.fps, errors);
+        const d = await drifts(page, i / o.fps, errors, o.transparent);
         if (d.drift) drifting.push(i);
         if (d.timedOut) { aborted = true; manifest.aborted_at_frame = i; break; }
       }
@@ -491,6 +607,7 @@ async function main() {
         : [...new Set([0, Math.floor(N / 2), N - 1])].filter((i) => i >= 0);
       const v = await openAt(browser, o, url.href, probeTimes);
       errors.push(...v.errors.map((e) => `verify: ${e}`));
+      blocked.push(...v.blocked);
       const { readFileSync } = await import('node:fs');
       const mismatches = [];
       let verifyAborted = v.aborted;
@@ -500,7 +617,7 @@ async function main() {
         if (info.timedOut) { verifyAborted = true; break; }
         let again;
         try {
-          again = await v.page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+          again = await v.page.screenshot({ omitBackground: Boolean(o.transparent), timeout: FRAME_TIMEOUT_MS });
         } catch (e) {
           errors.push(`verify screenshot(${i}): ${String(e.message || e).split('\n')[0]}`);
           verifyAborted = true;
@@ -550,7 +667,14 @@ async function main() {
   } finally {
     // A page stuck in a synchronous loop can stall a graceful close; do not wait forever.
     // unref: the fallback timer must not keep Node alive after a normal close.
-    await Promise.race([browser.close(), new Promise((r) => setTimeout(r, 5000).unref())]);
+    try {
+      if (browser) await Promise.race([browser.close(), new Promise((r) => setTimeout(r, 5000).unref())]);
+    } finally {
+      if (served) await stopServer(served.server);
+    }
+    manifest.blocked_requests = [...new Set([
+      ...(manifest.blocked_requests || []), ...httpBlocked,
+    ])];
   }
 
   if (o.mp4 && !aborted) {

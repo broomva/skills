@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 117 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 120 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (13)
 
@@ -39,7 +39,7 @@
 | `fleet-reconcile` | **Deprecated** alias of `fleet` (renamed in fleet 0.6.0, BRO-3122); forwards its scripts there for one release |
 | `fleet` | The Broomva fleet: every Claude Code and Paseo session, PR and loop the coordinators drive, and the workflows that manage it. reconcile is the hourly launchd tick (observe, classify, report, owner… |
 
-## Skill & prompt tooling — `skills/tooling/` (10)
+## Skill & prompt tooling — `skills/tooling/` (11)
 
 | Skill | What it does |
 |---|---|
@@ -51,8 +51,9 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 117 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 120 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
+| `agent-native-apps` | Build an agent-native app — a small web app installed as its own macOS app (Dock icon, menu bar) through Electron app shims, with a T3 Code thread, Claude Code or Codex wired in as the app's agent behind a tiered, version-bound permission gate; ships a host kit, a scaffold, a validator and an end-to-end check |
 
 ## Knowledge & memory — `skills/knowledge/` (9)
 
@@ -107,7 +108,7 @@
 | `seo-llmeo` | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
 | `social-intelligence` | Autonomous social engagement + knowledge extraction loop for Moltbook and X/Twitter |
 
-## Video & multimedia — `skills/video/` (8)
+## Video & multimedia — `skills/video/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -119,14 +120,16 @@
 | `video-cut` | Edit raw footage into a finished cut by conversation, fully local |
 | `motion-lab` | Directed, reproducible code-first motion: a render-contract linter, a Playwright freeze-frame renderer with a labelled contact sheet and purity check, and drift-free motion math (beats, springs, GIF timing) |
 | `reel-loop` | Run one short-form account as a loop: find the reels in a niche that broke out against their own creator's normal, take the best one apart (hook, structure, shots), write a new script in the… |
+| `filmcraft` | Thin terminal-first video production router and delivery-gate runner uniting Broomva's modular video, motion, design, and audio skills without duplicating them. Dissects references… |
 
-## Audio & music — `skills/audio/` (3)
+## Audio & music — `skills/audio/` (4)
 
 | Skill | What it does |
 |---|---|
 | `livecoding` | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a |
 | `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
 | `talkback` | Speak an explanation out loud while working in any project — tiered text-to-speech with a pluggable backend (ElevenLabs by default and quota-guarded, macOS `say` via `--fast` for free instant local… |
+| `soundcraft` | Design and verify sound for short films, product demos, motion graphics and launch videos. Use for real-recording Foley, music ducking and voice clarity, loudness and true-peak checks, clipping or… |
 
 ## Design & brand — `skills/design/` (9)
 
@@ -238,7 +241,7 @@
 
 ## Aggregates
 
-- **Total skills**: 117
+- **Total skills**: 120
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science

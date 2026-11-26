@@ -345,6 +345,21 @@
       "note": "stated priorities against where effort went"
     },
     {
+      "name": "filmcraft",
+      "kind": "skill",
+      "parts": [
+        "verifiers",
+        "flow"
+      ],
+      "rungs": [
+        "proof"
+      ],
+      "domains": [
+        "content"
+      ],
+      "note": "routes a film through the video skills and runs delivery gates that fail closed when a sibling gate is missing"
+    },
+    {
       "name": "finance-substrate",
       "kind": "skill",
       "parts": [
@@ -668,6 +683,20 @@
       "note": "a working session becomes a tested skill behind a gate"
     },
     {
+      "name": "soundcraft",
+      "kind": "skill",
+      "parts": [
+        "verifiers"
+      ],
+      "rungs": [
+        "proof"
+      ],
+      "domains": [
+        "content"
+      ],
+      "note": "loudness, true-peak, clipping and duration checks on a rendered mix"
+    },
+    {
       "name": "sourcer",
       "kind": "skill",
       "parts": [
@@ -924,6 +953,7 @@
     }
   ],
   "no_role": [
+    "agent-native-apps",
     "alkosto-wait-optimizer",
     "arcan-glass",
     "architecture-design-principles",

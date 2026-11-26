@@ -16,6 +16,11 @@ import tempfile
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
+# The suite runs on a copy outside the repository, so the settings that make
+# CI require the repository's roster do not apply to it.
+SUITE_ENV = {k: v for k, v in os.environ.items() if not k.startswith("CHECKABLE_REQUIRE_")}
+SUITE_ENV["PYTHONDONTWRITEBYTECODE"] = "1"
+
 REFUSAL = re.compile(r'add\("(C\d)", "FAIL",')
 
 
@@ -29,7 +34,7 @@ def run_suite(copy: Path) -> int:
         [sys.executable, "-B", "-m", "pytest", str(copy / "tests" / "test_checkable.py"), "-q", "-x", "-p", "no:cacheprovider"],
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env=SUITE_ENV,
     ).returncode
 
 

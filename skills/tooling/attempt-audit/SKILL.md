@@ -210,3 +210,20 @@ broken regardless of the unit tests.
 - **BRO-2190** — the skillify tier model; this is the worked **Tier D** example
 - `research/entities/pattern/default-off-channel-reads-as-absent-signal.md`
 - `research/entities/concept/carrier-state-failure.md` — the symptom class
+
+## Structured negative conclusions
+
+JSON output includes `claim_verdict`: `detected` when a complete scan found
+this shape, `not_detected` when a nonempty complete scan found none, or
+`inconclusive_no_positive_control` when scan liveness/coverage was not
+established (zero files, unreadable inputs or traversal errors — even if
+`findings` is nonempty). Findings and coverage are separate: an incomplete scan
+still reports any findings it encountered while keeping `claim_verdict`
+inconclusive and exit code 2.
+
+The scanner never emits `refuted`: its bounded syntactic search cannot falsify
+the claim that all absence results are properly controlled. Use
+`prove-the-negative --measurement` for controlled target-level falsification,
+with the target observation, same-path positive-control receipt, conditions and
+predeclared criterion. Do not convert a clean scanner exit into refutation of
+an empirical claim. Existing exit codes retain their meaning.

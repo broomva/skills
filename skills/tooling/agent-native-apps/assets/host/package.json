@@ -1,0 +1,28 @@
+{
+  "name": "agent-native-apps",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Host kit for agent-native apps: installs web apps as their own macOS apps through Electron app shims, with a gated bridge and agent harnesses (T3, Claude Code, Codex)",
+  "type": "module",
+  "main": "src/main.js",
+  "trustedDependencies": [
+    "electron"
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.9",
+    "electron": "45.5.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "install-app": "electron . install",
+    "test": "node --test 'test/*.test.js'",
+    "lint": "biome check src test scripts examples",
+    "format": "biome check --write src test scripts examples",
+    "e2e": "node scripts/e2e.mjs",
+    "postinstall": "node node_modules/electron/install.js",
+    "mutants": "node scripts/mutants.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

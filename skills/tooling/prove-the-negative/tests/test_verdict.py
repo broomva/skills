@@ -242,3 +242,120 @@ class TestSkippedIsAHoleNotAResult:
 
     def test_skipped_parses(self):
         assert parse_cases([{"name": "x", "kind": "assertion", "outcome": "skipped"}])[0].outcome == "skipped"
+
+
+@pytest.mark.parametrize('control', ['pass', 'fail', 'missing', 'error', 'skipped'])
+@pytest.mark.parametrize('target', ['detected', 'not_detected', 'error', 'skipped'])
+@pytest.mark.parametrize('absence_refutes', [True, False])
+def test_measurement_conclusions_require_controls_and_predeclared_falsification(control, target, absence_refutes):
+    from verdict import measurement_verdict
+    raw = {'claim': 'target generates signal', 'conditions': 'run-1, sensitivity 0.1',
+           'observation_ref': 'raw.json#target', 'control_ref': 'raw.json#control',
+           'falsification_criterion': 'no signal above threshold with live control',
+           'target_outcome': target, 'positive_control': control,
+           'absence_refutes': absence_refutes}
+    import jsonschema
+    result = measurement_verdict(raw)
+    schema = json.loads((SCRIPT.parents[1] / 'references/measurement.schema.json').read_text())
+    jsonschema.validate(result, schema)
+    actual = result['claim_verdict']
+    if control != 'pass':
+        assert actual == 'inconclusive_no_positive_control'
+    elif target in ('error', 'skipped'):
+        assert actual == 'inconclusive'
+    elif target == 'detected':
+        assert actual == 'detected'
+    else:
+        assert actual == ('refuted' if absence_refutes else 'not_detected')
+
+
+def test_measurement_control_requires_receipt():
+    from verdict import measurement_verdict
+    with pytest.raises(ValueError):
+        measurement_verdict({'claim': 'c', 'conditions': 'run', 'observation_ref': 'raw',
+                             'falsification_criterion': 'no signal', 'absence_refutes': True,
+                             'target_outcome': 'not_detected', 'positive_control': 'pass'})
+
+
+def test_json_cli_preserves_invalid_vs_refuted(tmp_path):
+    path = tmp_path / 'cases.json'
+    assertions = [{'name': 'boundary held', 'kind': 'assertion', 'outcome': 'fail'}]
+    for payload, expected, code in [
+        ([], 'inconclusive_no_positive_control', 2),
+        (assertions, 'inconclusive_no_positive_control', 2),
+        ([{'name': 'live', 'kind': 'control', 'outcome': 'pass'}] + assertions, 'refuted', 1),
+    ]:
+        path.write_text(json.dumps(payload), encoding='utf-8')
+        result = subprocess.run([sys.executable, str(SCRIPT), '--json', str(path)], capture_output=True, text=True)
+        assert result.returncode == code
+        assert json.loads(result.stdout)['claim_verdict'] == expected
+
+
+@pytest.mark.parametrize('extra', [{}, {'control_ref': None}])
+def test_missing_control_output_conforms_to_published_schema(extra):
+    import jsonschema
+    from verdict import measurement_verdict
+    raw = {'claim': 'target signal', 'conditions': 'run-1', 'observation_ref': 'raw',
+           'falsification_criterion': 'controlled null', 'absence_refutes': True,
+           'target_outcome': 'not_detected', 'positive_control': 'missing', **extra}
+    result = measurement_verdict(raw)
+    schema = json.loads((SCRIPT.parents[1] / 'references/measurement.schema.json').read_text())
+    jsonschema.validate(result, schema)
+    assert result['control_ref'] is None
+    assert result['claim_verdict'] == 'inconclusive_no_positive_control'
+
+
+@pytest.mark.parametrize('extra', [{'control_ref': {}}, {'run_id': 'unrecognized'}])
+def test_untyped_or_unknown_measurement_fields_are_invalid(extra):
+    from verdict import measurement_verdict
+    raw = {'claim': 'target signal', 'conditions': 'run-1', 'observation_ref': 'raw',
+           'falsification_criterion': 'controlled null', 'absence_refutes': True,
+           'target_outcome': 'not_detected', 'positive_control': 'missing', **extra}
+    with pytest.raises(ValueError):
+        measurement_verdict(raw)
+
+
+@pytest.mark.parametrize('overrides,expected_verdict,expected_code', [
+    ({'target_outcome': 'detected', 'positive_control': 'pass', 'absence_refutes': True}, 'detected', 0),
+    ({'target_outcome': 'not_detected', 'positive_control': 'pass', 'absence_refutes': True}, 'refuted', 1),
+    ({'target_outcome': 'not_detected', 'positive_control': 'pass', 'absence_refutes': False}, 'not_detected', 2),
+    ({'target_outcome': 'not_detected', 'positive_control': 'missing', 'absence_refutes': True}, 'inconclusive_no_positive_control', 2),
+    ({'target_outcome': 'skipped', 'positive_control': 'pass', 'absence_refutes': True}, 'inconclusive', 2),
+])
+def test_measurement_cli_exit_codes_and_json_contract(tmp_path, overrides, expected_verdict, expected_code):
+    import jsonschema
+    raw = {
+        'claim': 'target signal',
+        'conditions': 'run-1',
+        'observation_ref': 'raw.json#target',
+        'control_ref': 'raw.json#control',
+        'falsification_criterion': 'controlled null',
+        **overrides,
+    }
+    path = tmp_path / 'measurement.json'
+    path.write_text(json.dumps(raw), encoding='utf-8')
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), '--measurement', str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == expected_code
+    payload = json.loads(result.stdout)
+    assert payload['claim_verdict'] == expected_verdict
+    schema = json.loads((SCRIPT.parents[1] / 'references/measurement.schema.json').read_text(encoding='utf-8'))
+    jsonschema.validate(payload, schema)
+
+
+def test_measurement_cli_invalid_or_missing_input_exits_2_json(tmp_path):
+    bad = tmp_path / 'bad.json'
+    bad.write_text(json.dumps({'claim': ''}), encoding='utf-8')
+    for target in (bad, tmp_path / 'missing.json'):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), '--measurement', str(target)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 2
+        payload = json.loads(result.stdout)
+        assert payload['verdict'] == 'INVALID'
+        assert payload['claim_verdict'] == 'inconclusive'
