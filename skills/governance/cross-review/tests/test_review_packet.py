@@ -75,8 +75,16 @@ def test_each_role_must_supply_independent_falsifiable_reading(role, defect):
 
 
 def test_one_dispatch_cannot_pose_as_two_independent_agents():
+    for dup in ("skeptic", " skeptic "):
+        p = packet()
+        p["believer"]["dispatch_id"] = dup
+        with pytest.raises(ValueError):
+            module.validate(p)
+
+
+def test_unhashable_finding_claim_id_raises_value_error():
     p = packet()
-    p["believer"]["dispatch_id"] = p["skeptic"]["dispatch_id"]
+    p["skeptic"]["findings"][0]["claim_id"] = ["c1"]
     with pytest.raises(ValueError):
         module.validate(p)
 

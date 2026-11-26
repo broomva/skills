@@ -313,3 +313,49 @@ def test_untyped_or_unknown_measurement_fields_are_invalid(extra):
            'target_outcome': 'not_detected', 'positive_control': 'missing', **extra}
     with pytest.raises(ValueError):
         measurement_verdict(raw)
+
+
+@pytest.mark.parametrize('overrides,expected_verdict,expected_code', [
+    ({'target_outcome': 'detected', 'positive_control': 'pass', 'absence_refutes': True}, 'detected', 0),
+    ({'target_outcome': 'not_detected', 'positive_control': 'pass', 'absence_refutes': True}, 'refuted', 1),
+    ({'target_outcome': 'not_detected', 'positive_control': 'pass', 'absence_refutes': False}, 'not_detected', 2),
+    ({'target_outcome': 'not_detected', 'positive_control': 'missing', 'absence_refutes': True}, 'inconclusive_no_positive_control', 2),
+    ({'target_outcome': 'skipped', 'positive_control': 'pass', 'absence_refutes': True}, 'inconclusive', 2),
+])
+def test_measurement_cli_exit_codes_and_json_contract(tmp_path, overrides, expected_verdict, expected_code):
+    import jsonschema
+    raw = {
+        'claim': 'target signal',
+        'conditions': 'run-1',
+        'observation_ref': 'raw.json#target',
+        'control_ref': 'raw.json#control',
+        'falsification_criterion': 'controlled null',
+        **overrides,
+    }
+    path = tmp_path / 'measurement.json'
+    path.write_text(json.dumps(raw), encoding='utf-8')
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), '--measurement', str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == expected_code
+    payload = json.loads(result.stdout)
+    assert payload['claim_verdict'] == expected_verdict
+    schema = json.loads((SCRIPT.parents[1] / 'references/measurement.schema.json').read_text(encoding='utf-8'))
+    jsonschema.validate(payload, schema)
+
+
+def test_measurement_cli_invalid_or_missing_input_exits_2_json(tmp_path):
+    bad = tmp_path / 'bad.json'
+    bad.write_text(json.dumps({'claim': ''}), encoding='utf-8')
+    for target in (bad, tmp_path / 'missing.json'):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), '--measurement', str(target)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 2
+        payload = json.loads(result.stdout)
+        assert payload['verdict'] == 'INVALID'
+        assert payload['claim_verdict'] == 'inconclusive'

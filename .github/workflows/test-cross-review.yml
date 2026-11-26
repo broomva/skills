@@ -77,6 +77,11 @@ jobs:
           grep -q "41 passed, 0 failed, 0 skipped" /tmp/mp.out
           grep -q "41 accounted for" /tmp/mp.out
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Claim funnel contract
         run: |
           python3 -m pip install pytest

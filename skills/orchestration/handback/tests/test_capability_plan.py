@@ -57,11 +57,28 @@ def test_no_hallucinated_or_unauthorized_catalog_step(field):
 
 
 @pytest.mark.parametrize(
+    "field",
+    ["id", "operation", "owner", "settling_observation"],
+)
+def test_common_required_fields_are_enforced(field):
+    for bad in (None, "   "):
+        op = operation("executable_now")
+        if bad is None:
+            del op[field]
+        else:
+            op[field] = bad
+        with pytest.raises(ValueError):
+            module.validate([op])
+
+
+@pytest.mark.parametrize(
     "tier,field",
     [
+        ("request_quote", "substrate_ref"),
         ("request_quote", "missing_prerequisite"),
         ("request_quote", "promotion_check"),
         ("send_out", "external_executor"),
+        ("send_out", "handoff_artifact"),
         ("send_out", "return_evidence"),
     ],
 )

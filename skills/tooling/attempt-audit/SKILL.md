@@ -213,11 +213,13 @@ broken regardless of the unit tests.
 
 ## Structured negative conclusions
 
-JSON output includes `claim_verdict`: `detected` when this shape was found,
-`not_detected` when a nonempty complete scan found none, or
+JSON output includes `claim_verdict`: `detected` when a complete scan found
+this shape, `not_detected` when a nonempty complete scan found none, or
 `inconclusive_no_positive_control` when scan liveness/coverage was not
-established (zero files, unreadable inputs or traversal errors). Findings and
-coverage are separate: an incomplete scan can still contain findings.
+established (zero files, unreadable inputs or traversal errors — even if
+`findings` is nonempty). Findings and coverage are separate: an incomplete scan
+still reports any findings it encountered while keeping `claim_verdict`
+inconclusive and exit code 2.
 
 The scanner never emits `refuted`: its bounded syntactic search cannot falsify
 the claim that all absence results are properly controlled. Use

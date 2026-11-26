@@ -47,9 +47,10 @@ def validate(packet: object) -> None:
         if not isinstance(review, dict):
             raise ValueError(f"{role}: object required")
         text(review.get("dispatch_id"), f"{role}.dispatch_id")
-        if review["dispatch_id"] in agents:
+        dispatch_id = review["dispatch_id"].strip()
+        if dispatch_id in agents:
             raise ValueError("three distinct dispatch receipts required")
-        agents.add(review["dispatch_id"])
+        agents.add(dispatch_id)
         if review.get("fresh_context") is not True:
             raise ValueError(f"{role}: fresh_context must be true")
         if review.get("artifact_hash") != packet["artifact_hash"]:
@@ -67,7 +68,11 @@ def validate(packet: object) -> None:
             if source not in packet["primary_sources"]:
                 raise ValueError(f"{role}: unknown raw source")
         for f in rows(review.get("findings"), f"{role}.findings"):
-            if not isinstance(f, dict) or f.get("claim_id") not in claims:
+            if (
+                not isinstance(f, dict)
+                or not isinstance(f.get("claim_id"), str)
+                or f["claim_id"] not in claims
+            ):
                 raise ValueError(f"{role}: finding needs a known claim_id")
             for key in ("reading", "evidence", "settling_observation", "disposition"):
                 text(f.get(key), f"{role}.{key}")
