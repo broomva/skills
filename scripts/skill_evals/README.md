@@ -370,7 +370,9 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
 ones the lift is computed on), with the same trials per case, and shows it as a third row
 beside the present and absent arms, computed exactly as they are, with a count of the
 replicate attempts that produced no signal. Two with-skill rows that land far apart say
-the run-to-run noise is large next to the lift. No number is computed across the arms:
+either that run-to-run noise is large next to the lift, or that the arms graded different
+trials (compare the trials column: an error in one arm drops that arm's trials); the rows
+do not say which. No number is computed across the arms:
 an A/A gap was tried and subtracted, because over unaligned trials it sat on a different
 scale from the lift and moved when one prompt errored in one arm. It applies no test and changes no verdict: six P20 rounds
 showed every inference built on it could be fooled by inputs this harness produces

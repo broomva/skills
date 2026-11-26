@@ -42,8 +42,9 @@ THE NOISE BAND (``--noise-band``, BRO-4110) — a description, not a test
 ``--noise-band`` runs the with-skill arm a second time on the positive cases (the
 replicate) and reports it as a third row beside the present and absent arms, computed
 by the same arm_stats() as they are, plus how many of its attempts produced no signal.
-Two with-skill rows that land far apart say the run-to-run noise is large next to the
-lift. It computes no cross-arm number, applies no test and changes no verdict. Six P20
+Two with-skill rows that land far apart say either that run-to-run noise is large next
+to the lift, or that the arms graded different trials (compare the trials column: an
+error in one arm drops that arm's trials); the rows do not say which. It computes no cross-arm number, applies no test and changes no verdict. Six P20
 rounds showed every number built across the arms (intervals, sign-flip gates, an A/A
 gap) could be fooled by inputs this harness produces: arms that run one after another,
 unequal trials per prompt, prompts with trigger checks only, a prompt that errors in
