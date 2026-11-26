@@ -466,3 +466,124 @@ def test_ffmpeg_gif_export_keeps_exact_loop_timing(tmp_path):
     assert report["frames"] == 144
     assert report["duration_s"] == pytest.approx(6.0, abs=0.011), report
 
+
+
+@needs_playwright
+class TestServeAndWorkers:
+    def test_serve_loads_local_modules_and_webgl_assets(self, tmp_path):
+        page = tmp_path / "source"
+        page.mkdir()
+        (page / "pose.mjs").write_text("export const shade = t => t * 2;")
+        (page / "motion.css").write_text("body { background: navy; backdrop-filter: blur(2px); }")
+        (page / "shader.frag").write_text("precision mediump float; void main(){gl_FragColor=vec4(1.0);}")
+        (page / "film #1.html").write_text("""<!doctype html>
+            <link rel="stylesheet" href="./motion.css">
+            <canvas width="160" height="90"></canvas>
+            <script type="module">
+              import {shade} from './pose.mjs';
+              const gl = document.querySelector('canvas').getContext('webgl', {preserveDrawingBuffer: true});
+              if (!gl) throw Error('WebGL unavailable');
+              const response = await fetch('./shader.frag');
+              if (getComputedStyle(document.body).backgroundColor !== 'rgb(0, 0, 128)'
+                  || !response.headers.get('content-type').startsWith('text/plain')) {
+                throw Error('unexpected stylesheet or shader response');
+              }
+              const shader = gl.createShader(gl.FRAGMENT_SHADER);
+              gl.shaderSource(shader, await response.text());
+              gl.compileShader(shader);
+              if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw Error(gl.getShaderInfoLog(shader));
+              window.renderAt = t => {
+                gl.clearColor(shade(t), 0, 0, 1);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+              };
+            </script>""")
+        out = tmp_path / "out"
+        result = render(str(page / "film #1.html"), out, "--seconds", "0.5", "--serve", "--workers", "2",
+                        "--webgl", "--verify", "--no-sheet")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert json.loads(result.stdout)["verify"]["pure"] is True
+        assert len(set(digests(out))) == 6
+
+    def test_serve_refuses_escape_hidden_files_and_directories_then_closes(self, tmp_path):
+        from urllib.error import URLError
+        from urllib.request import urlopen
+
+        page = tmp_path / "page"
+        external = tmp_path / "page-other"
+        page.mkdir()
+        external.mkdir()
+        (external / "secret").write_text("secret")
+        (page / "escape").symlink_to(external, target_is_directory=True)
+        (page / ".env").write_text("hidden")
+        (page / "assets").mkdir()
+        (page / "index.html").write_text("""<!doctype html><script type="module">
+            for (const path of ['escape/secret', '.env', '..%2Fpage-other/secret', 'assets/']) {
+              if ((await fetch(path)).status !== 404) throw Error('served forbidden path: ' + path);
+            }
+            window.renderAt = () => {};
+            </script>""")
+        out = tmp_path / "out"
+        r = render(str(page / "index.html"), out, "--seconds", "0.25", "--serve", "--no-sheet")
+        assert r.returncode == 0, r.stdout + r.stderr
+        blocked = json.loads(r.stdout)["blocked_requests"]
+        for suffix in ("escape/secret", ".env", "..%2Fpage-other/secret", "assets/"):
+            assert any(url.endswith("/" + suffix) for url in blocked)
+        with pytest.raises(URLError):
+            urlopen(blocked[0], timeout=2)
+
+    @pytest.mark.parametrize("fixture", ["good.html", "smil.html", "scrub_waapi.html"])
+    def test_parallel_worker_frames_match_serial(self, tmp_path, fixture):
+        serial, parallel = tmp_path / "serial", tmp_path / "parallel"
+        assert render(fixture, serial, "--no-sheet").returncode == 0
+        r = render(fixture, parallel, "--workers", "2", "--verify")
+        assert r.returncode == 0, r.stdout + r.stderr
+        m = json.loads(r.stdout)
+        assert m["workers"] == 2 and m["verify"]["pure"] is True
+        assert sorted(p.name for p in (parallel / "frames").glob("*.png")) == [f"{i:04}.png" for i in range(12)]
+        assert digests(serial) == digests(parallel)
+        assert (parallel / "contact.png").is_file()
+
+    def test_parallel_worker_verification_rejects_history(self, tmp_path):
+        r = render("history.html", tmp_path, "--workers", "2", "--verify-all", "--no-sheet")
+        assert r.returncode == 3 and json.loads(r.stdout)["verify"]["mismatches"]
+
+    @pytest.mark.parametrize("count", ["0", "-1", "1.5", "NaN"])
+    def test_worker_count_must_be_a_positive_integer(self, tmp_path, count):
+        r = render("good.html", tmp_path, "--workers", count)
+        assert r.returncode == 2 and "--workers" in r.stderr
+
+
+
+
+@needs_playwright
+def test_transparent_flag_preserves_png_alpha(tmp_path):
+    """--transparent passes omitBackground: true so transparent pages emit RGBA PNGs with alpha=0 background."""
+    html = tmp_path / "overlay.html"
+    html.write_text(
+        "<!doctype html><html><body style='margin:0;background:transparent'>"
+        "<div id='box' style='width:32px;height:32px;background:#0044ff'></div>"
+        "<script>window.renderAt = (t) => { document.getElementById('box').style.opacity = String(0.5 + 0.5 * t); };</script>"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out_trans"
+    r = subprocess.run(
+        ["node", str(SKILL / "scripts" / "render.mjs"), str(html),
+         "--seconds", "0.25", "--fps", "4", "--width", "64", "--height", "64",
+         "--out", str(out), "--transparent", "--verify", "--no-sheet"],
+        cwd=NODE_DIR, capture_output=True, text=True, timeout=180,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    png_path = out / "frames/0000.png"
+    png_bytes = png_path.read_bytes()
+    assert png_bytes[:8] == bytes([137, 80, 78, 71, 13, 10, 26, 10])
+    assert png_bytes[25] == 6, f"expected RGBA PNG (color_type=6), got {png_bytes[25]}"
+    if shutil.which("ffmpeg"):
+        rgba = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(png_path), "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+            capture_output=True, check=True,
+        ).stdout
+        assert len(rgba) == 64 * 64 * 4
+        # Bottom-right (x=60, y=60) must be fully transparent (alpha=0); top-left (x=10, y=10) must be visible (alpha>0)
+        assert rgba[(60 * 64 + 60) * 4 + 3] == 0
+        assert rgba[(10 * 64 + 10) * 4 + 3] > 100
