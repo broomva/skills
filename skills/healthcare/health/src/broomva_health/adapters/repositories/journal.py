@@ -144,6 +144,11 @@ class JsonlJournal:
         """Merge ``fields`` into ``day``'s entry and persist atomically. Returns the merged entry."""
         if not _is_iso_day(day):
             raise ValueError("date must be a real YYYY-MM-DD date")
+        if "safety_stop" in fields:
+            if fields["safety_stop"] is not True:
+                raise ValueError("safety_stop can only be True")
+            if set(fields) != {"safety_stop"}:
+                raise ValueError("safety_stop is recorded alone, with no other answers")
         if self.path.exists() and not self.path.is_file():
             raise ValueError(f"{self.path} exists and is not a regular file")
         if self.path.is_symlink():
@@ -151,7 +156,8 @@ class JsonlJournal:
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with contextlib.suppress(OSError):
             os.chmod(self.path.parent, 0o700)
-        lock_fd = os.open(self.path.parent / "journal.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+        lock_flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        lock_fd = os.open(self.path.parent / "journal.lock", lock_flags, 0o600)
         with os.fdopen(lock_fd, "w") as lock:
             self._acquire(lock)
             try:
@@ -190,9 +196,13 @@ class JsonlJournal:
         entries: dict[str, Any] = {}
         order: list[str] = []
         try:
-            lines = self.path.read_text(encoding="utf-8", errors="surrogateescape").splitlines()
+            text = self.path.read_text(encoding="utf-8", errors="surrogateescape")
         except FileNotFoundError:
             return entries, order
+        # Split strictly on LF (trimming a trailing CR), never str.splitlines(): Unicode
+        # line separators (\u2028, \u2029, \x85) inside JSON strings are valid JSONL content
+        # and must not split a record into corrupt fragments.
+        lines = [ln[:-1] if ln.endswith("\r") else ln for ln in text.split("\n")]
         for i, line in enumerate(lines):
             if not line.strip():
                 continue
@@ -221,6 +231,9 @@ class JsonlJournal:
             entries[k]
             if k.startswith("~")
             else json.dumps(entries[next(it)], ensure_ascii=False, allow_nan=False)
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
+            .replace("\x85", "\\u0085")
             for k in order
         ]
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".journal-", suffix=".tmp")

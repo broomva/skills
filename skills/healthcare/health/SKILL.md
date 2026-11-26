@@ -302,6 +302,7 @@ The L3 cadence is deliberate: skills compose; primitives stabilize. Don't promot
 
 **Per-workflow docs:**
 - [Workflows/Sync.md](Workflows/Sync.md)
+- [Workflows/CheckIn.md](Workflows/CheckIn.md)
 - [Workflows/MealLog.md](Workflows/MealLog.md)
 - [Workflows/Backfill.md](Workflows/Backfill.md)
 - [Workflows/Status.md](Workflows/Status.md)

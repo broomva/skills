@@ -74,7 +74,9 @@ def record(
     if parsed.get("safety_stop") is True and set(parsed) != {"safety_stop"}:
         # A safety stop stores the marker and nothing else (Workflows/CheckIn.md).
         raise typer.BadParameter("safety_stop=yes is recorded alone, with no other answers")
-    if day is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+    if day is not None and (
+        not day.isascii() or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day)
+    ):
         raise typer.BadParameter("--date must be YYYY-MM-DD")
     try:
         when = date.fromisoformat(day).isoformat() if day else date.today().isoformat()

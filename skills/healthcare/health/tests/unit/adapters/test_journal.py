@@ -394,3 +394,52 @@ def test_a_safety_stop_keeps_earlier_answers_that_day(tmp_path: Path) -> None:
     j.record("2026-01-15", {"safety_stop": True})
     assert j.read()["2026-01-15"]["body"] == "Okay"
     assert j.read()["2026-01-15"]["safety_stop"] is True
+
+
+def test_direct_record_enforces_safety_stop_alone(tmp_path: Path) -> None:
+    j = JsonlJournal(tmp_path / "journal.jsonl")
+    with pytest.raises(ValueError, match="alone"):
+        j.record("2026-01-15", {"safety_stop": True, "note": "must not persist"})
+    with pytest.raises(ValueError, match="True"):
+        j.record("2026-01-15", {"safety_stop": False})
+    assert not j.path.exists()
+
+
+def test_unicode_line_separators_do_not_split_jsonl_records(tmp_path: Path) -> None:
+    j = JsonlJournal(tmp_path / "journal.jsonl")
+    tricky = "line1\u2028line2\u2029line3\x85end"
+    j.record("2026-01-15", {"note": tricky})
+    # Write a second day to exercise a full read + rewrite cycle.
+    j.record("2026-01-16", {"body": "Okay"})
+    assert j.unparsed == []
+    entries = j.read()
+    assert entries["2026-01-15"]["note"] == tricky
+    assert len(j.path.read_text(encoding="utf-8").splitlines()) == 2
+    # Even a pre-existing file with literal unescaped U+2028 parses intact.
+    raw = '{"date": "2026-01-17", "note": "a\u2028b"}\n'
+    (tmp_path / "pre.jsonl").write_text(raw, encoding="utf-8")
+    j2 = JsonlJournal(tmp_path / "pre.jsonl")
+    assert j2.read()["2026-01-17"]["note"] == "a\u2028b"
+    assert j2.unparsed == []
+
+
+def test_symlinked_lock_file_is_refused(tmp_path: Path) -> None:
+    target = tmp_path / "target.txt"
+    target.write_text("untouched")
+    (tmp_path / "journal.lock").symlink_to(target)
+    with pytest.raises(OSError):
+        JsonlJournal(tmp_path / "journal.jsonl").record("2026-01-15", {"body": "Okay"})
+    assert target.read_text() == "untouched"
+
+
+def test_cli_rejects_non_ascii_date_digits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from broomva_health.cli.checkin import app
+
+    monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("BROOMVA_HEALTH_JOURNAL", raising=False)
+    r = CliRunner().invoke(
+        app, ["record", "body=Okay", "--date", "\u0662\u0660\u0662\u0666-\u0660\u0661-\u0661\u0665"]
+    )
+    assert r.exit_code == 2
+    assert "\u0662\u0660\u0662\u0666" not in r.output
+    assert not (tmp_path / "data" / "journal.jsonl").exists()
