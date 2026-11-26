@@ -1,14 +1,17 @@
 #!/usr/bin/env -S python3 -I
 """correct.py — set a repository up with a rule registry, and replay it.
 
-  correct.py init   [--root DIR] [--dry-run] [--force]
+  correct.py init   [--root DIR] [--dry-run] [--force] [--pack FILE ...]
       Give a repository its registry: the registry file with one proven rule
       (branch first), that rule's enforcer and its fixtures under scripts/, a
       governance policy file if there is none, and the hook entry in
       .claude/settings.json. Then replay the registry and exit with the replay's
       status. A repository that already has a registry gets nothing written and
       is replayed the same way. A repository whose existing gates and hooks have
-      no row yet exits 1 and lists them.
+      no row yet exits 1 and lists them. --pack FILE adds a pack's rows to the
+      registry init writes: a pack is the rows that prove hooks some other tool
+      installed (bstack ships one for the hooks `bstack bootstrap` installs).
+      init installs nothing for a pack; it only records and replays its rows.
   correct.py check  [--root DIR] [runner options ...]
       Replay every row against its real enforcer (scripts/rules_check.py in this
       skill): --ci, --json, --markdown, --only ID ..., --base REF, --replay-only.
@@ -129,6 +132,14 @@ def need_yaml() -> None:
                       "(python3 -m pip install --user pyyaml) and run the command again. Nothing written.")
 
 
+def yaml_module():
+    """PyYAML, found the way the runner finds it. need_yaml() has already said whether it is there."""
+    if site.getusersitepackages() not in sys.path:
+        sys.path.append(site.getusersitepackages())
+    import yaml  # noqa: PLC0415
+    return yaml
+
+
 # The registry versions this copy of the runner replays. A registry written for a later
 # version may carry fields this runner would ignore, and a row it ignores part of can pass
 # without being checked; so an unknown version is refused, not replayed.
@@ -152,9 +163,7 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
     if not registry.is_file():
         raise Refused(f"there is no registry at {registry}" + ("; run init first" if not named else
                       " (--registry is read relative to the current directory, as the runner reads it)"))
-    if site.getusersitepackages() not in sys.path:
-        sys.path.append(site.getusersitepackages())
-    import yaml  # noqa: PLC0415  (need_yaml ran first)
+    yaml = yaml_module()
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
@@ -171,6 +180,103 @@ def run_tool(script: str, root: Path, args: list[str]) -> int:
     sys.stdout.flush()  # what this command printed so far comes before the tool's own output
     sys.stderr.flush()
     return subprocess.run([sys.executable, "-I", str(HERE / script), *args], env=env, check=False).returncode
+
+
+PACK_KEYS = {"pack", "registry_version", "rules", "hooks_not_rules"}
+
+
+def take_packs(args: list[str]) -> tuple[list[str], list[str]]:
+    """(the files named with --pack FILE or --pack=FILE, the remaining arguments)."""
+    named: list[str] = []
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--pack":
+            named.append(args[i + 1] if i + 1 < len(args) else "")
+            i += 2
+            continue
+        if arg.startswith("--pack="):
+            named.append(arg.split("=", 1)[1])
+        else:
+            rest.append(arg)
+        i += 1
+    if "" in named:
+        raise Refused("--pack needs a file")
+    return named, rest
+
+
+def load_pack(path: Path) -> dict:
+    """A pack file, checked. A pack is data another tool ships for the hooks IT installs:
+    {pack: name, registry_version: N, rules: [rows], hooks_not_rules: {script: why}}. Anything
+    else in the file is refused, because a key init does not carry over (hosts, retired ...)
+    would be dropped without a word."""
+    yaml = yaml_module()
+    if not path.is_file():
+        raise Refused(f"there is no pack at {path}")
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise Refused(f"{path} is not readable YAML ({exc})") from exc
+    if not isinstance(data, dict):
+        raise Refused(f"{path} is not a pack: it is not a mapping")
+    unknown = sorted(set(data) - PACK_KEYS)
+    if unknown:
+        raise Refused(f"{path} has key(s) a pack does not carry: {', '.join(map(str, unknown))} "
+                      f"(a pack has {', '.join(sorted(PACK_KEYS))})")
+    if not isinstance(data.get("pack"), str) or not data["pack"].strip():
+        raise Refused(f"{path} does not name itself (`pack: <name>`)")
+    version = data.get("registry_version")
+    if type(version) is not int or version not in REGISTRY_VERSIONS:
+        raise Refused(f"{path} says `registry_version: {version!r}`, and this copy of the skill writes "
+                      f"registry version {' or '.join(map(str, REGISTRY_VERSIONS))}")
+    rules = data.get("rules")
+    if not isinstance(rules, list) or not rules or not all(
+            isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"] for r in rules):
+        raise Refused(f"{path}: `rules` is not a list of rows that each have an `id`")
+    not_rules = data.get("hooks_not_rules", {})
+    if not isinstance(not_rules, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) and v for k, v in not_rules.items()):
+        raise Refused(f"{path}: `hooks_not_rules` is not a mapping of hook script to the reason it enforces no rule")
+    return data
+
+
+def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
+    """The starter registry with each pack's rows after its own row. The starter is kept byte
+    for byte (its header is the field reference a reader starts from); the packs' rows and
+    their `hooks_not_rules` are appended as YAML. The result is read back and compared before
+    it is returned, so what init writes is what was asked for or init refuses."""
+    template = (TEMPLATES / "rules.yaml").read_bytes()
+    if not packs:
+        return template
+    yaml = yaml_module()
+    ids = [r["id"] for r in yaml.safe_load(template)["rules"]]
+    not_rules: dict[str, str] = {}
+    text = template.decode("utf-8").rstrip("\n") + "\n"
+    for path, pack in packs:
+        for row in pack["rules"]:
+            if row["id"] in ids:
+                raise Refused(f"{path}: the row id `{row['id']}` is already in the registry (the starter's "
+                              "row or another pack's); rename it in the pack")
+            ids.append(row["id"])
+        for script, why in (pack.get("hooks_not_rules") or {}).items():
+            if not_rules.get(script, why) != why:
+                raise Refused(f"{path}: `hooks_not_rules` gives {script} a reason another pack gives differently")
+            not_rules[script] = why
+        text += (f"# Rows from the pack `{pack['pack']}` ({path.name}), added by `correct.py init --pack`.\n"
+                 + yaml.safe_dump(pack["rules"], sort_keys=False, width=110, allow_unicode=True))
+    if not_rules:
+        text += ("# Hooks registered on an event that could block, which enforce no rule (from the packs above).\n"
+                 + yaml.safe_dump({"hooks_not_rules": not_rules}, sort_keys=False, width=110, allow_unicode=True))
+    try:
+        back = yaml.safe_load(text)
+    except yaml.YAMLError:
+        back = None
+    if not isinstance(back, dict) or [r.get("id") for r in back.get("rules") or []] != ids \
+            or (back.get("hooks_not_rules") or {}) != not_rules:
+        raise Refused("the registry with the packs' rows does not read back as written; nothing written "
+                      "(this is a defect in correct.py or in the starter registry's layout)")
+    return text.encode("utf-8")
 
 
 def governance_dir(root: Path) -> Path:
@@ -211,7 +317,7 @@ def enforcer_entry(settings: dict, settings_path: Path) -> bool:
     return len(others) != len(groups)
 
 
-def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
+def plan(root: Path, packs: list[tuple[Path, dict]] | None = None) -> tuple[list[Write], list[str], list[str]]:
     """(files to write, files left as they are, conflicts). The registry is the LAST write:
     its presence is what marks a repository as set up, so a run that stops early leaves a
     repository the next run still treats as not set up."""
@@ -261,7 +367,7 @@ def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
             data = (json.dumps(settings, indent=2) + "\n").encode("ascii")
         writes.append((settings_path, data, False))
 
-    writes.append((gov / "rules.yaml", (TEMPLATES / "rules.yaml").read_bytes(), False))
+    writes.append((gov / "rules.yaml", registry_with_packs(packs or []), False))
     return writes, kept, conflicts
 
 
@@ -351,6 +457,7 @@ def replay(root: Path, wrote: bool) -> int:
 
 
 def init(root: Path, args: list[str]) -> int:
+    pack_files, args = take_packs(args)
     unknown = [a for a in args if a not in ("--dry-run", "--force")]
     if unknown:
         raise Refused(f"init does not take {' '.join(unknown)}")
@@ -366,12 +473,15 @@ def init(root: Path, args: list[str]) -> int:
         # that exists and does not hold is not a success. That is true of a dry run too: with
         # nothing to write, the dry run and the real run are the same run.
         print(f"correct init: {registry.relative_to(root)} exists, so this repository already has a "
-              "registry. Nothing written.")
+              "registry. Nothing written."
+              + (" A pack is added only to a registry init writes, so --pack changes nothing here."
+                 if pack_files else ""))
         need_registry(root, [])
         return replay(root, wrote=False)
 
+    packs = [(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]
     try:
-        writes, kept, conflicts = plan(root)
+        writes, kept, conflicts = plan(root, packs)
         stops = blocked(root, writes)
     except OSError as exc:
         raise Refused(f"could not read the repository's current state ({exc}); nothing written") from exc
@@ -385,6 +495,8 @@ def init(root: Path, args: list[str]) -> int:
         return 2
     for path, _content, _exe in writes:
         print(f"  {'would write' if dry else 'write'}  {path.relative_to(root)}")
+    for path, pack in packs:
+        print(f"  pack   {pack['pack']}: {len(pack['rules'])} row(s) from {path}")
     for line in kept:
         print(f"  keep   {line}")
     if dry:

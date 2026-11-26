@@ -547,6 +547,157 @@ class Init(CorrectCase):
         self.assertEqual(tree(self.repo), {})
 
 
+GATE = """#!/usr/bin/env python3
+import json, sys
+event = json.load(sys.stdin)
+if event.get("tool_name") == "Bash" and "BAD" in event.get("tool_input", {}).get("command", ""):
+    print("Gate X: BAD is blocked; run GOOD", file=sys.stderr)
+    sys.exit(2)
+sys.exit(0)
+"""
+PACK = {
+    "pack": "demo", "registry_version": 1,
+    "hooks_not_rules": {"notify.sh": "Stop notification; always exits 0"},
+    "rules": [{
+        "id": "no-bad", "rule": "Never run BAD.", "source": "the demo tool's gate", "level": "hook",
+        "runs_in": ["harness"],
+        "enforcer": {"path": "scripts/gate.py",
+                     "registered": {"event": "PreToolUse", "tools": ["Bash"], "scope": "project"}},
+        "proofs": [{"from": "constructed", "event": {"tool_name": "Bash", "tool_input": {"command": "run BAD now"}},
+                    "expect_reason": "Gate X"}],
+        "controls": [{"why": "the allowed command",
+                      "event": {"tool_name": "Bash", "tool_input": {"command": "run GOOD now"}}}],
+        "canary": {"none": "a test fixture", "ticket": "T-1"},
+    }],
+}
+LATER = {"pack": "later", "registry_version": 1, "rules": [{
+    "id": "later-gap", "rule": "Prove the later thing.", "source": "a test", "level": "gap",
+    "ticket": "T-2", "target": {"level": "hook", "mechanism": "a replay"}}]}
+
+
+class Packs(CorrectCase):
+    """A pack is the rows that prove hooks ANOTHER tool installed. The repository here already
+    has such a tool's hooks (a gate on Bash, and a Stop hook that enforces nothing)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "gate.py").write_text(GATE)
+        notify = self.repo / "scripts" / "notify.sh"
+        notify.write_text("#!/bin/sh\nexit 0\n")
+        notify.chmod(0o755)
+        (self.repo / ".claude").mkdir()
+        (self.repo / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+            "PreToolUse": [{"matcher": "Bash", "hooks": [
+                {"type": "command", "command": 'python3 "$CLAUDE_PROJECT_DIR/scripts/gate.py"'}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": '"$CLAUDE_PROJECT_DIR"/scripts/notify.sh'}]}]}}))
+
+    def pack(self, data: object = PACK, name: str = "pack.yaml") -> Path:
+        path = self.tmp / name
+        path.write_text(data if isinstance(data, str) else yaml.safe_dump(data, sort_keys=False))
+        return path
+
+    def test_without_the_pack_the_other_tools_hooks_have_no_row(self) -> None:
+        proc = self.run_correct("init")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("gate.py (PreToolUse, settings.json) is owned by no row", proc.stdout)
+        self.assertIn("notify.sh (Stop, settings.json) is owned by no row", proc.stdout)
+
+    def test_with_the_pack_its_rows_are_in_the_registry_and_replay(self) -> None:
+        proc = self.run_correct("init", f"--pack={self.pack()}")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("pack   demo: 1 row(s)", proc.stdout)
+        code, rows = self.rows()
+        self.assertEqual(code, 0, rows)
+        self.assertEqual({k: v["status"] for k, v in rows.items()},
+                         {"branch-first": "PASS", "no-bad": "PASS", "registry-completeness": "PASS"})
+        written = (self.repo / ".control" / "rules.yaml").read_bytes()
+        starter = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes()
+        self.assertTrue(written.startswith(starter))  # the starter and its header, byte for byte
+        self.assertIn(b"# Rows from the pack `demo` (pack.yaml)", written)
+        self.assertEqual(yaml.safe_load(written)["hooks_not_rules"], PACK["hooks_not_rules"])
+
+    def test_a_packs_rows_are_replayed_not_only_recorded(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        (self.repo / "scripts" / "gate.py").write_text(ALLOW_ALL)
+        code, rows = self.rows()
+        self.assertEqual(code, 1)
+        self.assertEqual(rows["no-bad"]["status"], "FAIL")
+
+    def test_two_packs_are_added_in_the_order_given(self) -> None:
+        proc = self.run_correct("init", "--pack", str(self.pack()), "--pack", str(self.pack(LATER, "later.yaml")))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        data = yaml.safe_load((self.repo / ".control" / "rules.yaml").read_text())
+        self.assertEqual([r["id"] for r in data["rules"]], ["branch-first", "no-bad", "later-gap"])
+
+    def test_a_dry_run_names_the_pack_and_writes_nothing(self) -> None:
+        before = tree(self.repo)
+        proc = self.run_correct("init", "--dry-run", "--pack", str(self.pack()))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("pack   demo: 1 row(s)", proc.stdout)
+        self.assertEqual(tree(self.repo), before)
+
+    def test_a_pack_is_not_added_to_a_registry_that_exists(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        before = tree(self.repo)
+        proc = self.run_correct("init", "--pack", str(self.pack(LATER, "later.yaml")))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("--pack changes nothing here", proc.stdout)
+        self.assertEqual(tree(self.repo), before)
+
+    def refused(self, needle: str, *args: str) -> None:
+        before = tree(self.repo)
+        proc = self.run_correct("init", *args)
+        self.assertEqual(proc.returncode, 2, (needle, proc.stdout + proc.stderr))
+        self.assertIn(needle, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertEqual(tree(self.repo), before)
+
+    def test_a_file_that_is_not_a_pack_is_refused_and_nothing_is_written(self) -> None:
+        row = PACK["rules"][0]
+        for needle, data in (
+                ("is not readable YAML", "rules: [unclosed"),
+                ("it is not a mapping", "[]"),
+                ("key(s) a pack does not carry: hosts", dict(PACK, hosts={"mac": ["x"]})),
+                ("does not name itself", {k: v for k, v in PACK.items() if k != "pack"}),
+                ("`registry_version: 2`", dict(PACK, registry_version=2)),
+                ("`registry_version: 1.0`", dict(PACK, registry_version=1.0)),
+                ("`registry_version: None`", {k: v for k, v in PACK.items() if k != "registry_version"}),
+                ("`rules` is not a list of rows", dict(PACK, rules=[])),
+                ("`rules` is not a list of rows", dict(PACK, rules={"no-bad": row})),
+                ("`rules` is not a list of rows", dict(PACK, rules=[{k: v for k, v in row.items() if k != "id"}])),
+                ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules=["notify.sh"])),
+                ("the row id `branch-first` is already in the registry", dict(PACK, rules=[dict(row, id="branch-first")])),
+        ):
+            self.refused(needle, "--pack", str(self.pack(data)))
+
+    def test_a_pack_file_that_is_not_there_or_not_named_is_refused(self) -> None:
+        self.refused("there is no pack at", "--pack", str(self.tmp / "absent.yaml"))
+        self.refused("--pack needs a file", "--pack")
+        self.refused("--pack needs a file", "--pack=")
+
+    def test_two_packs_that_disagree_are_refused(self) -> None:
+        first = str(self.pack())
+        same_id = dict(LATER, rules=[dict(LATER["rules"][0], id="no-bad")])
+        self.refused("the row id `no-bad` is already in the registry", "--pack", first,
+                     "--pack", str(self.pack(same_id, "later.yaml")))
+        other_reason = dict(LATER, hooks_not_rules={"notify.sh": "something else"})
+        self.refused("a reason another pack gives differently", "--pack", first,
+                     "--pack", str(self.pack(other_reason, "later.yaml")))
+
+    def test_a_registry_that_would_not_read_back_is_refused(self) -> None:
+        """The packs' rows are appended after the starter's rows, which holds only while `rules`
+        is the starter's last key. A starter laid out otherwise must be refused, not written."""
+        templates = self.tmp / "templates"
+        templates.mkdir()
+        (templates / "rules.yaml").write_text("version: 1\nrules:\n- id: branch-first\nclass_threshold: 2\n")
+        self.addCleanup(setattr, correct, "TEMPLATES", correct.TEMPLATES)
+        correct.TEMPLATES = templates
+        with self.assertRaises(correct.Refused) as caught:
+            correct.registry_with_packs([(self.tmp / "pack.yaml", PACK)])
+        self.assertIn("does not read back as written", str(caught.exception))
+
+
 class CheckCanFail(CorrectCase):
     """Break what init installed, one piece at a time; each break must turn the replay red."""
 

@@ -20,7 +20,7 @@ The method below is judgment. The registry it ends in is not: this skill ships
 the runner, so "the check holds" is a command's exit status and not a claim.
 
 ```
-python3 -I <skill>/scripts/correct.py init   [--root DIR] [--dry-run] [--force]
+python3 -I <skill>/scripts/correct.py init   [--root DIR] [--dry-run] [--force] [--pack FILE ...]
 python3 -I <skill>/scripts/correct.py check  [--root DIR] [--ci] [--json] [--only ID ...] [--base REF]
 python3 -I <skill>/scripts/correct.py canary [--root DIR] run | ...
 ```
@@ -57,6 +57,14 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   still sets up. To back out, delete the registry, the four files under
   `scripts/`, the `PreToolUse` entry that runs `scripts/branch-first-hook.py`,
   and the policy file if `init` wrote it (its output lists the file when it did).
+- **`init --pack FILE`** also adds a pack's rows to the registry it writes. A pack
+  is the rows that prove hooks some other tool installed, shipped by that tool
+  (`pack`, `registry_version`, `rules`, and `hooks_not_rules` for its hooks that
+  enforce nothing). bstack ships one for the hooks `bstack bootstrap` installs,
+  and bootstrap passes it. `init` installs nothing for a pack: it records the rows
+  after the starter's and replays them. A file that is not a pack, a row id
+  already in the registry, or two packs that disagree are refused with nothing
+  written, and a pack is never added to a registry that already exists.
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
