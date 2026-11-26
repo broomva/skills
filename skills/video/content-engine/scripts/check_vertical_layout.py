@@ -245,6 +245,16 @@ def get_profile(layout: dict, name: str | None) -> tuple[str, dict]:
 
 
 
+def _validate_eye_line_params(eye: dict, label: str) -> None:
+    _check_zone(eye, label, keys=("y0", "y1"))
+    ms = eye.get("max_shift_across_punch_in")
+    pj = eye.get("punch_in_scale_jump")
+    if not (_is_num(ms) and 0 < ms <= 1.0):
+        raise ToolError(f"{label}.max_shift_across_punch_in must be a finite number in (0, 1]")
+    if not (_is_num(pj) and 0 < pj <= 1.0):
+        raise ToolError(f"{label}.punch_in_scale_jump must be a finite number in (0, 1]")
+
+
 def apply_treatment(
     layout: dict,
     treatment_path: Path,
@@ -252,7 +262,7 @@ def apply_treatment(
 ) -> tuple[str, dict, str]:
     """Build an effective layout profile by layering a per-clip treatment.json's bands and
     protected regions on top of its named library profile (BRO-3979). Library profiles stay
-    immutable; malformed treatment bands raise ToolError (exit 2)."""
+    immutable; malformed treatment bands or numeric settings raise ToolError (exit 2)."""
     try:
         raw = treatment_path.read_bytes()
         treatment = json.loads(raw)
@@ -265,8 +275,27 @@ def apply_treatment(
     t_layout = treatment.get("layout")
     if not isinstance(t_layout, dict) or not isinstance(t_layout.get("bands"), dict):
         raise ToolError(f"treatment {treatment_path} needs layout.bands")
-    req_prof = profile_override or t_layout.get("profile")
-    base_name = req_prof if req_prof in layout["profiles"] else layout["default_profile"]
+
+    t_prof = t_layout.get("profile")
+    if t_prof is not None and (not isinstance(t_prof, str) or not t_prof.strip()):
+        raise ToolError("treatment.layout.profile must be a non-empty string when set")
+    if profile_override is not None:
+        if not isinstance(profile_override, str) or profile_override not in layout["profiles"]:
+            raise ToolError(f"unknown profile {profile_override!r}; have {sorted(layout['profiles'])}")
+        base_name = profile_override
+        req_prof = profile_override
+    else:
+        req_prof = t_prof
+        if req_prof is None:
+            base_name = layout["default_profile"]
+        elif req_prof in layout["profiles"]:
+            base_name = req_prof
+        elif req_prof in ("custom", "content-led-inset", "split"):
+            base_name = layout["default_profile"]
+        else:
+            raise ToolError(
+                f"unknown treatment.layout.profile {req_prof!r}; have {sorted(layout['profiles'])} or custom/content-led-inset/split"
+            )
     prof = copy.deepcopy(layout["profiles"][base_name])
     bands = t_layout["bands"]
 
@@ -283,6 +312,9 @@ def apply_treatment(
             _check_zone(cb, "treatment.layout.bands.caption_band")
         merged_cb = dict(prof.get("caption_band") or {"centre_x_tolerance": 0.15})
         merged_cb.update(cb)
+        tol = merged_cb.get("centre_x_tolerance")
+        if not (_is_num(tol) and 0 < tol < 0.5):
+            raise ToolError("treatment.layout.bands.caption_band.centre_x_tolerance must be a finite number in (0, 0.5)")
         prof["caption_band"] = merged_cb
 
     if "title_band" in bands and bands["title_band"] is not None:
@@ -298,9 +330,9 @@ def apply_treatment(
         el = bands["eye_line"]
         if not isinstance(el, dict):
             raise ToolError("treatment.layout.bands.eye_line must be an object")
-        _check_zone(el, "treatment.layout.bands.eye_line", keys=("y0", "y1"))
-        base_el = dict(prof.get("eye_line") or {"max_shift_across_punch_in": 0.08, "punch_in_scale_jump": 1.15})
+        base_el = dict(prof.get("eye_line") or {"max_shift_across_punch_in": 0.08, "punch_in_scale_jump": 0.15})
         base_el.update(el)
+        _validate_eye_line_params(base_el, "treatment.layout.bands.eye_line")
         prof["eye_line"] = base_el
 
     if "panels" in bands and bands["panels"] is not None:
@@ -315,9 +347,11 @@ def apply_treatment(
             _check_zone(panel.get("safe_zone"), f"treatment.layout.bands.panels[{i}].safe_zone")
             p_copy = copy.deepcopy(panel)
             if p_copy.get("eye_line") is not None:
-                _check_zone(p_copy["eye_line"], f"treatment.layout.bands.panels[{i}].eye_line", keys=("y0", "y1"))
+                if not isinstance(p_copy["eye_line"], dict):
+                    raise ToolError(f"treatment.layout.bands.panels[{i}].eye_line must be an object")
                 p_copy["eye_line"].setdefault("max_shift_across_punch_in", 0.08)
-                p_copy["eye_line"].setdefault("punch_in_scale_jump", 1.15)
+                p_copy["eye_line"].setdefault("punch_in_scale_jump", 0.15)
+                _validate_eye_line_params(p_copy["eye_line"], f"treatment.layout.bands.panels[{i}].eye_line")
             merged_panels.append(p_copy)
         prof["panels"] = merged_panels
     elif req_prof not in layout["profiles"] and "panels" in prof:

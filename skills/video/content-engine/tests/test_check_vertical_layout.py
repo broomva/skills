@@ -1276,3 +1276,31 @@ def test_treatment_cli_spec_emits_treatment_sha256(tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["treatment_sha256"].startswith("sha256:")
     assert out["profile"] == "stacked-stream+treatment"
+
+
+def test_treatment_rejects_invalid_numeric_settings_and_profiles(tmp_path):
+    # P1: NaN, out-of-range, or non-numeric centre_x_tolerance / punch-in params raise ToolError
+    for bad_tol in (1.0, 0.5, 0.0, "0.1", None):
+        p = _write_treatment(tmp_path, {"caption_band": {"y0": 0.66, "y1": 0.78, "centre_x_tolerance": bad_tol}})
+        with pytest.raises(cvl.ToolError):
+            cvl.apply_treatment(LAYOUT, p)
+
+    p_bad_eye = _write_treatment(tmp_path, {"eye_line": {"y0": 0.15, "y1": 0.35, "punch_in_scale_jump": 1.5}})
+    with pytest.raises(cvl.ToolError):
+        cvl.apply_treatment(LAYOUT, p_bad_eye)
+
+    # P2: explicit unknown --profile rejected, non-string treatment.layout.profile rejected
+    p_ok = _write_treatment(tmp_path)
+    with pytest.raises(cvl.ToolError):
+        cvl.apply_treatment(LAYOUT, p_ok, profile_override="nonexistent-profile")
+
+    bad_prof = json.loads(p_ok.read_text())
+    bad_prof["layout"]["profile"] = ["stacked-stream"]
+    p_list = tmp_path / "bad-prof.json"
+    p_list.write_text(json.dumps(bad_prof), encoding="utf-8")
+    with pytest.raises(cvl.ToolError):
+        cvl.apply_treatment(LAYOUT, p_list)
+
+    # P2: default punch_in_scale_jump is 0.15 (15% relative height jump, matching vertical-9x16.json)
+    _, prof, _ = cvl.apply_treatment(LAYOUT, p_ok)
+    assert prof["panels"][0]["eye_line"]["punch_in_scale_jump"] == pytest.approx(0.15)
