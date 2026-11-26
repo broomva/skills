@@ -960,3 +960,48 @@ def test_p20_r6_corrupt_probe_stderr_and_mkv_source_packet_probe_failure(tmp_pat
     assert r_rend.returncode == 1
     assert "partial file" in r_rend.stderr
     assert "only None frames" not in r_rend.stderr
+
+
+def test_p20_r7_truncated_source_mp4_rejected_and_mkv_packet_error_priority(tmp_path):
+    """Covers R7 MAJOR (truncated MP4 with intact header rejected by validate --check-files)
+    and R7 MINOR (packet-probe error reported before duration check)."""
+    import os, shutil, stat
+    real_ffprobe = shutil.which("ffprobe")
+    real_ffmpeg = shutil.which("ffmpeg")
+    if not (real_ffprobe and real_ffmpeg):
+        return
+
+    src = tmp_path / "full1s.mp4"
+    subprocess.run(
+        [real_ffmpeg, "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=24:d=1.0", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)],
+        check=True,
+    )
+    # Simulate a truncated MP4 where header duration is 1.0s but packet scan emits partial file error on stderr
+    bin_trunc = tmp_path / "bin_trunc"
+    bin_trunc.mkdir()
+    (bin_trunc / "ffmpeg").symlink_to(real_ffmpeg)
+    w_trunc = bin_trunc / "ffprobe"
+    w_trunc.write_text(
+        '#!/bin/sh' + chr(10)
+        + 'for a in "$@"; do' + chr(10)
+        + '  case "$a" in *packet=*) echo "partial file" >&2; exec "' + real_ffprobe + '" "$@" ;; esac' + chr(10)
+        + 'done' + chr(10)
+        + f'exec "{real_ffprobe}" "$@"' + chr(10),
+        encoding="utf-8",
+    )
+    w_trunc.chmod(w_trunc.stat().st_mode | stat.S_IXUSR)
+    p = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "c1", "source": str(src), "in_s": 0.0, "out_s": 1.0}],
+    }
+    pf = tmp_path / "p_trunc.json"
+    pf.write_text(json.dumps(p), encoding="utf-8")
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_trunc}:{env.get('PATH', '')}"
+    r_val = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "validate", str(pf), "--check-files"],
+        capture_output=True, text=True, env=env, check=False,
+    )
+    assert r_val.returncode == 1
+    assert "partial file" in r_val.stdout

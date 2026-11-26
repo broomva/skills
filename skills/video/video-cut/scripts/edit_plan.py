@@ -175,11 +175,11 @@ def validate_plan(
                 if not resolved.exists():
                     errors.append(f"{prefix}.source file not found: {resolved}")
                 else:
-                    info = _probe_media_streams(resolved)
+                    info = _probe_media_streams(resolved, count_video_packets=True)
                     if info is not None:
                         if not info["has_video"]:
                             errors.append(f"{prefix}.source has no video stream: {resolved}")
-                        elif info.get("packet_probe_error") and info["video_dur_s"] is None:
+                        elif info.get("packet_probe_error"):
                             errors.append(
                                 f"{prefix}.source video duration could not be verified ({info['packet_probe_error']}): {resolved}"
                             )
@@ -1023,6 +1023,10 @@ def main(argv: list[str] | None = None) -> int:
         exp_dur = sum(float(c["out_s"]) - float(c["in_s"]) for c in plan["clips"])
         fps_val = float(plan["canvas"]["fps"])
         tol = max(0.2, 2.0 / max(1.0, fps_val))
+        if out_info["video_packets"] is None:
+            detail = out_info.get("packet_probe_error") or "packet probe failed"
+            print(f"error: output video packet verification failed ({detail})", file=sys.stderr)
+            return 1
         if out_info["video_dur_s"] is None or abs(out_info["video_dur_s"] - exp_dur) > tol:
             print(
                 f"error: rendered video duration ({out_info['video_dur_s']}s) differs from planned {exp_dur:.3f}s by > {tol:.3f}s",
@@ -1030,10 +1034,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         min_frames = max(1, int(math.floor(exp_dur * fps_val)) - 2)
-        if out_info["video_packets"] is None:
-            detail = out_info.get("packet_probe_error") or "packet probe failed"
-            print(f"error: output video packet verification failed ({detail})", file=sys.stderr)
-            return 1
         if out_info["video_packets"] < min_frames:
             print(
                 f"error: rendered video has only {out_info['video_packets']} frames (expected >= {min_frames} for {exp_dur:.3f}s @ {fps_val}fps)",
