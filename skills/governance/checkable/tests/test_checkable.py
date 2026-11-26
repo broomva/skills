@@ -1333,9 +1333,15 @@ def _replay_process(tmp_path: Path, note: Path) -> subprocess.Popen:
     doc["claims"][0]["verifier"]["check"] = f"echo $$ > {note}; exec sleep 60"
     statement = tmp_path / "s.json"
     statement.write_text(json.dumps(doc))
+    def default_signals() -> None:
+        # A suite started as a shell background job inherits SIGINT ignored,
+        # and so would the tool: the signal under test would then do nothing.
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(signum, signal.SIG_DFL)
+
     return subprocess.Popen(
         [sys.executable, str(SKILL / "scripts" / "checkable.py"), "replay", str(statement), "--cwd", str(tmp_path)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=default_signals,
     )
 
 
@@ -1447,7 +1453,11 @@ def test_an_interrupt_does_not_leave_the_command_running(tmp_path: Path, monkeyp
     # it here is the proof that it ended.
     child = int(note.read_text())
     for _ in range(50):
-        ended, _status = os.waitpid(child, os.WNOHANG)
+        try:
+            ended, _status = os.waitpid(child, os.WNOHANG)
+        except ChildProcessError:
+            # Python's own subprocess cleanup collected it first: it ended.
+            break
         if ended == child:
             break
         time.sleep(0.1)
