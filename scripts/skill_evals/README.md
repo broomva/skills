@@ -368,10 +368,11 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
 **The noise band (`--noise-band`, BRO-4110): a description, not a test.**
 `--ablate --noise-band` runs the with-skill arm a second time on the POSITIVE cases (the
 ones the lift is computed on), with the same trials per case, and shows it as a third row
-beside the present and absent arms. Below it: how many replicate attempts produced no
-signal, and the observed A/A gap, present minus replicate, each arm's outcome rate taken
-over the trials that ran an outcome check (n/a when an arm ran none). Two such arms that
-land far apart say the run-to-run noise is large next to the lift. It applies no test and changes no verdict: five P20 rounds
+beside the present and absent arms, computed exactly as they are, with a count of the
+replicate attempts that produced no signal. Two with-skill rows that land far apart say
+the run-to-run noise is large next to the lift. No number is computed across the arms:
+an A/A gap was tried and subtracted, because over unaligned trials it sat on a different
+scale from the lift and moved when one prompt errored in one arm. It applies no test and changes no verdict: six P20 rounds
 showed every inference built on it could be fooled by inputs this harness produces
 (arms that run in sequence, unequal trials per prompt, prompts with trigger checks
 only). Inference waits for interleaved arms (BRO-4140). Separately,

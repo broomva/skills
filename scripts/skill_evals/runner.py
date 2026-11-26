@@ -1862,7 +1862,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a lift interval entirely below this marks a retirement candidate")
     p.add_argument("--noise-band", action="store_true",
                    help="BRO-4110: with --ablate, run the with-skill arm a second time and "
-                        "report it and the observed A/A gap beside the verdict (no test; it "
+                        "report it as a third row beside the verdict (no test; it "
                         "changes no verdict; adds one arm of trials)")
     p.add_argument("--fail-on-retire-candidate", action="store_true",
                    help="exit non-zero when the ablation verdict is retire-candidate "

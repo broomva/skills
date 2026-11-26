@@ -566,7 +566,7 @@ def plain_compare(present, absent, **kw):
 def test_without_a_replicate_nothing_changes_and_noise_is_null():
     cmp = plain_compare([(3, 3)] * 10, [(0, 3)] * 10)
     assert cmp["noise"] is None
-    assert "A/A gap      NOT MEASURED (run with --noise-band)" in A.format_comparison(cmp)
+    assert "  replicate    not run (--noise-band adds it)" in A.format_comparison(cmp)
 
 
 VERDICT_KEYS = ("verdict", "why", "skill_lift", "skill_lift_ci", "end_to_end_lift",
@@ -611,26 +611,20 @@ def test_the_replicate_row_is_the_whole_arm():
     assert cmp["noise"]["replicate"]["graded_positive_trials"] == 12
 
 
-def test_the_aa_gap_is_present_minus_replicate_and_signed():
+def test_the_band_computes_no_number_across_the_arms():
+    """D11's reversal (continuation review before round 6): the noise dict carries the
+    replicate arm and its attempts, nothing derived from present and replicate together."""
     cmp = band_compare([(9, 10)] * 3, [(0, 10)] * 3, [(6, 10)] * 3)
-    assert cmp["noise"]["aa_gap"] == 0.3
-    cmp = band_compare([(6, 10)] * 3, [(0, 10)] * 3, [(9, 10)] * 3)
-    assert cmp["noise"]["aa_gap"] == -0.3
-
-
-def test_an_ungraded_replicate_has_a_null_gap_not_zero():
-    P = [(3, 3)] * 3
-    cmp = band_compare(P, [(0, 3)] * 3, P, replicate_errors=(0, 1, 2))
-    assert cmp["noise"]["aa_gap"] is None
-    assert "A/A gap      n/a (an arm ran no outcome check)" in A.format_comparison(cmp)
+    assert set(cmp["noise"]) == {"replicate", "replicate_attempts", "replicate_errors"}
+    assert cmp["noise"]["replicate"] == A.arm_stats(prompts_report([(6, 10)] * 3), NON_PASS).to_dict()
 
 
 def test_the_report_describes_and_does_not_test():
-    """No p-value, threshold, NOTE or verdict language comes from the band."""
+    """No p-value, threshold, NOTE, gap or verdict language comes from the band."""
     text = A.format_comparison(band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(2, 3)] * 10))
-    assert "replicate" in text and "A/A gap      +0.33" in text
-    assert "observed, not tested" in text and "BRO-4140" in text
-    for word in ("p=", "NOTE", "confirmed", "drifted", "noisy"):
+    assert re.search(r"(?m)^  replicate\s+30\s+0\.67\s+1\.00$", text), text
+    assert "Not tested (BRO-4140)" in text
+    for word in ("p=", "NOTE", "confirmed", "drifted", "noisy", "gap", "minus"):
         assert word not in text, word
 
 
@@ -777,31 +771,18 @@ def _cases(*results):
                          for i, r in enumerate(results)])
 
 
-def test_the_aa_gap_counts_only_trials_that_ran_an_outcome_check():
-    # Present: a trigger-only prompt and an outcome prompt passing 6/6. Replicate: the
-    # trigger-only prompt errored, the outcome prompt passed 6/6. Over evidence, both
-    # arms pass every outcome check: gap 0, not the -0.5 a trial denominator gives.
+def test_a_trigger_only_replicate_row_uses_the_same_denominator_as_present():
+    # The continuation review's probe 7b: the row is arm_stats(), like its neighbours,
+    # so a trigger-only replicate reads as its neighbours would, and no gap line contradicts it.
     present = _cases(_trigger_only(6), _outcome(6, 6))
-    replicate = _cases([{"outcome": "ERROR"}] * 6, _outcome(6, 6))
+    replicate = _cases(_trigger_only(6), [{"outcome": "ERROR"}] * 6)
     cmp = A.compare(present, _cases(_outcome(3, 6), _outcome(3, 6)), non_pass=NON_PASS,
                     min_trials=10, replicate_report=replicate)
-    assert cmp["noise"]["aa_gap"] == 0.0
-    assert cmp["noise"]["present_outcome_evidence"] == 6
-    assert cmp["noise"]["replicate_outcome_evidence"] == 6
-
-
-@pytest.mark.parametrize("replicate", [
-    _cases(_trigger_only(6), _trigger_only(6)),                 # trigger-only throughout
-    _cases(_trigger_only(6), [{"outcome": "ERROR"}] * 6),       # the outcome prompt errored
-])
-def test_a_replicate_with_no_outcome_evidence_has_no_gap(replicate):
-    present = _cases(_trigger_only(6), _outcome(6, 6))
-    cmp = A.compare(present, _cases(_outcome(3, 6), _outcome(3, 6)), non_pass=NON_PASS,
-                    min_trials=10, replicate_report=replicate)
-    assert cmp["noise"]["aa_gap"] is None
+    assert cmp["noise"]["replicate"] == A.arm_stats(replicate, NON_PASS).to_dict()
+    assert cmp["present"] == A.arm_stats(present, NON_PASS).to_dict()
     text = A.format_comparison(cmp)
-    assert "A/A gap      n/a (an arm ran no outcome check)" in text
-    assert "observed, not tested" not in text
+    assert "  replicate    6 of 12 attempts produced no signal" in text
+    assert "A/A" not in text
 
 
 def test_the_replicate_row_and_its_errors_are_printed():
@@ -855,3 +836,10 @@ def test_a_state_exit_names_its_cause_in_the_report(tmp_path, arm):
 def test_a_clean_run_names_no_exit_cause(tmp_path):
     rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change")
     assert rc == R.EXIT_OK and "exit_cause" not in rep
+
+
+def test_replicate_attempts_count_positive_cases_like_the_graded_trials():
+    rep = _cases(_outcome(3, 3))
+    rep["cases"].append({"case_id": "n0", "should_trigger": False, "results": _outcome(0, 3)})
+    band = A.noise_band(rep, NON_PASS)
+    assert (band["replicate_attempts"], band["replicate_errors"]) == (3, 0)

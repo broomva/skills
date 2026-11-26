@@ -39,15 +39,16 @@ harness can remove:
 
 THE NOISE BAND (``--noise-band``, BRO-4110) — a description, not a test
 -----------------------------------------------------------------------
-``--noise-band`` runs the with-skill arm a second time, identically (the replicate),
-and reports its stats as a third row beside the present and absent arms, plus the
-observed A/A gap: the present arm's outcome rate minus the replicate's. Two identical
-arms that land far apart say the run-to-run noise is large next to the lift. It
-applies no test and changes no verdict. Five P20 rounds showed every inference built
-on it here (intervals, sign-flip gates, threshold notes) could be fooled by inputs this
-harness produces: arms that run one after another, unequal trials per prompt, prompts
-with trigger checks only. Inference waits for interleaved arms (BRO-4140). The idea of
-an A/A band is Uber's (2026-11-23 post on skill evals).
+``--noise-band`` runs the with-skill arm a second time on the positive cases (the
+replicate) and reports it as a third row beside the present and absent arms, computed
+by the same arm_stats() as they are, plus how many of its attempts produced no signal.
+Two with-skill rows that land far apart say the run-to-run noise is large next to the
+lift. It computes no cross-arm number, applies no test and changes no verdict. Six P20
+rounds showed every number built across the arms (intervals, sign-flip gates, an A/A
+gap) could be fooled by inputs this harness produces: arms that run one after another,
+unequal trials per prompt, prompts with trigger checks only, a prompt that errors in
+one arm. Inference waits for interleaved arms (BRO-4140). The idea of an A/A band is
+Uber's (2026-11-23 post on skill evals).
 
 A missing or unusable measurement serialises ``skill_lift: null``, never ``0.0``.
 A defaulted zero reads as perfect absorption, which is the single most dangerous
@@ -340,34 +341,19 @@ def decide_verdict(
 # ---------------------------------------------------------------------------
 
 
-def _evidence(report: dict[str, Any], non_pass: Sequence[str]) -> tuple[int, int]:
-    """(trials that ran at least one outcome check, their outcome passes), positives only.
+def noise_band(replicate_report: dict[str, Any], non_pass: Sequence[str]) -> dict[str, Any]:
+    """The replicate arm and its attempts. No cross-arm number, no test, no verdict.
 
-    A trigger-only trial asserts nothing about the outcome (outcome_passed() calls it
-    a non-pass), so counting it in the A/A gap's denominator would read "no evidence"
-    as "failed" and print a gap where there is none (P20 #336 round 5)."""
-    trials = _positive_trials(report.get("cases") or [], non_pass)
-    ran = [t for t in trials
-           if any(_check_passed(c) is not None for c in t.get("checks") or [])]
-    return len(ran), sum(1 for t in ran if outcome_passed(t))
-
-
-def noise_band(present_report: dict[str, Any], replicate_report: dict[str, Any],
-               non_pass: Sequence[str]) -> dict[str, Any]:
-    """The replicate arm, its attempts, and the observed A/A gap. No test, no verdict."""
+    An A/A gap (present minus replicate) was subtracted after P20 round 5 and its
+    continuation review (arc decision D11's reversal): over unaligned trials it was on
+    a different scale from the lift and was moved by a prompt that errored in one arm."""
     replicate = arm_stats(replicate_report, non_pass)
     attempts = sum(len(c.get("results") or [])
                    for c in replicate_report.get("cases") or [] if c.get("should_trigger"))
-    (pn, pp), (rn, rp) = _evidence(present_report, non_pass), _evidence(replicate_report, non_pass)
     return {
         "replicate": replicate.to_dict(),
         "replicate_attempts": attempts,
         "replicate_errors": attempts - replicate.graded_positive_trials,
-        "present_outcome_evidence": pn,
-        "replicate_outcome_evidence": rn,
-        # Signed, present minus replicate, each over the trials that ran an outcome
-        # check; null when either arm has none. Beside the lift, not a test statistic.
-        "aa_gap": None if not pn or not rn else round(pp / pn - rp / rn, 4),
     }
 
 
@@ -384,7 +370,7 @@ def compare(
     """The full two-arm comparison, as it lands in the JSON report.
 
     With ``replicate_report`` (``--noise-band``) the comparison also carries
-    ``noise``: the replicate arm and the observed A/A gap. It never changes the verdict.
+    ``noise``: the replicate arm and its attempts. It never changes the verdict.
     """
     skill = str(present_report.get("skill") or "")
     present = arm_stats(present_report, non_pass)
@@ -416,7 +402,7 @@ def compare(
         "absent": absent.to_dict(),
         "leaked_baseline_trials": leaked,
         "noise": (None if replicate_report is None
-                  else noise_band(present_report, replicate_report, non_pass)),
+                  else noise_band(replicate_report, non_pass)),
         **verdict,
     }
 
@@ -453,19 +439,13 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         if cmp.get("end_to_end_lift") is not None:
             lines.append(f"  end-to-end   {cmp['end_to_end_lift']:+.2f}  (trigger-inclusive)")
     if noise:
-        gap = noise["aa_gap"]
         if noise.get("replicate_errors"):
             lines.append(f"  replicate    {noise['replicate_errors']} of "
                          f"{noise['replicate_attempts']} attempts produced no signal")
-        if gap is None:
-            lines.append("  A/A gap      n/a (an arm ran no outcome check)")
-        else:
-            lines.append(f"  A/A gap      {gap:+.2f}  present minus replicate, positive cases, "
-                         "over trials that ran an outcome check")
-            lines.append("               observed, not tested: the arms ran one after another "
-                         "(BRO-4140)")
+        lines.append("  replicate    the with-skill arm again, positive cases; read its row "
+                     "beside present. Not tested (BRO-4140)")
     else:
-        lines.append("  A/A gap      NOT MEASURED (run with --noise-band)")
+        lines.append("  replicate    not run (--noise-band adds it)")
     lines.append(f"  VERDICT      {cmp['verdict']}")
     lines.append(f"               {cmp['why']}")
     lines.append("")
