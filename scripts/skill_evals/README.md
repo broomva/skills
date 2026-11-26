@@ -366,15 +366,19 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
   per arm (≈60 live CLI runs per skill).
 
 **The noise band (`--noise-band`, BRO-4110): a description, not a test.**
-`--ablate --noise-band` runs the with-skill arm a second time, identically, and shows it
-as a third row beside the present and absent arms, with the observed A/A gap (present
-minus replicate). Two identical arms that land far apart say the run-to-run noise is
-large next to the lift. It applies no test and changes no verdict: five P20 rounds
+`--ablate --noise-band` runs the with-skill arm a second time on the POSITIVE cases (the
+ones the lift is computed on), with the same trials per case, and shows it as a third row
+beside the present and absent arms. Below it: how many replicate attempts produced no
+signal, and the observed A/A gap, present minus replicate, each arm's outcome rate taken
+over the trials that ran an outcome check (n/a when an arm ran none). Two such arms that
+land far apart say the run-to-run noise is large next to the lift. It applies no test and changes no verdict: five P20 rounds
 showed every inference built on it could be fooled by inputs this harness produces
 (arms that run in sequence, unequal trials per prompt, prompts with trigger checks
 only). Inference waits for interleaved arms (BRO-4140). Separately,
-`--fail-on-real-state-change` now also watches the ablation arms; before, a write
-during the baseline arm passed.
+`--fail-on-real-state-change` now also watches the ablation arms, read after each arm
+so a later arm cannot undo an earlier arm's change unseen; before, a write during the
+baseline arm passed. When it sets exit 1, the threshold line keeps the arm's own verdict
+and names the state change as the cause.
 
 ```bash
 python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --noise-band

@@ -1624,6 +1624,7 @@ def format_report(
     skill: str,
     threshold: float,
     exit_code: int,
+    state_exit: bool = False,
 ) -> str:
     lines: list[str] = []
     lines.append("")
@@ -1701,7 +1702,7 @@ def format_report(
             f"mean {(agg['mean_duration_ms'] or 0) / 1000:.1f}s/trial{provenance}"
         )
     # Exit 4 is set only when this arm passed: the threshold verdict is still PASS.
-    verdict = "PASS" if exit_code in (EXIT_OK, EXIT_ABLATION_UNUSABLE) else "FAIL"
+    verdict = "PASS" if exit_code in (EXIT_OK, EXIT_ABLATION_UNUSABLE) or state_exit else "FAIL"
     lines.append(
         f"  threshold   {threshold:.2f} -> {verdict} (exit {exit_code})   "
         f"[mode={mode.upper()} skill={skill}]"
@@ -1713,6 +1714,11 @@ def format_report(
         lines.append(
             "              ^ exit 4 is the ABLATION BASELINE, not this arm: the "
             "measurement is void, the numbers above stand"
+        )
+    if state_exit:
+        lines.append(
+            "              ^ exit 1 is --fail-on-real-state-change: the run changed real "
+            "state, the numbers above stand"
         )
     lines.append("")
     return "\n".join(lines)
@@ -1879,6 +1885,12 @@ def _finite_unit(text: str) -> float:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    # Before any mode can return OK on a flag combination that would be refused.
+    if args.noise_band and not args.ablate:
+        print("error: --noise-band measures the noise of an ablation; pass --ablate too",
+              file=sys.stderr)
+        return EXIT_USAGE
+
     if args.list_checks:
         for check_id, fn in sorted(checks_mod.CHECK_REGISTRY.items()):
             doc = (fn.__doc__ or "").strip().splitlines()
@@ -1903,11 +1915,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not args.skill and not args.prompts:
         print("error: one of --skill or --prompts is required", file=sys.stderr)
-        return EXIT_USAGE
-    # Before --validate-only can return OK on a flag combination that would be refused.
-    if args.noise_band and not args.ablate:
-        print("error: --noise-band measures the noise of an ablation; pass --ablate too",
-              file=sys.stderr)
         return EXIT_USAGE
 
     # -- resolve skill + prompt set -----------------------------------------
@@ -2277,6 +2284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fixtures_unusable=fixtures_unusable,
         allow_errors=args.allow_errors,
     )
+    state_exit = False  # exit 1 set by --fail-on-real-state-change, not by the threshold
     if real_state_changes and args.fail_on_real_state_change and exit_code == EXIT_OK:
         print(
             "[skill-evals] --fail-on-real-state-change: the numbers passed, but this run "
@@ -2284,6 +2292,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         exit_code = EXIT_BELOW_THRESHOLD
+        state_exit = True
     report = build_report(
         prompt_set, case_results, agg,
         mode=runner.mode, threshold=args.threshold, exit_code=exit_code, meta=meta,
@@ -2307,6 +2316,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         absent_results = run_suite(runner, baseline_set, absent_cfg)
+        # Read the watch after EACH arm: a later arm can undo an earlier arm's write
+        # (rename out, rename back), and one read at the end would see nothing.
+        arm_changes = watch.changes() if watch is not None else []
         absent_agg = aggregate(absent_results, case_threshold=args.case_threshold)
         absent_report = build_report(
             baseline_set, absent_results, absent_agg,
@@ -2330,6 +2342,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 notes=prompt_set.notes, path=prompt_set.path,
             )
             replicate_results = run_suite(runner, replicate_set, replicate_cfg)
+            if watch is not None:
+                arm_changes += [c for c in watch.changes() if c not in arm_changes]
             replicate_report = build_report(
                 replicate_set, replicate_results,
                 aggregate(replicate_results, case_threshold=args.case_threshold),
@@ -2349,10 +2363,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if replicate_report is not None:
             report["ablation_replicate_arm"] = replicate_report
 
-        # The watch was read after the primary arm only; the ablation arms run live
-        # too. Read it again so a write during the baseline or the replicate is seen.
+        # The ablation arms run live too: what the watch saw after each of them, beyond
+        # what the primary arm already reported.
         if watch is not None:
-            arm_changes = [c for c in watch.changes() if c not in real_state_changes]
+            arm_changes = [c for c in arm_changes if c not in real_state_changes]
             if arm_changes:
                 real_state_changes = real_state_changes + arm_changes
                 report["meta"]["real_state_changes"] = real_state_changes
@@ -2362,6 +2376,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"[skill-evals]   - {line}", file=sys.stderr)
                 if args.fail_on_real_state_change and exit_code == EXIT_OK:
                     exit_code = EXIT_BELOW_THRESHOLD
+                    state_exit = True
         if not args.json:
             print(ablation_mod.format_comparison(comparison))
 
@@ -2376,12 +2391,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             exit_code = exit_code or EXIT_BELOW_THRESHOLD
         report["exit_code"] = exit_code
 
+    if state_exit:  # the threshold did not set this exit; say what did
+        report["exit_cause"] = "real_state_change"
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         print(format_report(
             case_results, agg, mode=runner.mode, skill=skill,
-            threshold=args.threshold, exit_code=exit_code,
+            threshold=args.threshold, exit_code=exit_code, state_exit=state_exit,
         ))
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)

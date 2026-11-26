@@ -340,14 +340,34 @@ def decide_verdict(
 # ---------------------------------------------------------------------------
 
 
-def noise_band(present: ArmStats, replicate: ArmStats) -> dict[str, Any]:
-    """The replicate arm's stats and the observed A/A gap. No test, no verdict."""
-    a, b = present.outcome_pass_rate, replicate.outcome_pass_rate
+def _evidence(report: dict[str, Any], non_pass: Sequence[str]) -> tuple[int, int]:
+    """(trials that ran at least one outcome check, their outcome passes), positives only.
+
+    A trigger-only trial asserts nothing about the outcome (outcome_passed() calls it
+    a non-pass), so counting it in the A/A gap's denominator would read "no evidence"
+    as "failed" and print a gap where there is none (P20 #336 round 5)."""
+    trials = _positive_trials(report.get("cases") or [], non_pass)
+    ran = [t for t in trials
+           if any(_check_passed(c) is not None for c in t.get("checks") or [])]
+    return len(ran), sum(1 for t in ran if outcome_passed(t))
+
+
+def noise_band(present_report: dict[str, Any], replicate_report: dict[str, Any],
+               non_pass: Sequence[str]) -> dict[str, Any]:
+    """The replicate arm, its attempts, and the observed A/A gap. No test, no verdict."""
+    replicate = arm_stats(replicate_report, non_pass)
+    attempts = sum(len(c.get("results") or [])
+                   for c in replicate_report.get("cases") or [] if c.get("should_trigger"))
+    (pn, pp), (rn, rp) = _evidence(present_report, non_pass), _evidence(replicate_report, non_pass)
     return {
         "replicate": replicate.to_dict(),
-        # Signed, trial-level, present minus replicate; null when either arm has no
-        # graded trial. A number to read beside the lift, not a test statistic.
-        "aa_gap": None if a is None or b is None else round(a - b, 4),
+        "replicate_attempts": attempts,
+        "replicate_errors": attempts - replicate.graded_positive_trials,
+        "present_outcome_evidence": pn,
+        "replicate_outcome_evidence": rn,
+        # Signed, present minus replicate, each over the trials that ran an outcome
+        # check; null when either arm has none. Beside the lift, not a test statistic.
+        "aa_gap": None if not pn or not rn else round(pp / pn - rp / rn, 4),
     }
 
 
@@ -396,7 +416,7 @@ def compare(
         "absent": absent.to_dict(),
         "leaked_baseline_trials": leaked,
         "noise": (None if replicate_report is None
-                  else noise_band(present, arm_stats(replicate_report, non_pass))),
+                  else noise_band(present_report, replicate_report, non_pass)),
         **verdict,
     }
 
@@ -434,10 +454,16 @@ def format_comparison(cmp: dict[str, Any]) -> str:
             lines.append(f"  end-to-end   {cmp['end_to_end_lift']:+.2f}  (trigger-inclusive)")
     if noise:
         gap = noise["aa_gap"]
-        lines.append("  A/A gap      " + ("n/a (an arm graded no trial)" if gap is None else
-                     f"{gap:+.2f}  present minus replicate, two identical with-skill arms"))
-        lines.append("               observed, not tested: the arms ran one after another "
-                     "(BRO-4140)")
+        if noise.get("replicate_errors"):
+            lines.append(f"  replicate    {noise['replicate_errors']} of "
+                         f"{noise['replicate_attempts']} attempts produced no signal")
+        if gap is None:
+            lines.append("  A/A gap      n/a (an arm ran no outcome check)")
+        else:
+            lines.append(f"  A/A gap      {gap:+.2f}  present minus replicate, positive cases, "
+                         "over trials that ran an outcome check")
+            lines.append("               observed, not tested: the arms ran one after another "
+                         "(BRO-4140)")
     else:
         lines.append("  A/A gap      NOT MEASURED (run with --noise-band)")
     lines.append(f"  VERDICT      {cmp['verdict']}")

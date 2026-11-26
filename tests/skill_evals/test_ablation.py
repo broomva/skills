@@ -528,6 +528,7 @@ import io  # noqa: E402
 import itertools  # noqa: E402
 import json  # noqa: E402
 import random  # noqa: E402
+import re  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
@@ -621,7 +622,7 @@ def test_an_ungraded_replicate_has_a_null_gap_not_zero():
     P = [(3, 3)] * 3
     cmp = band_compare(P, [(0, 3)] * 3, P, replicate_errors=(0, 1, 2))
     assert cmp["noise"]["aa_gap"] is None
-    assert "A/A gap      n/a (an arm graded no trial)" in A.format_comparison(cmp)
+    assert "A/A gap      n/a (an arm ran no outcome check)" in A.format_comparison(cmp)
 
 
 def test_the_report_describes_and_does_not_test():
@@ -674,7 +675,7 @@ BASE_ARGS = ["--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "
              "--cli", "/bin/true", "--no-version-check", "--ablate", "--json", "--trials", "4"]
 
 
-def stubbed_main(tmp_path, *args, write_during=None):
+def stubbed_main(tmp_path, *args, write_during=None, actions=None):
     """Run R.main with every trial stubbed; record each arm's config. A real
     RealStateWatch watches one file that `write_during` (an arm number) touches."""
     watched = tmp_path / "state"
@@ -694,6 +695,8 @@ def stubbed_main(tmp_path, *args, write_during=None):
                      "jobs": cfg.jobs})
         if write_during == len(arms):
             watched.write_text(f"written during arm {len(arms)}")
+        if actions and len(arms) in actions:
+            actions[len(arms)](watched)
         return real_run_suite(runner, prompts, cfg)
 
     out = io.StringIO()
@@ -756,3 +759,99 @@ def test_the_dry_run_counts_the_replicate_exactly(capsys):
     assert rc == R.EXIT_OK
     expected = len(cases) * 2 + positives * 2 + positives * 2
     assert f"would run {expected} trial(s)" in capsys.readouterr().out
+
+
+# --- P20 round 5 on #336 (stratum A) --------------------------------------------------
+
+def _trigger_only(n):
+    return [trial("PASS", [chk("skill_triggered", passed=True)], triggered=True)] * n
+
+
+def _outcome(passes, n):
+    return ([trial("PASS", [chk("x", passed=True)], triggered=True)] * passes
+            + [trial("FAIL", [chk("x", passed=False)], triggered=True)] * (n - passes))
+
+
+def _cases(*results):
+    return report(cases=[{"case_id": f"p{i}", "should_trigger": True, "results": r}
+                         for i, r in enumerate(results)])
+
+
+def test_the_aa_gap_counts_only_trials_that_ran_an_outcome_check():
+    # Present: a trigger-only prompt and an outcome prompt passing 6/6. Replicate: the
+    # trigger-only prompt errored, the outcome prompt passed 6/6. Over evidence, both
+    # arms pass every outcome check: gap 0, not the -0.5 a trial denominator gives.
+    present = _cases(_trigger_only(6), _outcome(6, 6))
+    replicate = _cases([{"outcome": "ERROR"}] * 6, _outcome(6, 6))
+    cmp = A.compare(present, _cases(_outcome(3, 6), _outcome(3, 6)), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=replicate)
+    assert cmp["noise"]["aa_gap"] == 0.0
+    assert cmp["noise"]["present_outcome_evidence"] == 6
+    assert cmp["noise"]["replicate_outcome_evidence"] == 6
+
+
+@pytest.mark.parametrize("replicate", [
+    _cases(_trigger_only(6), _trigger_only(6)),                 # trigger-only throughout
+    _cases(_trigger_only(6), [{"outcome": "ERROR"}] * 6),       # the outcome prompt errored
+])
+def test_a_replicate_with_no_outcome_evidence_has_no_gap(replicate):
+    present = _cases(_trigger_only(6), _outcome(6, 6))
+    cmp = A.compare(present, _cases(_outcome(3, 6), _outcome(3, 6)), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=replicate)
+    assert cmp["noise"]["aa_gap"] is None
+    text = A.format_comparison(cmp)
+    assert "A/A gap      n/a (an arm ran no outcome check)" in text
+    assert "observed, not tested" not in text
+
+
+def test_the_replicate_row_and_its_errors_are_printed():
+    cmp = band_compare([(3, 3)] * 4, [(1, 3)] * 4, [(3, 3)] * 4, replicate_errors=(0, 1, 2))
+    text = A.format_comparison(cmp)
+    assert re.search(r"(?m)^  replicate\s+3\s+1\.00\s+1\.00$", text), text
+    assert "  replicate    9 of 12 attempts produced no signal" in text
+    assert (cmp["noise"]["replicate_attempts"], cmp["noise"]["replicate_errors"]) == (12, 9)
+
+
+def test_a_replicate_cannot_undo_a_baseline_change_before_the_watch_reads(tmp_path):
+    moved = tmp_path / "moved-away"
+    actions = {2: lambda w: w.rename(moved), 3: lambda w: moved.rename(w)}
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              actions=actions)
+    assert any(c.startswith("deleted: ") for c in rep["meta"].get("real_state_changes", [])), rep["meta"]
+    assert rc == R.EXIT_BELOW_THRESHOLD
+
+
+@pytest.mark.parametrize("mode", [["--list-checks"], ["--verify-jail"]])
+def test_every_mode_refuses_noise_band_without_ablate(mode):
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert R.main([*mode, "--noise-band"]) == R.EXIT_USAGE
+
+
+@pytest.mark.parametrize("margin", ["-0.01", "-1", "1.0001", "nan", "inf"])
+def test_a_margin_outside_the_unit_interval_is_refused(margin):
+    with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+        R.build_parser().parse_args(["--skill", "x", "--ablation-margin", margin])
+
+
+def test_a_state_exit_keeps_the_threshold_verdict():
+    agg = R.aggregate([], case_threshold=R.DEFAULT_CASE_THRESHOLD)
+    text = R.format_report([], agg, mode="live", skill="s", threshold=0.8,
+                           exit_code=R.EXIT_BELOW_THRESHOLD, state_exit=True)
+    assert "-> PASS (exit 1)" in text
+    assert "exit 1 is --fail-on-real-state-change" in text
+    plain = R.format_report([], agg, mode="live", skill="s", threshold=0.8,
+                            exit_code=R.EXIT_BELOW_THRESHOLD)
+    assert "-> FAIL (exit 1)" in plain and "fail-on-real-state-change" not in plain
+
+
+@pytest.mark.parametrize("arm", [1, 2, 3])
+def test_a_state_exit_names_its_cause_in_the_report(tmp_path, arm):
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=arm)
+    assert rc == R.EXIT_BELOW_THRESHOLD
+    assert rep.get("exit_cause") == "real_state_change", arm
+
+
+def test_a_clean_run_names_no_exit_cause(tmp_path):
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change")
+    assert rc == R.EXIT_OK and "exit_cause" not in rep
