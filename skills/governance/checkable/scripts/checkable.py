@@ -25,6 +25,7 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -112,9 +113,21 @@ def load_doc(path: Path) -> dict:
     if path.suffix.lower() in (".yaml", ".yml"):
         raise InputError(f"{path}: statements are JSON; YAML is not read")
     try:
-        if path.stat().st_size > MAX_BYTES:
-            raise InputError(f"{path} is larger than {MAX_BYTES} bytes")
-        text = path.read_text(encoding="utf-8")
+        # Opened without blocking and inspected through the open descriptor: a
+        # FIFO would otherwise wait for a writer for ever, and a path checked
+        # by name could be swapped before it is read.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            status = os.fstat(descriptor)
+            if not stat.S_ISREG(status.st_mode):
+                raise InputError(f"{path} is not a regular file")
+            if status.st_size > MAX_BYTES:
+                raise InputError(f"{path} is larger than {MAX_BYTES} bytes")
+            with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                raw = handle.read(MAX_BYTES + 1)
+        finally:
+            os.close(descriptor)
+        text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise InputError(f"cannot read {path}: {exc}") from exc
     return parse(text, str(path))
@@ -301,8 +314,13 @@ def pinned_text(doc: dict) -> str:
     return json.dumps(kept, sort_keys=True, ensure_ascii=False)
 
 
-def pin_state(path: Path, base: str | None, doc: dict) -> tuple[str, str]:
-    """pinned | changed | absent | unknown, with a sentence saying why."""
+def pin_state(path: Path, base: str | None, doc: dict, repo: Path | None = None) -> tuple[str, str]:
+    """pinned | changed | absent | unknown, with a sentence saying why.
+
+    Without `repo`, the statement sits in a git repository and the base is
+    read from it. With `repo`, the statement sits elsewhere (a snapshot of a
+    commit, say) at the same path relative to the current directory as it has
+    in that repository, and the base is read from `repo`."""
     if base is None:
         return "unknown", "no --base revision was given"
     if not base.strip() or base.startswith("-"):
@@ -316,14 +334,15 @@ def pin_state(path: Path, base: str | None, doc: dict) -> tuple[str, str]:
         )
 
     try:
-        top = git("-C", str(folder), "rev-parse", "--show-toplevel")
+        top = git("-C", str(repo if repo is not None else folder), "rev-parse", "--show-toplevel")
         if top.returncode != 0:
-            return "unknown", f"{folder} is not inside a git repository"
+            return "unknown", f"{repo if repo is not None else folder} is not inside a git repository"
         root = Path(top.stdout.strip()).resolve()
         try:
-            rel = path.resolve().relative_to(root).as_posix()
+            rel = path.resolve().relative_to(root if repo is None else Path.cwd().resolve()).as_posix()
         except ValueError:
-            return "unknown", f"{path} resolves to a file outside the repository at {root}"
+            where = f"the repository at {root}" if repo is None else "the current directory, which --repo needs"
+            return "unknown", f"{path} resolves to a file outside {where}"
         known = git("-C", str(root), "rev-parse", "--verify", "--quiet", "--end-of-options", f"{base}^{{commit}}")
         if known.returncode != 0:
             return "unknown", f"revision {base} does not exist in this repository"
@@ -449,6 +468,8 @@ def check(doc: dict, pin: tuple[str, str], folder: Path | None = None) -> list[d
         for step in steps:
             if step not in by_id and step not in action_ids:
                 add("C5", "FAIL", "flow.steps", f"unknown step {step}")
+            elif step in by_id and by_id[step]["rung"] == "none":
+                add("C5", "FAIL", "flow.steps", f"claim {step} has no check, so nothing happens at that step; leave it out")
         for aid in sorted(action_ids - set(steps)):
             add("C5", "FAIL", "flow.steps", f"action {aid} is not in the order")
     ref = doc.get("flow", {}).get("ref")
@@ -473,7 +494,9 @@ def check(doc: dict, pin: tuple[str, str], folder: Path | None = None) -> list[d
                 add("C6", "FAIL", where, f"requires unknown claim {needed}")
                 continue
             if by_id[needed]["rung"] == "none":
-                # Nothing runs for a claim with no check, so it is not a step.
+                # Nothing runs for a claim with no check, so it is never a
+                # step (C5 refuses one in flow.steps) and has no place in the
+                # order.
                 if klass != "reversible":
                     add("C6", "FAIL", where, f"claim {needed} has no check, so it may only guard a reversible action")
                 continue
@@ -812,6 +835,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_check = sub.add_parser("check", help="refuse a statement that breaks an invariant")
     p_check.add_argument("statement", type=Path)
     p_check.add_argument("--base", help="git revision that declares the statement, e.g. origin/main")
+    p_check.add_argument(
+        "--repo",
+        type=Path,
+        help="read the base from this repository; the statement's path is then taken relative to the current directory",
+    )
     p_check.add_argument("--json", action="store_true")
 
     p_replay = sub.add_parser("replay", help="run each proof and replay claim with its controls")
@@ -850,7 +878,7 @@ def main(argv: list[str] | None = None) -> int:
             if shape(doc):
                 pin = ("unknown", "a malformed statement is not compared with its base")
             else:
-                pin = pin_state(args.statement, args.base, doc)
+                pin = pin_state(args.statement, args.base, doc, args.repo)
             findings = check(doc, pin, args.statement.resolve().parent)
             failed = any(f["level"] == "FAIL" for f in findings)
             well_formed = not any(f["invariant"] == "C0" for f in findings)

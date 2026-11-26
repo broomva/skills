@@ -108,7 +108,7 @@ data the checker gets.
 | `claims[].verifier.origin` | `code`, `sensor:<name>`, `model:<provider>` or `human:<role>` |
 | `claims[].status` | `open`, `accepted` or `refuted`; an accepted or refuted claim also carries a `receipt` |
 | `actions[].reversibility` | `reversible`, `compensable` or `irreversible` |
-| `flow.steps` | claim and action ids in the order they happen |
+| `flow.steps` | the actions, and the claims that have a check, in the order they happen |
 | `feeds` | each output that becomes an input, with the claim that checks it |
 | `unverified` | what nobody checks; a claim on rung `none` is named here by its id |
 
@@ -123,7 +123,7 @@ under, and a monthly close.
 | C2 | An accepted claim carries a receipt | `receipt.revision`, `receipt.replay` or `receipt.result` is missing or contradicts the status; for a proof or replay claim, `receipt.replay` is not the claim's own `check` |
 | C3 | Every check can fail | A verifier lacks the fields that let it fail for its rung |
 | C4 | The verifier's origin differs from the performer's | A performer judges its own work, or a judgment names no model or person |
-| C5 | Order is declared | Two actions, or one irreversible action, with no `flow.steps`; an action missing from the steps; a required claim placed after its action |
+| C5 | Order is declared | Two actions, or one irreversible action, with no `flow.steps`; an action missing from the steps; a required claim that has a check placed after its action or missing from the steps; a claim on rung `none` listed as a step, since nothing happens there |
 | C6 | Actions are classed by reversibility | No class, no `undo` for a reversible or compensable action, or an irreversible action whose gate is missing, is a performer, or is a claim weaker than proof or replay |
 | C7 | Every hand-off passes a check | A `feeds` hop names no checking claim, or no place is given for corrections |
 | C8 | The remainder is written down | `unverified` is missing, or no entry names a claim on rung `none`: an entry names it when it is the bare `<id>` or starts with `<id>:` |
@@ -137,7 +137,9 @@ performer cannot be written two ways.
 
 C1 is what stops a performer quietly editing its own contract: the base
 revision declares the statement, and changing it means landing the change on
-the base first. With `--base`, `check` exits 3 when the comparison could not be
+the base first. `--repo DIR` reads the base from another repository, for a
+statement that sits in a snapshot of a commit: its path is then taken relative
+to the current directory. With `--base`, `check` exits 3 when the comparison could not be
 made, including when the statement is not on the base yet.
 
 ## The verification ladder
@@ -169,8 +171,10 @@ performer, can gate an irreversible action.
    and who or what looks. If the answer is the performer, find another origin.
 4. **Class every action.** Can it be undone, and how far does it reach? Gate
    the irreversible ones.
-5. **Declare the order** as `flow.steps`. A claim an action requires comes
-   before that action. `flow.ref` may also name a flow definition file.
+5. **Declare the order** as `flow.steps`: the actions, and the claims that
+   have a check. A claim an action requires comes before that action. A claim
+   on rung `none` is not a step. `flow.ref` may also name a flow definition
+   file.
 6. **List what stays unverified.** An empty list needs a stated reason.
 7. **Land the statement on the base before the work starts.** Then run the
    work, record receipts, and send each correction to `learning`.
@@ -181,7 +185,7 @@ landed, and `route` to see what to load.
 ## Commands
 
 ```bash
-python3 scripts/checkable.py check  <statement> [--base origin/main] [--json]
+python3 scripts/checkable.py check  <statement> [--base origin/main] [--repo DIR] [--json]
 python3 scripts/checkable.py replay <statement> [--cwd DIR] [--timeout 300]
 python3 scripts/checkable.py route  <statement> [--json]
 python3 scripts/checkable.py index  [--require-roster]
@@ -195,8 +199,8 @@ python3 scripts/checkable.py index  [--require-roster]
 | `index` | that every installable skill (`skills/<bucket>/<name>/SKILL.md`) is indexed or set aside, and nothing indexed is gone; a `SKILL.md` nested deeper is not counted | 0, 1, 2, or 3 when a roster was required and not found |
 
 Unreadable input exits 2 with one line on stderr, never a traceback. That
-includes a file named `.yaml` or `.yml`, a document over 1 MiB, and a key
-written twice. The copy of a statement at the base goes through the same reader
+includes a file named `.yaml` or `.yml`, a document over 1 MiB, a key written
+twice, and anything that is not a regular file, such as a directory or a FIFO. The copy of a statement at the base goes through the same reader
 with the same limits, and each git call has a 60-second limit.
 
 In `replay`, a known-bad case that could not run proves nothing, so it is
@@ -241,12 +245,12 @@ skill's own field, and a statement is not a measurement record.
 ## Under the flow kernel
 
 `assets/flows/checkable.yaml` is a flow definition for the Maestro flow kernel.
-It has three steps. `pin` confirms the repository is at the commit you named
-and that the statement and the tool are tracked files whose working copies
-match that commit.
-`statement` runs `check --base`, so it fails with exit 3 until the statement is
-on the base. `replay` runs the statement's proof and replay claims in a
-snapshot of that commit, so uncommitted work cannot satisfy them. The kernel
+It has three steps. `pin` confirms the repository is at the commit you named.
+`statement` and `replay` then both run in the kernel's snapshot of that commit,
+so the statement and the tool they use are the committed ones whatever the
+working copy holds. `statement` runs `check --base --repo`: it reads the base
+from the repository's objects and fails with exit 3 until the statement is on
+the base. `replay` runs the statement's proof and replay claims. The kernel
 records the exit status and an output hash for each step, and a passing
 `replay` prints the same text every time, so the hash can be compared with a
 run by hand.
@@ -267,7 +271,7 @@ the same order.
 
 | It checks | It cannot check |
 |---|---|
-| each claim has a check that could fail | that these are the right claims |
+| each claim on a rung other than `none` has a check that could fail, and each claim on rung `none` is named in `unverified` | that these are the right claims |
 | a verifier names an origin other than the performer | that the named judge ever ran |
 | origin `code` is accepted as independent | who wrote the code; a check the performer wrote is still the performer's |
 | `rejects` exits non-zero and `check` exits zero | that the two exercise the same thing; `check: "true"` with `rejects: "false"` passes `replay` |
@@ -281,8 +285,9 @@ judge what they say, so any text satisfies it: `problem`, `domain`, the `text`
 of a claim or an action, `rubric`, `pass_rule`, `sensor`, `positive_control`,
 `falsification_criterion`, `scored_by`, `reach`, `undo`, `receipt.revision`,
 the `replay` of a receipt outside the proof and replay rungs, the two ends of
-a `feeds` hop, `learning.on_correction`, every `unverified` entry and
-`nothing_unverified_because`. They exist so a reader can judge them. A review
+a `feeds` hop, `learning.on_correction`, `nothing_unverified_because`, and the
+wording of each `unverified` entry. The one constraint on those entries is
+C8's: a claim on rung `none` must be named by one of them. They exist so a reader can judge them. A review
 of the statement, by someone other than its writer, is what gives them weight.
 
 The index was tagged from each skill's description, not its code.

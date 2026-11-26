@@ -275,6 +275,19 @@ def test_c5_two_reversible_actions_need_a_declared_order():
     assert "C5" in codes(doc)
 
 
+def test_c5_a_claim_with_no_check_is_not_a_step():
+    # A reviewer placed a required rung-none claim after its action and the
+    # order check, which skips such claims, said nothing.
+    doc = good()
+    doc["actions"][0]["requires"] = ["taste"]
+    doc["flow"]["steps"] = ["tests", "push", "taste", "review", "deploy", "live"]
+    assert "C5" in codes(doc)
+    doc["flow"]["steps"] = ["taste", "tests", "push", "review", "deploy", "live"]
+    assert "C5" in codes(doc)
+    doc["flow"]["steps"] = ["tests", "push", "review", "deploy", "live"]
+    assert codes(doc) == set()
+
+
 def test_c5_a_required_claim_is_in_the_steps():
     doc = good()
     doc["flow"]["steps"].remove("tests")
@@ -1042,6 +1055,98 @@ def test_the_flow_definition_runs_check_then_replay():
     assert " check " in flow["nodes"]["statement"]["run"][2] and "--base" in flow["nodes"]["statement"]["run"][2]
     assert " replay " in flow["nodes"]["replay"]["run"][2]
     assert flow["nodes"]["replay"]["snapshot"] == "{{params.head}}"
+    # Both steps that read the statement run in the snapshot of the commit.
+    assert flow["nodes"]["statement"]["snapshot"] == "{{params.head}}"
+    assert "--repo" in flow["nodes"]["statement"]["run"][2]
+
+
+# --- SKILL.md is read by tests, so its tables cannot drift from the code -----
+
+SKILL_MD = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+
+
+def _section(title: str) -> str:
+    start = SKILL_MD.index(f"## {title}\n")
+    end = SKILL_MD.find("\n## ", start + 1)
+    return SKILL_MD[start : end if end != -1 else len(SKILL_MD)]
+
+
+def _rows(section: str) -> list[list[str]]:
+    rows = []
+    for line in section.splitlines():
+        if line.startswith("|") and not set(line) <= set("|- "):
+            rows.append([cell.strip() for cell in line.strip("|").split("|")])
+    return rows[1:]
+
+
+def _code_spans(text: str) -> list[str]:
+    import re
+
+    return re.findall(r"`([^`]+)`", text)
+
+
+def test_the_statement_in_the_docs_is_accepted_and_shows_both_kinds_of_claim():
+    section = _section("The statement")
+    example = section[section.index("```json\n") + len("```json\n") : section.index("\n```", section.index("```json\n"))]
+    doc = json.loads(example)
+    assert [f for f in checkable.check(doc, PINNED) if f["level"] == "FAIL"] == []
+    assert {claim["rung"] for claim in doc["claims"]} == {"proof", "none"}
+    # Every field the docs' field table names is a real key of the format.
+    known = set(checkable.TOP_SHAPE) | set(checkable.CLAIM_SHAPE) | set(checkable.VERIFIER_SHAPE) | set(checkable.ACTION_SHAPE) | set(checkable.FLOW_SHAPE)
+    for row in _rows(section):
+        for part in row[0].strip("`").replace("[]", "").split("."):
+            assert part in known, row[0]
+
+
+def test_the_invariants_table_lists_the_codes_the_checker_reports():
+    codes_in_docs = [row[0] for row in _rows(_section("The invariants"))]
+    assert codes_in_docs == [code for code in checkable.INVARIANTS if code != "C0"]
+    assert "C0 comes first" in _section("The invariants")
+
+
+def test_the_ladder_table_names_the_fields_the_checker_requires():
+    rows = {row[0].strip("`"): row for row in _rows(_section("The verification ladder"))}
+    assert list(rows) == list(checkable.RUNGS)
+    for rung, fields in checkable.FALSIFIER.items():
+        assert set(_code_spans(rows[rung][2])) == set(fields), rung
+    assert _code_spans(rows["none"][2]) == []
+
+
+def test_the_commands_table_names_every_subcommand():
+    rows = [row[0].strip("`") for row in _rows(_section("Commands"))]
+    parser = checkable.build_parser()
+    subcommands = next(a for a in parser._actions if a.dest == "command").choices
+    assert rows == list(subcommands)
+
+
+def test_the_fields_the_docs_call_free_text_are_free_text_in_the_format():
+    section = _section("What the checker cannot tell")
+    paragraph = section[section.index("**Fields that only have to be present.**") :]
+    paragraph = paragraph[: paragraph.index("They exist so a reader can judge them")]
+    named = {span.split(".")[-1] for span in _code_spans(paragraph)} - {"feeds", "unverified", "none"}
+    free_text = {
+        key
+        for spec in (checkable.TOP_SHAPE, checkable.CLAIM_SHAPE, checkable.VERIFIER_SHAPE, checkable.RECEIPT_SHAPE,
+                     checkable.ACTION_SHAPE, checkable.HOP_SHAPE, checkable.LEARNING_SHAPE)
+        for key, rule in spec.items()
+        if rule is checkable.A_TEXT
+    } | {"domain"}
+    assert named <= free_text, named - free_text
+    # The fields the format treats as free text and the docs must not call
+    # free text, because a rule constrains them.
+    constrained = {"check", "rejects", "accepts", "gate", "ref"}
+    assert not named & constrained
+    assert free_text - constrained - named == {"from", "to"}, free_text - constrained - named
+    assert "the two ends of\na `feeds` hop" in paragraph or "the two ends of a `feeds` hop" in paragraph.replace("\n", " ")
+
+
+def test_an_unverified_entry_for_an_unchecked_claim_must_name_it_as_the_docs_say():
+    section = _section("The statement")
+    example = section[section.index("```json\n") + len("```json\n") : section.index("\n```", section.index("```json\n"))]
+    doc = json.loads(example)
+    doc["unverified"] = ["unrelated"]
+    assert "C8" in codes(doc)
+    assert "must be named by one of them" in _section("What the checker cannot tell").replace("\n", " ")
 
 
 # --- the shipped index and examples ---------------------------------------
@@ -1489,44 +1594,130 @@ def test_an_error_is_one_line(tmp_path: Path, capsys):
     assert capsys.readouterr().err.count("\n") == 1
 
 
-def test_the_flow_pin_step_refuses_an_uncommitted_statement(repo: Path):
-    _yaml_or_skip()
+def _flow_step(node: str, params: dict, cwd: Path) -> subprocess.CompletedProcess:
     import yaml
 
     flow = yaml.safe_load((SKILL / "assets" / "flows" / "checkable.yaml").read_text())
+    argv = []
+    for part in flow["nodes"][node]["run"]:
+        for name, value in params.items():
+            part = part.replace("{{params." + name + "}}", value)
+        argv.append(part)
+    assert not [part for part in argv if "{{params." in part], argv
+    return subprocess.run(argv, capture_output=True, text=True, cwd=cwd, timeout=120)
+
+
+def _snapshot(repo: Path, rev: str, into: Path) -> Path:
+    """What the flow kernel gives a snapshot step: the files of one commit,
+    with no repository around them."""
+    into.mkdir()
+    archive = subprocess.run(["git", "-C", str(repo), "archive", rev], capture_output=True, check=True).stdout
+    subprocess.run(["tar", "-x", "-C", str(into)], input=archive, check=True)
+    return into
+
+
+def _flow_repo(repo: Path) -> dict:
+    """The `repo` fixture plus a committed copy of the tool, as the flow needs."""
+    (repo / "checkable.py").write_text((SKILL / "scripts" / "checkable.py").read_text())
+    _git(repo, "add", "checkable.py")
+    _git(repo, "commit", "-q", "-m", "add the tool")
     head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    params = {"repo": str(repo), "head": head, "statement": "statement.json", "tool": "statement.json"}
+    return {"repo": str(repo), "head": head, "base": head, "statement": "statement.json", "tool": "checkable.py", "bin": str(Path(sys.executable).parent)}
 
-    def pin() -> int:
-        argv = [part.replace("{{params.", "{").replace("}}", "}").format(**params) for part in flow["nodes"]["pin"]["run"]]
-        return subprocess.run(argv, capture_output=True).returncode
 
-    assert pin() == 0
+def test_the_flow_pin_step_only_passes_at_the_named_commit(repo: Path, tmp_path_factory):
+    _yaml_or_skip()
+    params = _flow_repo(repo)
+    assert _flow_step("pin", params, repo).returncode == 0
+    assert _flow_step("pin", {**params, "head": "0" * 40}, repo).returncode == 1
+
+
+def test_the_flow_statement_step_reads_the_commit_not_the_working_copy(repo: Path, tmp_path_factory):
+    # Three reviews in a row got the old pin step to pass on a working copy
+    # that differed from the commit: an uncommitted edit, an untracked file,
+    # then git's assume-unchanged flag. The statement step now runs in a
+    # snapshot of the commit, so the working copy is never read.
+    _yaml_or_skip()
+    params = _flow_repo(repo)
+    base = params["head"]
+    honest = (repo / "statement.json").read_text()
+
+    weakened = good()
+    weakened["claims"][0]["verifier"]["check"] = "echo trust me"
+    (repo / "statement.json").write_text(json.dumps(weakened))
+    _git(repo, "commit", "-q", "-am", "weaken a check")
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    params = {**params, "head": head, "base": base}
+
+    # The working copy is put back to the base text, by each of the old routes.
+    (repo / "statement.json").write_text(honest)
+    snapshot = _snapshot(repo, head, tmp_path_factory.mktemp("snap") / "a")
+    assert _flow_step("pin", params, repo).returncode == 0
+    refused = _flow_step("statement", params, snapshot)
+    assert refused.returncode == checkable.EXIT_FINDING, refused.stdout + refused.stderr
+    assert "pin: changed" in refused.stdout
+
+    _git(repo, "update-index", "--assume-unchanged", "statement.json")
+    assert _flow_step("statement", params, snapshot).returncode == checkable.EXIT_FINDING
+
+    # And an honest commit passes whatever the working copy holds.
+    honest_snapshot = _snapshot(repo, base, tmp_path_factory.mktemp("snap") / "b")
+    (repo / "statement.json").write_text(json.dumps(weakened))
+    passed = _flow_step("statement", {**params, "head": base}, honest_snapshot)
+    assert passed.returncode == checkable.EXIT_OK, passed.stdout + passed.stderr
+    assert "pin: pinned" in passed.stdout
+
+
+def test_the_flow_replay_step_runs_the_committed_statement(repo: Path, tmp_path_factory):
+    _yaml_or_skip()
+    params = _flow_repo(repo)
+    snapshot = _snapshot(repo, params["head"], tmp_path_factory.mktemp("snap") / "a")
+    done = _flow_step("replay", params, snapshot)
+    assert done.returncode == checkable.EXIT_OK, done.stdout + done.stderr
+    assert done.stdout == "PASS    tests (replay)\n"
+
+
+def test_check_with_a_repository_reads_the_base_from_it(repo: Path, tmp_path_factory, monkeypatch):
+    snapshot = _snapshot(repo, "main", tmp_path_factory.mktemp("snap") / "a")
+    monkeypatch.chdir(snapshot)
+    path = Path("statement.json")
+    assert checkable.pin_state(path, "main", checkable.load_doc(path), repo)[0] == "pinned"
+    assert checkable.main(["check", "statement.json", "--base", "main", "--repo", str(repo)]) == checkable.EXIT_OK
     doc = good()
     doc["claims"][0]["verifier"]["check"] = "echo trust me"
-    (repo / "statement.json").write_text(json.dumps(doc))
-    assert pin() == 1
-    params["head"] = "0" * 40
-    assert pin() == 1
+    path.write_text(json.dumps(doc))
+    assert checkable.main(["check", "statement.json", "--base", "main", "--repo", str(repo)]) == checkable.EXIT_FINDING
+    # A statement outside the current directory has no path to look up.
+    elsewhere = tmp_path_factory.mktemp("elsewhere") / "statement.json"
+    elsewhere.write_text(json.dumps(good()))
+    assert checkable.pin_state(elsewhere, "main", good(), repo)[0] == "unknown"
+    # A folder that is not a repository cannot supply a base.
+    assert checkable.pin_state(path, "main", doc, snapshot)[0] == "unknown"
 
 
-def test_the_flow_pin_step_refuses_an_untracked_statement_or_tool(repo: Path):
-    _yaml_or_skip()
-    import yaml
+@pytest.mark.parametrize("kind", ["fifo", "directory", "socket-like symlink loop"])
+def test_only_a_regular_file_is_read(tmp_path: Path, kind):
+    path = tmp_path / "s.json"
+    if kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "directory":
+        path.mkdir()
+    else:
+        path.symlink_to(path)
+    for command in (["check", str(path)], ["route", str(path)], ["replay", str(path)], ["index", "--index", str(path)]):
+        done = subprocess.run(
+            [sys.executable, str(SKILL / "scripts" / "checkable.py"), *command], capture_output=True, timeout=30
+        )
+        assert done.returncode == checkable.EXIT_INVALID, (command, done.stderr)
+        assert b"Traceback" not in done.stderr
 
-    flow = yaml.safe_load((SKILL / "assets" / "flows" / "checkable.yaml").read_text())
-    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    (repo / "untracked.json").write_text(json.dumps(good()))
 
-    def pin(statement: str, tool: str) -> int:
-        params = {"repo": str(repo), "head": head, "statement": statement, "tool": tool}
-        argv = [part.replace("{{params.", "{").replace("}}", "}").format(**params) for part in flow["nodes"]["pin"]["run"]]
-        return subprocess.run(argv, capture_output=True).returncode
-
-    assert pin("statement.json", "statement.json") == 0
-    assert pin("untracked.json", "statement.json") == 1
-    assert pin("statement.json", "untracked.json") == 1
-    assert pin("statement.json", "missing.json") == 1
+def test_a_link_to_a_regular_file_is_read(tmp_path: Path):
+    real = tmp_path / "real.json"
+    real.write_text(json.dumps(good()))
+    link = tmp_path / "link.json"
+    link.symlink_to(real)
+    assert checkable.load_doc(link)["checkable"] == 1
 
 
 def test_index_with_a_root_that_has_no_skills_exits_2(tmp_path: Path):
