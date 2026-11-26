@@ -141,7 +141,7 @@ MUTATIONS = [
     ("page-paused animations seeked anyway", "scripts/render.mjs",
      "      if (pageOwned.has(a)) continue;", "", "test_renderat_wins", True),
     ("early drift sample removed", "scripts/render.mjs",
-     "    const early = aborted ? { drift: false, timedOut: false } : await drifts(page, 0, errors);",
+     "    const early = aborted ? { drift: false, timedOut: false } : await drifts(page, 0, errors, o.transparent);",
      "    const early = { drift: false, timedOut: false };", "test_a_one_shot_intro", True),
     ("a timed-out frame does not abort the render", "scripts/render.mjs",
      "        if (info.timedOut) {\n          // A hung renderAt", "        if (false) {\n          // A hung renderAt", "test_a_hung_renderat or test_a_synchronous_hang", True),
