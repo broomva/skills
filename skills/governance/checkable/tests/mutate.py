@@ -11,10 +11,10 @@ Four kinds of mutant, one at a time:
   accept     a function that answers a yes-or-no question about a value is
              made to answer the permissive way for every value
 
-The first two are applied in the functions that decide something: shape,
-check, replay, pin_state, index_report and route. What this does not mutate:
-operators inside one condition, comprehension filters, the tables of allowed
-values, and the code in main. A mutant is killed only when pytest exits 1, which
+The first two are applied in every function named in DECIDERS below. What
+this does not mutate: operators inside one condition, comprehension filters,
+default arguments and the tables of allowed values. Those are covered by
+ordinary tests or not at all; this script is not evidence for them. A mutant is killed only when pytest exits 1, which
 means a test failed. Any other status (a collection error, an interrupted
 run) is reported as an error and fails this check, because it is not
 evidence that a test noticed the change.
@@ -35,7 +35,10 @@ import tempfile
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
-DECIDERS = ("shape", "check", "replay", "pin_state", "index_report", "route")
+DECIDERS = (
+    "shape", "check", "replay", "pin_state", "index_report", "route",
+    "gate_problem", "coverage", "parse", "load_index", "find_root", "pinned_text", "_run", "main",
+)
 REFUSERS = ("add", "invalid")
 # Each of these answers a question about one value. The mutant makes it give
 # the permissive answer always: `True` for a shape predicate, `None` (no
@@ -59,9 +62,7 @@ ALWAYS = {
 SUITE_ENV = {k: v for k, v in os.environ.items() if not k.startswith("CHECKABLE_REQUIRE_")}
 SUITE_ENV["PYTHONDONTWRITEBYTECODE"] = "1"
 
-# The timing tests exercise _run, which is not mutated, and they dominate the
-# suite's run time.
-SUITE_ARGS = ["-q", "-x", "-p", "no:cacheprovider", "-k", "not timeout"]
+SUITE_ARGS = ["-q", "-x", "-p", "no:cacheprovider"]
 
 
 def sites(source: str) -> list[dict]:

@@ -3,7 +3,7 @@
 
 A *statement* writes a problem as claims, the check behind each claim, the
 actions the work may take and what stays unverified. This tool refuses a
-statement that breaks one of eight invariants. It never judges whether the
+statement that breaks an invariant. It never judges whether the
 claims are the right claims; that is a reader's job.
 
     checkable.py check   <statement> [--base REV] [--json]
@@ -20,6 +20,7 @@ otherwise.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -161,7 +162,13 @@ def _performer(value) -> bool:
 
 
 def _date(value) -> bool:
-    return isinstance(value, str) and bool(DATE.fullmatch(value))
+    if not isinstance(value, str) or not DATE.fullmatch(value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _whole(value) -> bool:
@@ -318,14 +325,14 @@ def _plain(value):
 
 def pin_state(path: Path, base: str | None, doc: dict) -> tuple[str, str]:
     """pinned | changed | absent | unknown, with a sentence saying why."""
-    if not base:
+    if base is None:
         return "unknown", "no --base revision was given"
-    if base.startswith("-"):
+    if not base.strip() or base.startswith("-"):
         return "unknown", f"{base!r} is not a revision"
     folder = path.resolve().parent
 
     def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], capture_output=True, text=True, errors="replace")
+        return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     try:
         top = git("-C", str(folder), "rev-parse", "--show-toplevel")
@@ -388,7 +395,7 @@ def check(doc: dict, pin: tuple[str, str], folder: Path | None = None) -> list[d
     accepted = [claim for claim in claims if claim.get("status") == "accepted"]
     unverified = doc.get("unverified")
 
-    # C1: the base declares the claims
+    # C1: the base declares the statement
     state, why = pin
     if state == "changed":
         add("C1", "FAIL", "statement", f"{why}; a change to the statement lands on the base first")
@@ -457,8 +464,10 @@ def check(doc: dict, pin: tuple[str, str], folder: Path | None = None) -> list[d
         for aid in sorted(action_ids - set(steps)):
             add("C5", "FAIL", "flow.steps", f"action {aid} is not in the order")
     ref = doc.get("flow", {}).get("ref")
-    if ref is not None and folder is not None and not (folder / ref).is_file():
-        add("C5", "FAIL", "flow.ref", f"{ref} is not a file next to the statement")
+    if ref is not None and folder is not None:
+        target = (folder / ref).resolve()
+        if not target.is_file() or folder.resolve() not in target.parents:
+            add("C5", "FAIL", "flow.ref", f"{ref} is not a file in or below the statement's folder")
 
     # C6: actions
     for action in actions:
@@ -544,36 +553,48 @@ def _run(command: str, cwd: Path, timeout: int) -> tuple[int | None, str]:
         command,
         shell=True,
         cwd=cwd,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
         errors="replace",
         start_new_session=True,
     )
-    try:
-        output, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+
+    def stop_group() -> None:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             # The group is already gone, or holds only a process that has
             # exited (macOS answers EPERM for that).
             pass
+
+    try:
+        output, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stop_group()
         try:
             # A process that left the group can still hold the pipe open, so
             # this wait is bounded too.
             proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-            if proc.stdout is not None:
-                proc.stdout.close()
+            proc.stdout.close()
         return None, f"timed out after {timeout}s"
+    except BaseException:
+        # An interrupt must not leave the command running after this tool.
+        stop_group()
+        raise
     tail = output.strip().splitlines()[-3:]
     return proc.returncode, " | ".join(tail)
 
 
 # Exit statuses a shell uses when it could not run the command at all.
+MAX_TIMEOUT = 24 * 60 * 60
 COULD_NOT_RUN = (126, 127)
+# A shell reports a command ended by signal N as exit 128 + N.
+SIGNAL_BASE = 128
 
 
 def replay(doc: dict, cwd: Path, timeout: int) -> tuple[list[dict], int]:
@@ -613,6 +634,13 @@ def replay(doc: dict, cwd: Path, timeout: int) -> tuple[list[dict], int]:
         if code in COULD_NOT_RUN or code < 0:
             invalid(row, f"the known-bad case could not run (exit {code}): {tail}")
             continue
+        if code > SIGNAL_BASE and wanted is None:
+            invalid(
+                row,
+                f"the known-bad case ended with exit {code}, which a shell also reports for a signal; "
+                "state rejects_exit if that status is the refusal",
+            )
+            continue
         if wanted is not None and code != wanted:
             invalid(row, f"the known-bad case ended with exit {code}, not the stated {wanted}")
             continue
@@ -647,8 +675,8 @@ def load_index(path: Path) -> dict:
     if not isinstance(entries, list) or not isinstance(set_aside, list):
         raise InputError(f"{path} needs `entries` and `no_role` lists")
     for entry in entries:
-        if not isinstance(entry, dict) or not _text(entry.get("name")):
-            raise InputError(f"{path}: every entry is a mapping with a name; found {entry!r}")
+        if not isinstance(entry, dict) or not _text(entry.get("name")) or not _text(entry.get("kind")):
+            raise InputError(f"{path}: every entry is a mapping with a name and a kind; found {entry!r}")
         for key in ("parts", "rungs", "domains"):
             if key in entry and not _each(_text)(entry[key]):
                 raise InputError(f"{path}: {entry['name']}.{key} must be a list of strings")
@@ -759,18 +787,18 @@ def _print_check(findings: list[dict], pin: tuple[str, str], numbers: dict | Non
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="checkable", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_check = sub.add_parser("check", help="refuse a statement that breaks an invariant")
     p_check.add_argument("statement", type=Path)
-    p_check.add_argument("--base", help="git revision that declares the claims, e.g. origin/main")
+    p_check.add_argument("--base", help="git revision that declares the statement, e.g. origin/main")
     p_check.add_argument("--json", action="store_true")
 
     p_replay = sub.add_parser("replay", help="run each proof and replay claim with its controls")
     p_replay.add_argument("statement", type=Path)
-    p_replay.add_argument("--cwd", type=Path, default=Path.cwd())
+    p_replay.add_argument("--cwd", type=Path, help="where the commands run; the current directory when omitted")
     p_replay.add_argument("--timeout", type=int, default=300)
     p_replay.add_argument("--json", action="store_true")
 
@@ -785,11 +813,26 @@ def main(argv: list[str] | None = None) -> int:
     p_index.add_argument("--require-roster", action="store_true", help="exit 3 when no roster can be found")
     p_index.add_argument("--json", action="store_true")
 
+    return parser
+
+
+def _one_line(message) -> str:
+    return " ".join(str(message).split())
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     try:
         if args.command == "check":
             doc = load_doc(args.statement)
-            pin = pin_state(args.statement, args.base, doc)
+            if shape(doc):
+                pin = ("unknown", "a malformed statement is not compared with its base")
+            else:
+                pin = pin_state(args.statement, args.base, doc)
             findings = check(doc, pin, args.statement.resolve().parent)
             failed = any(f["level"] == "FAIL" for f in findings)
             well_formed = not any(f["invariant"] == "C0" for f in findings)
@@ -800,7 +843,7 @@ def main(argv: list[str] | None = None) -> int:
                 _print_check(findings, pin, numbers)
             if failed:
                 return EXIT_FINDING
-            if args.base and pin[0] != "pinned":
+            if args.base is not None and pin[0] != "pinned":
                 print(f"checkable: --base {args.base} was given but the statement could not be compared: {pin[1]}", file=sys.stderr)
                 return EXIT_NO_COMPARISON
             return EXIT_OK
@@ -815,9 +858,12 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "replay":
             doc = load_doc(args.statement)
-            if not args.cwd.is_dir():
-                raise InputError(f"--cwd {args.cwd} is not a directory")
-            rows, code = replay(doc, args.cwd, args.timeout)
+            cwd = args.cwd if args.cwd is not None else Path.cwd()
+            if not cwd.is_dir():
+                raise InputError(f"--cwd {cwd} is not a directory")
+            if not 0 < args.timeout <= MAX_TIMEOUT:
+                raise InputError(f"--timeout must be between 1 and {MAX_TIMEOUT} seconds")
+            rows, code = replay(doc, cwd, args.timeout)
             if args.json:
                 print(json.dumps({"rows": rows, "exit": code}, indent=2))
             else:
@@ -864,12 +910,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  fix: remove each dangling name from {args.index}")
         return code
     except InputError as exc:
-        print(f"checkable: {exc}", file=sys.stderr)
+        print(f"checkable: {_one_line(exc)}", file=sys.stderr)
         return EXIT_INVALID
-    except (OSError, TypeError, ValueError, KeyError, AttributeError, RecursionError) as exc:
+    except (OSError, TypeError, ValueError, KeyError, AttributeError, RecursionError, ArithmeticError) as exc:
         # The contract is an exit status. Input this tool did not expect is
         # unreadable input, not a finding.
-        print(f"checkable: the input could not be processed: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        print(f"checkable: the input could not be processed: {exc.__class__.__name__}: {_one_line(exc)}", file=sys.stderr)
         return EXIT_INVALID
 
 

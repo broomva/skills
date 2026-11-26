@@ -1,6 +1,6 @@
 ---
 name: checkable
-description: "State a problem so that agents can be handed it and the result relied on without inspecting the work. Writes the problem as claims, the check behind each claim, the actions the work may take, and what stays unverified. A checker refuses the statement when it breaks one of eight invariants: claims pinned to a base, receipts, checks that can fail, independent verifiers, declared order, reversibility classes, checked hand-offs, a declared remainder. A router then lists the skills and services that serve each part. Use when someone says 'make this checkable', '/checkable', 'how would we trust agents with this', 'state this problem for the fleet', or before handing a non-trivial or irreversible problem to autonomous agents, in code or outside it. Not for reviewing finished work (cross-review), turning a repeated mistake into a check (correct), or a one-step task with nothing irreversible in it."
+description: "State a problem so that agents can be handed it and the result relied on without inspecting the work. Writes the problem as claims, the check behind each claim, the actions the work may take, and what stays unverified. A checker refuses the statement when it breaks an invariant: a strict shape, a statement pinned to a base, receipts, checks that can fail, independent verifiers, declared order, reversibility classes, checked hand-offs, a declared remainder. A router then lists the skills and services that serve each part. Use when someone says 'make this checkable', '/checkable', 'how would we trust agents with this', 'state this problem for the fleet', or before handing a non-trivial or irreversible problem to autonomous agents, in code or outside it. Not for reviewing finished work (cross-review), turning a repeated mistake into a check (correct), or a one-step task with nothing irreversible in it."
 tier: D
 ---
 
@@ -77,7 +77,7 @@ unverified:
 Two complete statements ship in `examples/`: the one this skill was shipped
 under, and a monthly close.
 
-## The eight invariants
+## The invariants
 
 | Code | Invariant | Refused when |
 |---|---|---|
@@ -151,18 +151,22 @@ python3 scripts/checkable.py index  [--require-roster]
 
 | Command | Decides | Exit |
 |---|---|---|
-| `check` | whether the statement breaks an invariant; prints coverage | 0 holds, 1 a finding, 2 unreadable, 3 `--base` was given and the comparison could not be made |
+| `check` | whether the statement breaks an invariant; prints coverage | 0 holds, 1 a finding, 2 unreadable, 3 `--base` was given (even empty) and the comparison could not be made |
 | `replay` | for each `proof` and `replay` claim: the known-bad case is refused, the known-good case accepted when one is given, then the check runs | 0 all pass, 1 a check failed, 2 a control did not behave or nothing ran |
 | `route` | which indexed skills and services serve each part, for the statement's domains and rungs | 0, or 2 for a malformed statement |
-| `index` | that every skill on disk is indexed or set aside, and nothing indexed is gone | 0, 1, 2, or 3 when a roster was required and not found |
+| `index` | that every installable skill (`skills/<bucket>/<name>/SKILL.md`) is indexed or set aside, and nothing indexed is gone; a `SKILL.md` nested deeper is not counted | 0, 1, 2, or 3 when a roster was required and not found |
 
 Unreadable input exits 2 with one line on stderr, never a traceback.
 Statements are JSON, or YAML when PyYAML is installed. A YAML statement without
 PyYAML exits 2 and says so.
 
 In `replay`, a known-bad case that could not run proves nothing, so it is
-INVALID, not a refusal: a missing command (exit 126 or 127), a signal, or a
-timeout. A timeout stops the command's whole process group.
+INVALID, not a refusal: a missing command (exit 126 or 127), a timeout, or an
+exit status above 128, which is also how a shell reports a signal. When a
+status above 128 really is the refusal, state it as `rejects_exit`. Commands
+read nothing from standard input. A timeout, or an interrupt of `replay`
+itself, stops the command's process group; a process that leaves that group is
+not stopped.
 
 `replay` runs the commands written in the statement, through a shell. Run it
 only on a statement you would run as a script.
@@ -190,13 +194,15 @@ four written for one problem: the writer is not the judge (C4), proposing is
 not deciding (C6), the base is not the working copy (C1), and what was observed
 is not what was claimed (C2, C3).
 
-The measurement fields follow bstack's `measurement` record, so a claim on that
-rung can point at a record that `bstack verify measurement` accepts.
+`positive_control` and `falsification_criterion` use the names of bstack's
+`measurement` record. The two formats are otherwise separate: `sensor` is this
+skill's own field, and a statement is not a measurement record.
 
 ## Under the flow kernel
 
 `assets/flows/checkable.yaml` is a flow definition for the Maestro flow kernel.
-It has three steps. `pin` confirms the repository is at the commit you named.
+It has three steps. `pin` confirms the repository is at the commit you named
+and that the statement and the tool in the working copy are the committed ones.
 `statement` runs `check --base`, so it fails with exit 3 until the statement is
 on the base. `replay` runs the statement's proof and replay claims in a
 snapshot of that commit, so uncommitted work cannot satisfy them. The kernel
@@ -230,10 +236,11 @@ the same order.
 | a prediction carries a date | that it was written before the outcome was known |
 
 **Fields that only have to be present.** The checker requires these and cannot
-judge what they say, so any text satisfies it: `problem`, a claim's `text`,
-`rubric`, `pass_rule`, `sensor`, `positive_control`, `falsification_criterion`,
-`scored_by`, `reach`, `undo`, the two ends of a `feeds` hop,
-`learning.on_correction`, every `unverified` entry and
+judge what they say, so any text satisfies it: `problem`, `domain`, the `text`
+of a claim or an action, `rubric`, `pass_rule`, `sensor`, `positive_control`,
+`falsification_criterion`, `scored_by`, `reach`, `undo`, `receipt.revision`,
+the `replay` of a receipt outside the proof and replay rungs, the two ends of
+a `feeds` hop, `learning.on_correction`, every `unverified` entry and
 `nothing_unverified_because`. They exist so a reader can judge them. A review
 of the statement, by someone other than its writer, is what gives them weight.
 
@@ -261,7 +268,9 @@ python3 skills/governance/checkable/tests/mutate.py
 python3 skills/tooling/skillify/scripts/skillify_check.py skills/governance/checkable --run-tests
 ```
 
-`tests/mutate.py` changes the checker one place at a time, in the functions
-that decide something: it removes each refusal and negates each `if`
-condition. It counts a mutant as killed only when a test fails, and any other
-pytest status as an error.
+`tests/mutate.py` changes the checker one place at a time: it removes each
+refusal, negates each `if` condition, replaces each pattern with one that
+matches anything, and makes each yes-or-no validator permissive. It counts a
+mutant as killed only when a test fails, and any other pytest status as an
+error. It does not change operators inside a condition, comprehension filters,
+default arguments or the tables of allowed values.

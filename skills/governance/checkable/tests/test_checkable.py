@@ -89,6 +89,13 @@ def test_a_good_statement_has_no_findings():
     "mutate",
     [
         lambda d: d.update(checkable=2),
+        lambda d: d.pop("checkable"),
+        lambda d: d.pop("problem"),
+        lambda d: d.pop("performers"),
+        lambda d: d.pop("claims"),
+        lambda d: d["claims"][0].pop("rung"),
+        lambda d: d["actions"][0].pop("text"),
+        lambda d: d["feeds"][0].pop("from"),
         lambda d: d.update(problem=" "),
         lambda d: d.update(performers=[]),
         lambda d: d.update(performers=["claude"]),
@@ -176,14 +183,26 @@ def test_c2_the_receipt_of_a_judgment_says_how_to_look_again():
 
 # --- C3 the check can fail ------------------------------------------------
 
-@pytest.mark.parametrize(
-    "claim, field",
-    [(0, "rejects"), (0, "check"), (1, "rubric"), (1, "pass_rule"), (2, "positive_control"), (2, "falsification_criterion")],
-)
-def test_c3_a_check_that_cannot_fail_is_refused(claim, field):
+COMPLETE_VERIFIER = {
+    "proof": {"origin": "code", "check": "true", "rejects": "false"},
+    "replay": {"origin": "code", "check": "true", "rejects": "false"},
+    "measurement": {"origin": "sensor:probe", "sensor": "s", "positive_control": "p", "falsification_criterion": "f"},
+    "judgment": {"origin": "model:openai", "rubric": "r", "pass_rule": "p"},
+    "track-record": {"origin": "code", "prediction_recorded": "2026-11-01", "scored_by": "s"},
+}
+
+
+def test_the_ladder_table_covers_every_rung_with_a_check():
+    assert set(COMPLETE_VERIFIER) == set(checkable.FALSIFIER) == set(checkable.RUNGS) - {"none"}
+
+
+@pytest.mark.parametrize("rung, field", [(rung, field) for rung, fields in checkable.FALSIFIER.items() for field in fields])
+def test_c3_every_field_the_ladder_names_is_required(rung, field):
     doc = good()
-    del doc["claims"][claim]["verifier"][field]
-    assert "C3" in codes(doc)
+    doc["claims"].append({"id": "extra", "text": "x", "rung": rung, "verifier": dict(COMPLETE_VERIFIER[rung])})
+    assert codes(doc) == set()
+    del doc["claims"][-1]["verifier"][field]
+    assert codes(doc) == {"C3"}
 
 
 def test_c3_track_record_needs_the_prediction_written_first():
@@ -205,6 +224,12 @@ def test_a_prediction_carries_a_date_not_a_promise():
 def test_c4_a_performer_cannot_judge_its_own_work():
     doc = good()
     doc["claims"][1]["verifier"]["origin"] = "model:anthropic"
+    assert "C4" in codes(doc)
+
+
+def test_c4_a_judgment_is_not_made_by_a_sensor():
+    doc = good()
+    doc["claims"][1]["verifier"]["origin"] = "sensor:probe"
     assert "C4" in codes(doc)
 
 
@@ -240,6 +265,30 @@ def test_c5_two_actions_need_a_declared_order():
     doc = good()
     del doc["flow"]
     assert "C5" in codes(doc)
+
+
+def test_c5_two_reversible_actions_need_a_declared_order():
+    doc = good()
+    doc["actions"][1] = {"id": "tag", "text": "Tag it", "reversibility": "reversible", "reach": "a tag", "undo": "delete the tag"}
+    del doc["flow"]
+    assert "C5" in codes(doc)
+
+
+def test_c5_a_required_claim_is_in_the_steps():
+    doc = good()
+    doc["flow"]["steps"].remove("tests")
+    assert "C5" in codes(doc)
+
+
+def test_c5_a_flow_reference_stays_in_the_statements_folder(tmp_path: Path):
+    doc = good()
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("flow: x\n")
+    folder = tmp_path / "statements"
+    folder.mkdir()
+    for ref in (str(outside), "../outside.yaml"):
+        doc["flow"]["ref"] = ref
+        assert "C5" in {f["invariant"] for f in checkable.check(doc, PINNED, folder)}
 
 
 def test_c5_one_irreversible_action_needs_a_declared_order():
@@ -359,6 +408,13 @@ def test_c6_an_unchecked_claim_cannot_guard_a_compensable_action():
     assert "C6" in codes(doc)
 
 
+@pytest.mark.parametrize("gate", ["model:openai", "sensor:probe", "code", "claim:review", "claim:live", "claim:taste", "claim:nothing"])
+def test_c6_only_a_person_or_a_command_claim_gates_an_irreversible_action(gate):
+    doc = good()
+    doc["actions"][1]["gate"] = gate
+    assert "C6" in codes(doc)
+
+
 def test_c6_the_performer_is_not_its_own_gate():
     doc = good()
     doc["performers"].append("human:owner")
@@ -452,6 +508,9 @@ def test_c8_a_claim_id_inside_another_word_does_not_name_the_claim():
     doc["claims"][3]["id"] = "c"
     doc["unverified"] = ["receipts are verified"]
     assert "C8" in codes(doc)
+    for near_miss in ("cc: another claim", "c whatever", "c-1: another claim", "C: upper case"):
+        doc["unverified"] = [near_miss]
+        assert "C8" in codes(doc), near_miss
     doc["unverified"] = ["c: whether the design is right"]
     assert codes(doc) == set()
     doc["unverified"] = ["c"]
@@ -523,7 +582,7 @@ def test_an_independent_origin_cannot_be_respelled_into_the_performer(variant):
     assert "FAIL" in {f["level"] for f in checkable.check(doc, PINNED)}
 
 
-@pytest.mark.parametrize("value", ["2026-11-01\n", "2026-11-01X", " 2026-11-01", "2026-11-1", "26-11-01", "2026/11/01", "\u0662\u0660\u0662\u0666-11-01"])
+@pytest.mark.parametrize("value", ["2026-11-01\n", "2026-11-01X", " 2026-11-01", "2026-11-1", "26-11-01", "2026/11/01", "\u0662\u0660\u0662\u0666-11-01", "9999-99-99", "2026-02-30", "2026-13-01", "20261101", "2026-W45-3", "2026-11-01T00:00:00"])
 def test_a_date_has_exactly_one_spelling(value):
     doc = good()
     doc["claims"].append({"id": "forecast", "text": "x", "rung": "track-record", "verifier": {"origin": "code", "scored_by": "y", "prediction_recorded": value}})
@@ -541,7 +600,7 @@ def test_a_gate_has_exactly_one_spelling(gate):
     "predicate, accepted, refused",
     [
         ("_id", ["a", "tests", "a-1", "0x"], ["", "-a", "A", "a_b", "a b", "a\n", 1, None, ["a"]]),
-        ("_origin", ["code", "model:openai", "sensor:http-probe", "human:the.owner_1"], ["", "code:x", "model:", "tool:x", "model:a b", "code\n", "CODE", 1, None]),
+        ("_origin", ["code", "model:openai", "sensor:http-probe", "human:the.owner_1"], ["", "code:x", "model:", "tool:x", "model:a b", "code\n", "CODE", "model:Openai", "model:-x", "model:_x", "model:.x", 1, None]),
         ("_performer", ["model:anthropic", "human:owner"], ["code", "sensor:x", "model:", "model:A", "human:owner\n", None]),
         ("_date", ["2026-11-01"], ["2026-11-1", "2026-11-01\n", "x2026-11-01", 20261101, None]),
         ("_whole", [0, 1, 127], [True, False, "1", 1.0, None]),
@@ -699,6 +758,10 @@ def test_pin_reports_a_statement_missing_at_the_base(repo: Path):
         lambda d: d["performers"].append("model:openai"),
         lambda d: d["unverified"].pop(),
         lambda d: d["flow"]["steps"].reverse(),
+        lambda d: d["feeds"].pop(),
+        lambda d: d["learning"].update(on_correction="ignore it"),
+        lambda d: d.update(domain=["finance"]),
+        lambda d: d["actions"][0].update(reach="everything"),
         lambda d: d.update(problem="A different problem."),
         lambda d: d["claims"][0].update(text="Something else."),
         lambda d: d["claims"][0].update(rung="proof"),
@@ -722,6 +785,13 @@ def test_base_on_the_command_line(repo: Path, capsys):
     path.write_text(json.dumps(doc))
     assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_FINDING
     assert "pin: changed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("base", ["", "   "])
+def test_an_empty_base_is_a_base_that_cannot_be_compared(repo: Path, base):
+    path = repo / "statement.json"
+    assert checkable.pin_state(path, base, good())[0] == "unknown"
+    assert checkable.main(["check", str(path), "--base", base]) == checkable.EXIT_NO_COMPARISON
 
 
 def test_a_statement_that_is_not_on_the_base_exits_3_when_a_base_is_given(repo: Path):
@@ -797,6 +867,21 @@ def test_replay_a_known_bad_case_that_could_not_run_proves_nothing(tmp_path: Pat
     rows, code = checkable.replay(doc, tmp_path, 30)
     assert code == checkable.EXIT_INVALID
     assert rows[0]["verdict"] == "INVALID" and "could not run" in rows[0]["why"]
+
+
+@pytest.mark.parametrize("command", ["exit 126", "sh -c 'kill -SEGV $$'; exit $?", "exit 255"])
+def test_replay_a_known_bad_case_ended_by_a_signal_proves_nothing(tmp_path: Path, command):
+    doc = good()
+    doc["claims"][0]["verifier"]["rejects"] = command
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert code == checkable.EXIT_INVALID and rows[0]["verdict"] == "INVALID"
+
+
+def test_replay_accepts_a_high_exit_status_when_the_statement_states_it(tmp_path: Path):
+    doc = good()
+    doc["claims"][0]["verifier"].update(rejects="exit 255", rejects_exit=255)
+    rows, code = checkable.replay(doc, tmp_path, 30)
+    assert code == checkable.EXIT_OK and rows[0]["verdict"] == "PASS"
 
 
 def test_replay_holds_the_known_bad_case_to_its_stated_exit(tmp_path: Path):
@@ -1142,6 +1227,125 @@ def test_replay_survives_output_that_is_not_text(tmp_path: Path):
     assert code == checkable.EXIT_FINDING and rows[0]["verdict"] == "FAIL"
 
 
+def test_what_a_command_started_is_dead_after_a_timeout(tmp_path: Path):
+    import time
+
+    note = tmp_path / "child.pid"
+    code, _ = checkable._run(f"sh -c 'echo $$ > {note}; exec sleep 30' & wait", tmp_path, 2)
+    assert code is None
+    child = int(note.read_text())
+    for _ in range(50):
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(child, 9)
+        pytest.fail("the command's child was still running after the timeout")
+
+
+def test_a_replayed_command_reads_nothing_from_standard_input(tmp_path: Path):
+    program = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import checkable; from pathlib import Path; "
+        "print(checkable._run('grep -q poison', Path(sys.argv[2]), 10)[0])"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", program, str(SKILL / "scripts"), str(tmp_path)],
+        input="poison\n", capture_output=True, text=True, timeout=60,
+    )
+    assert done.stdout.strip() == "1", done.stdout + done.stderr
+
+
+def test_an_interrupt_does_not_leave_the_command_running(tmp_path: Path, monkeypatch):
+    import time
+
+    note = tmp_path / "child.pid"
+
+    def interrupted(self, *args, **kwargs):
+        for _ in range(100):
+            if note.exists() and note.read_text().strip():
+                break
+            time.sleep(0.05)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        checkable._run(f"echo $$ > {note}; exec sleep 30", tmp_path, 20)
+    # The command replaced its shell, so it is this process's own child. A
+    # killed child stays as a zombie until its parent collects it; collecting
+    # it here is the proof that it ended.
+    child = int(note.read_text())
+    for _ in range(50):
+        ended, _status = os.waitpid(child, os.WNOHANG)
+        if ended == child:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(child, 9)
+        pytest.fail("the command was still running after the interrupt")
+
+
+@pytest.mark.parametrize("seconds", ["0", "-5", "999999999999999999999"])
+def test_a_timeout_outside_its_range_exits_2(tmp_path: Path, seconds):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(good()))
+    assert checkable.main(["replay", str(path), "--timeout", seconds]) == checkable.EXIT_INVALID
+
+
+def test_replay_from_a_folder_that_was_deleted_exits_2(tmp_path: Path, monkeypatch):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(good()))
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    monkeypatch.chdir(gone)
+    gone.rmdir()
+    assert checkable.main(["replay", str(path)]) == checkable.EXIT_INVALID
+
+
+def test_a_malformed_statement_is_not_compared_with_its_base(repo: Path, monkeypatch):
+    path = repo / "statement.json"
+    doc = good()
+    doc["actions"].append("delete production")
+    path.write_text(json.dumps(doc))
+
+    def never(*args, **kwargs):
+        raise AssertionError("pin_state ran on a malformed statement")
+
+    monkeypatch.setattr(checkable, "pin_state", never)
+    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_FINDING
+
+
+def test_the_pin_does_not_depend_on_the_locale(tmp_path: Path):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    doc = good()
+    doc["problem"] = "Cerrar la conciliación del mes."
+    path = tmp_path / "statement.json"
+    path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    _git(tmp_path, "add", "statement.json")
+    _git(tmp_path, "commit", "-q", "-m", "state the problem")
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0"}
+    done = subprocess.run(
+        [sys.executable, str(SKILL / "scripts" / "checkable.py"), "check", str(path), "--base", "main"],
+        capture_output=True, env=env, timeout=60,
+    )
+    assert done.returncode == checkable.EXIT_OK, done.stdout + done.stderr
+    assert b"pin: pinned" in done.stdout
+
+
+def test_a_finding_is_still_exit_1_when_a_key_cannot_be_printed(tmp_path: Path):
+    path = tmp_path / "s.json"
+    path.write_text('{"\\ud800": 1, "checkable": 1, "problem": "x", "performers": ["model:a"], "claims": [{"id": "c", "text": "t", "rung": "none"}]}')
+    done = subprocess.run([sys.executable, str(SKILL / "scripts" / "checkable.py"), "check", str(path)], capture_output=True, timeout=60)
+    assert done.returncode == checkable.EXIT_FINDING, done.stdout + done.stderr
+    assert b"NOT CHECKABLE" in done.stdout
+
+
+def test_the_default_timeout_is_five_minutes():
+    args = checkable.build_parser().parse_args(["replay", "s.json"])
+    assert args.timeout == 300
+
+
 def test_a_timeout_is_a_bound_even_when_a_child_leaves_the_group(tmp_path: Path):
     import time
 
@@ -1168,6 +1372,7 @@ def test_a_timeout_survives_a_group_that_cannot_be_signalled(tmp_path: Path, mon
         {"entries": [{"kind": "skill", "parts": ["claims"], "domains": ["any"]}], "no_role": []},
         {"entries": [{"name": "x", "kind": "skill", "parts": "claims", "domains": ["any"]}], "no_role": []},
         {"entries": [], "no_role": [1]},
+        {"entries": [{"name": "x", "parts": ["claims"], "domains": ["any"]}], "no_role": []},
         {"entries": {}, "no_role": []},
     ],
 )
@@ -1178,6 +1383,67 @@ def test_a_malformed_index_exits_2(tmp_path: Path, index):
     statement.write_text(json.dumps(good()))
     assert checkable.main(["index", "--index", str(path)]) == checkable.EXIT_INVALID
     assert checkable.main(["route", str(statement), "--index", str(path)]) == checkable.EXIT_INVALID
+
+
+def _tiny_repository(tmp_path: Path, indexed: list[str]) -> Path:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "lint_skill_catalog.py").write_text("")
+    for name in ("alpha", "beta"):
+        folder = tmp_path / "skills" / "bucket" / name
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text("x")
+    entries = [
+        {"name": part, "kind": "service", "parts": [part], "domains": ["any"], "where": "here", **({"rungs": ["proof"]} if part == "verifiers" else {})}
+        for part in checkable.PARTS
+    ]
+    index = tmp_path / "skills" / "bucket" / "alpha" / "index.json"
+    index.write_text(json.dumps({"entries": entries, "no_role": indexed}))
+    return index
+
+
+def test_index_finds_the_roster_by_walking_up_and_passes(tmp_path: Path):
+    index = _tiny_repository(tmp_path, ["alpha", "beta"])
+    assert checkable.find_root(index.parent) == tmp_path
+    assert checkable.roster(tmp_path) == {"alpha", "beta"}
+    assert checkable.main(["index", "--index", str(index), "--require-roster"]) == checkable.EXIT_OK
+    assert checkable.main(["index", "--index", str(index), "--root", str(tmp_path)]) == checkable.EXIT_OK
+
+
+def test_index_refuses_a_roster_with_an_untagged_or_a_dangling_skill(tmp_path: Path, capsys):
+    index = _tiny_repository(tmp_path, ["alpha", "gone"])
+    assert checkable.main(["index", "--index", str(index), "--require-roster"]) == checkable.EXIT_FINDING
+    out = capsys.readouterr().out
+    assert "untagged: beta" in out and "dangling: gone" in out
+    assert "fix: give each untagged skill an entry in" in out and "fix: remove each dangling name from" in out
+
+
+def test_an_error_is_one_line(tmp_path: Path, capsys):
+    _yaml_or_skip()
+    path = tmp_path / "s.yaml"
+    path.write_text("checkable: 1\nproblem: [unclosed\n")
+    assert checkable.main(["check", str(path)]) == checkable.EXIT_INVALID
+    assert capsys.readouterr().err.count("\n") == 1
+
+
+def test_the_flow_pin_step_refuses_an_uncommitted_statement(repo: Path):
+    _yaml_or_skip()
+    import yaml
+
+    flow = yaml.safe_load((SKILL / "assets" / "flows" / "checkable.yaml").read_text())
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    params = {"repo": str(repo), "head": head, "statement": "statement.json", "tool": "statement.json"}
+
+    def pin() -> int:
+        argv = [part.replace("{{params.", "{").replace("}}", "}").format(**params) for part in flow["nodes"]["pin"]["run"]]
+        return subprocess.run(argv, capture_output=True).returncode
+
+    assert pin() == 0
+    doc = good()
+    doc["claims"][0]["verifier"]["check"] = "echo trust me"
+    (repo / "statement.json").write_text(json.dumps(doc))
+    assert pin() == 1
+    params["head"] = "0" * 40
+    assert pin() == 1
 
 
 def test_index_with_a_root_that_has_no_skills_exits_2(tmp_path: Path):

@@ -18,7 +18,9 @@ workdir: "{{params.repo}}"
 nodes:
   pin:
     class: observe
-    run: [sh, -c, 'test "$(git -C "$1" rev-parse HEAD)" = "$2"', pin, "{{params.repo}}", "{{params.head}}"]
+    # At the named commit, and the statement and the tool are the committed
+    # ones: `statement` reads them from the working copy.
+    run: [sh, -c, 'test "$(git -C "$1" rev-parse HEAD)" = "$2" && git -C "$1" diff --quiet HEAD -- "$3" "$4"', pin, "{{params.repo}}", "{{params.head}}", "{{params.statement}}", "{{params.tool}}"]
     fresh_for: 10m
     inputs: [params.head]
     exit_map: {0: at_head, 1: moved}
