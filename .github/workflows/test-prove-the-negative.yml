@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install dev deps
-        run: pip install pytest
+        run: pip install pytest jsonschema
       - name: Unit tests (the verdict function)
         run: python -m pytest tests/ -v
 

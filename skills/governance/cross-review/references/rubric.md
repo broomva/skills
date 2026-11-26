@@ -198,3 +198,13 @@ Deductions (if REVISE):
 ```
 
 The agent invoking `cross-review` parses this output, posts it as a PR comment, and either pushes (APPROVE) or fixes-and-rescores (REVISE).
+
+## Falsifiable findings
+
+Every objection **and defense** carries a `settling_observation`: one concrete
+test or primary-source observation whose result would falsify the reviewer's
+own reading. Name the expected result and source/command, not "investigate".
+Keep this separate from severity, reproduction evidence and disposition.
+For load-bearing empirical or literature claims, run [the claim funnel](claim-funnel.md)
+before treating agreement as corroboration. It does not replace the score or
+expand the round budget.

@@ -53,6 +53,34 @@ merged — auto-merge correctly blocked"), and carries no default, so the arc
 dies on it — median 2.4h of stalled arc-time behind such a message, 25 of them
 overnight-length.
 
+## Capability tiers at the planning-to-dispatch boundary
+
+Before delegating a plan or declaring a lane human-blocked, enumerate **every
+proposed operation** in a JSON plan with `id`, `operation`, `owner`,
+`settling_observation` (the observable completion/falsification result) and
+exactly one `tier`:
+
+| Tier | Required evidence | Dispatch |
+|---|---|---|
+| `executable_now` (catalog) | `catalog_ref`, `input_schema_ref`, `output_schema_ref`, `readiness_evidence`, `authorized: true` | Existing live tool/skill with suitable inputs, outputs, credentials and authority |
+| `request_quote` | `substrate_ref`, `missing_prerequisite`, `promotion_check` | Supported environment, but missing wrapper, credential or parameterization; prepare the prerequisite first |
+| `send_out` | `external_executor`, `handoff_artifact`, `return_evidence` | Outside the runtime; route a concrete work order to the named executor |
+
+Run `python3 scripts/capability_plan.py plan.json`. Exit 0 yields only the
+`executable_now` IDs; exit 2 rejects incomplete evidence or unknown tiers.
+This validates structure only: inspect the live catalog and evidence before
+actual dispatch. Do not put credentials in the plan. Availability is separate
+from permission: a catalog entry does not grant authority to spend or publish.
+Reclassify only after the missing prerequisite is observed resolved.
+
+Keep all three tiers in the plan. Preserve the intended test rather than
+silently weakening it to match available tools. `request_quote` is a planning
+status, not authority to contact a vendor or spend money. `send_out` is not
+permission to message someone. Continue independent executable work while the
+other operations wait. Planning skills (including third-party
+`planning-and-task-breakdown`) can emit this plan; handback owns the check
+because this is where a proposal becomes dispatch or a concrete human ask.
+
 ## Rule zero — asking is the last resort, not the interface
 
 **No ask may exist until every rung below has been tried and recorded.** A row

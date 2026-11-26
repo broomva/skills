@@ -57,3 +57,13 @@ When invoking Strata A via `codex exec`, prepend this preamble to the rubric:
 The knowledge tier expects one round. A second round is for verifying the fix of a dimension that scored
 0. The ledger does not enforce this, since it still allows three free rounds; the orchestrator states in
 the PR why a further round was run.
+
+## Falsifiable findings
+
+Every objection **and defense** carries a `settling_observation`: one concrete
+test or primary-source observation whose result would falsify the reviewer's
+own reading. Name the expected result and source/command, not "investigate".
+Keep this separate from severity, reproduction evidence and disposition.
+For load-bearing empirical or literature claims, run [the claim funnel](claim-funnel.md)
+before treating agreement as corroboration. It does not replace the score or
+expand the round budget.

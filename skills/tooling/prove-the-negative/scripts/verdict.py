@@ -22,6 +22,7 @@ distinct from FAIL -- a caller that collapses them re-creates the bug, treating
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from typing import Iterable, Literal, NamedTuple
@@ -155,29 +156,83 @@ def parse_cases(raw: object) -> list[Case]:
     return out
 
 
+def measurement_verdict(raw: object) -> dict:
+    """A failed detection only refutes a predeclared, detectable prediction."""
+    if not isinstance(raw, dict):
+        raise ValueError("measurement must be an object")
+    for key in ("claim", "conditions", "observation_ref", "falsification_criterion"):
+        if not isinstance(raw.get(key), str) or not raw[key].strip():
+            raise ValueError(f"{key}: nonempty text required")
+    allowed = {"claim", "conditions", "observation_ref", "falsification_criterion",
+               "target_outcome", "positive_control", "absence_refutes",
+               "control_ref", "claim_verdict"}
+    if set(raw) - allowed:
+        raise ValueError("unknown measurement field(s): " + ", ".join(sorted(set(raw) - allowed)))
+    control_ref = raw.get("control_ref")
+    if control_ref is not None and not isinstance(control_ref, str):
+        raise ValueError("control_ref must be text or null")
+    target = raw.get("target_outcome")
+    control = raw.get("positive_control")
+    if target not in ("detected", "not_detected", "error", "skipped"):
+        raise ValueError("unknown target_outcome")
+    if control not in ("pass", "fail", "missing", "error", "skipped"):
+        raise ValueError("unknown positive_control")
+    if type(raw.get("absence_refutes")) is not bool:
+        raise ValueError("absence_refutes must be a predeclared boolean")
+    if control == "pass" and not (
+        isinstance(raw.get("control_ref"), str) and raw["control_ref"].strip()
+    ):
+        raise ValueError("a passing control needs control_ref evidence")
+    if control != "pass":
+        verdict = "inconclusive_no_positive_control"
+    elif target in ("error", "skipped"):
+        verdict = "inconclusive"
+    elif target == "detected":
+        verdict = "detected"
+    elif raw["absence_refutes"]:
+        verdict = "refuted"
+    else:
+        verdict = "not_detected"
+    return {**raw, "control_ref": control_ref, "claim_verdict": verdict}
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print(__doc__, file=sys.stderr)
-        return EXIT["INVALID"]
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("cases", help="JSON file, or - for stdin")
+    ap.add_argument("--json", action="store_true", help="structured run verdict")
+    ap.add_argument("--measurement", action="store_true",
+                    help="grade a detection record instead of a boundary case matrix")
+    args = ap.parse_args(argv[1:])
     try:
-        src = sys.stdin.read() if argv[1] == "-" else open(argv[1], encoding="utf8").read()
-        cases = parse_cases(json.loads(src))
+        src = sys.stdin.read() if args.cases == "-" else open(args.cases, encoding="utf8").read()
+        raw = json.loads(src)
+        if args.measurement:
+            result = measurement_verdict(raw)
+            print(json.dumps(result))
+            return {"detected": 0, "refuted": 1}.get(result["claim_verdict"], 2)
+        cases = parse_cases(raw)
     except (OSError, ValueError) as e:
-        # OSError covers the case set we could not READ (missing file, a
-        # directory, no permission); ValueError covers the one we could not
-        # PARSE, and subsumes both json.JSONDecodeError and the
-        # UnicodeDecodeError of a binary file. Every one of them means the same
-        # thing -- nothing was measured -- so every one of them is INVALID.
-        # Letting OSError escape instead exits 1, which is FAIL: this script
-        # would report "we could not measure" as "we found a problem", the
-        # exact inference the skill exists to refuse.
-        print(f"INVALID  unreadable case set: {e}", file=sys.stderr)
+        if args.json or args.measurement:
+            print(json.dumps({"verdict": "INVALID", "claim_verdict": "inconclusive",
+                              "reason": f"unreadable case set: {e}"}))
+        else:
+            print(f"INVALID  unreadable case set: {e}", file=sys.stderr)
         return EXIT["INVALID"]
 
     r = run_verdict(cases)
-    print(f"{r.verdict}  {r.reason}")
-    for c in r.culprits:
-        print(f"    - {c}")
+    if args.json:
+        # This conclusion is about the boundary assertion as written, not a
+        # claim that the forbidden operation was detected/absent.
+        claim_verdict = {"PASS": "supported", "FAIL": "refuted", "INVALID": "inconclusive"}[r.verdict]
+        controls = [c for c in cases if c.kind == "control"]
+        if not controls or any(c.outcome != "pass" for c in controls):
+            claim_verdict = "inconclusive_no_positive_control"
+        print(json.dumps({"verdict": r.verdict, "claim_verdict": claim_verdict,
+                          "reason": r.reason, "culprits": r.culprits}))
+    else:
+        print(f"{r.verdict}  {r.reason}")
+        for c in r.culprits:
+            print(f"    - {c}")
     return EXIT[r.verdict]
 
 

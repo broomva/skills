@@ -167,9 +167,38 @@ evidence set instead of asking, generate failure reasons, and deep-dive the
 strongest in parallel subagents. Keep only the reasons that change the plan: a
 mitigation, a gate, a cut, or an early signal with a date to check it.
 
+### 4b. Claim audit before final refutation
+
+For load-bearing empirical/literature claims, run `cross-review`'s
+`references/claim-funnel.md`: explicit `established | contested | untested`
+claim ledger → independent fresh-context skeptic and believer → a third
+fresh-context refuter reading the raw primary data. Every objection and defense
+requires a `settling_observation` that could falsify its own reading.
+
+This is an exception to sharing the annotated evidence file: the two blinded
+agents get the same **raw** evidence and neutral questions, without writer
+conclusions, ledger statuses or earlier lens findings. The final scoring
+reviewer still receives drift findings. Validate the packet with
+`cross-review claim-packet <packet.json>` before scoring, and again after step
+5.1 patches: recompute the final artifact hash and verify that the packet's
+`artifact_hash` matches it. A packet whose `artifact_hash` differs from that
+final hash is invalid for scoring (leaving the verdict **NOT READY**). If a
+step 5.1 patch changes a load-bearing claim or its supporting evidence, re-run
+`cross-review`'s `references/claim-funnel.md` (updated claim ledger, fresh
+blinded skeptic and believer on raw evidence, and independent refuter reading
+raw primary sources) pinned to the post-patch hash before scoring. If the
+skill/gate or isolated dispatch is unavailable, disclose the missing funnel and
+leave critical claims unresolved; do not claim READY on agent agreement.
+
+For `peer-review`, compose its domain rubric with the same funnel using that
+reference's peer-review adapter. Keep the scientific score separate from P20.
+
 ### 5. Refutation, last
 
-1. **Apply every patch from lenses 1 to 4 first.**
+1. **Apply every patch from lenses 1 to 4 first**, then recompute the artifact
+   hash and verify any required claim-review packet matches that final hash
+   (re-running step 4b's claim funnel for any patched load-bearing claim or
+   evidence before scoring).
 2. Refute the patched text with `/spec-contract` for every document type this
    skill takes: `--profile plan` for a plan or strategy document, `spec` for
    a spec or proposal (`rfd` where the repository keeps RFDs), `adr` for an
@@ -236,6 +265,7 @@ from step 5.6, or to an appendix where the repository requires one. **Draft only
 
 1. **Verdict**, decided by the first rule that matches:
    - **NOT READY** if any of these holds:
+     - a required claim-review packet is missing or invalid;
      - the final text was never scored, or its last round failed;
      - the last round scored R1 = 0, or R2 or R4 at 1 or less;
      - `spec_check` does not exit 0;
