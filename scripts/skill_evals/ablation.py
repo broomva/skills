@@ -166,8 +166,12 @@ class ArmStats:
 
     @property
     def outcome_pass_rate(self) -> float | None:
+        """None when nothing was graded, or when no graded trial ran an outcome check:
+        zero observations is not a rate of 0.0. One rule, so text and JSON agree."""
         n = self.graded_positive_trials
-        return (self.outcome_passes / n) if n else None
+        if not n or self.outcome_checked_trials == 0:
+            return None
+        return self.outcome_passes / n
 
     @property
     def trigger_rate(self) -> float | None:
@@ -440,10 +444,9 @@ def format_comparison(cmp: dict[str, Any]) -> str:
     def row(name: str, arm: dict[str, Any], trigger: bool = True) -> str:
         # An arm whose trials ran no outcome check has no outcome rate: n/a, not 0.00.
         checked = arm.get("outcome_checked_trials")  # None: built without counting
-        outcome = None if checked == 0 else arm["outcome_pass_rate"]
         shown = "n/a" if checked is None else checked
         return (f"  {name:10}{arm['graded_positive_trials']:>8}{shown:>9}"
-                f"{rate(outcome):>9}{rate(arm['trigger_rate']) if trigger else '  n/a':>9}")
+                f"{rate(arm['outcome_pass_rate']):>9}{rate(arm['trigger_rate']) if trigger else '  n/a':>9}")
 
     lines = [
         "",

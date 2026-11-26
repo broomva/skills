@@ -942,3 +942,25 @@ def test_a_row_built_without_counting_shows_its_rate_and_no_checked_count():
     cmp = {"skill": "s", "present": stats, "absent": stats, "noise": None, "skill_lift": None,
            "verdict": "v", "why": "w"}
     assert re.search(r"(?m)^  present\s+4\s+n/a\s+0\.75\s+1\.00$", A.format_comparison(cmp))
+
+
+def test_an_unchecked_arm_has_no_rate_in_json_or_text():
+    """Continuation review #4 before r7: text said n/a while JSON said 0.0 for the same
+    unchecked replicate. One rule on ArmStats feeds both."""
+    present = _cases(_outcome(12, 12), _trigger_only(12))
+    replicate = _cases([{"outcome": "ERROR"}] * 12, _trigger_only(12))
+    cmp = A.compare(present, _cases(_outcome(6, 12), _outcome(6, 12)), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=replicate)
+    rep = json.loads(json.dumps(cmp))["noise"]["replicate"]
+    assert (rep["outcome_checked_trials"], rep["outcome_pass_rate"]) == (0, None)
+    assert re.search(r"(?m)^  replicate\s+12\s+0\s+n/a\s+1\.00$", A.format_comparison(cmp))
+
+
+def test_a_checked_arm_with_no_passes_keeps_a_zero_rate():
+    stats = A.arm_stats(_cases(_outcome(0, 12)), NON_PASS)
+    assert (stats.outcome_checked_trials, stats.outcome_pass_rate) == (12, 0.0)
+
+
+def test_an_uncounted_arm_keeps_its_rate():
+    stats = A.ArmStats(graded_positive_trials=4, outcome_passes=3, trigger_events=4)
+    assert stats.outcome_pass_rate == 0.75
