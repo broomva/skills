@@ -33,6 +33,7 @@ Vision (text and faces; vision_probe.swift, compiled on first use) or tesseract
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -241,6 +242,107 @@ def get_profile(layout: dict, name: str | None) -> tuple[str, dict]:
     if name not in layout["profiles"]:
         raise ToolError(f"unknown profile {name!r}; have {sorted(layout['profiles'])}")
     return name, layout["profiles"][name]
+
+
+
+def apply_treatment(
+    layout: dict,
+    treatment_path: Path,
+    profile_override: str | None = None,
+) -> tuple[str, dict, str]:
+    """Build an effective layout profile by layering a per-clip treatment.json's bands and
+    protected regions on top of its named library profile (BRO-3979). Library profiles stay
+    immutable; malformed treatment bands raise ToolError (exit 2)."""
+    try:
+        raw = treatment_path.read_bytes()
+        treatment = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise ToolError(f"cannot read treatment {treatment_path}: {exc}") from exc
+    if not isinstance(treatment, dict):
+        raise ToolError(f"treatment {treatment_path} must be a JSON object")
+    t_sha = "sha256:" + hashlib.sha256(raw).hexdigest()
+
+    t_layout = treatment.get("layout")
+    if not isinstance(t_layout, dict) or not isinstance(t_layout.get("bands"), dict):
+        raise ToolError(f"treatment {treatment_path} needs layout.bands")
+    req_prof = profile_override or t_layout.get("profile")
+    base_name = req_prof if req_prof in layout["profiles"] else layout["default_profile"]
+    prof = copy.deepcopy(layout["profiles"][base_name])
+    bands = t_layout["bands"]
+
+    if "safe_zone" in bands and bands["safe_zone"] is not None:
+        _check_zone(bands["safe_zone"], "treatment.layout.bands.safe_zone")
+        prof["safe_zone"] = dict(bands["safe_zone"])
+
+    if "caption_band" in bands and bands["caption_band"] is not None:
+        cb = bands["caption_band"]
+        if not isinstance(cb, dict):
+            raise ToolError("treatment.layout.bands.caption_band must be an object")
+        _check_zone(cb, "treatment.layout.bands.caption_band", keys=("y0", "y1"))
+        if "x0" in cb or "x1" in cb:
+            _check_zone(cb, "treatment.layout.bands.caption_band")
+        merged_cb = dict(prof.get("caption_band") or {"centre_x_tolerance": 0.15})
+        merged_cb.update(cb)
+        prof["caption_band"] = merged_cb
+
+    if "title_band" in bands and bands["title_band"] is not None:
+        tb = bands["title_band"]
+        if not isinstance(tb, dict):
+            raise ToolError("treatment.layout.bands.title_band must be an object")
+        _check_zone(tb, "treatment.layout.bands.title_band", keys=("y0", "y1"))
+        if "x0" in tb or "x1" in tb:
+            _check_zone(tb, "treatment.layout.bands.title_band")
+        prof["title_band"] = dict(tb)
+
+    if "eye_line" in bands and bands["eye_line"] is not None:
+        el = bands["eye_line"]
+        if not isinstance(el, dict):
+            raise ToolError("treatment.layout.bands.eye_line must be an object")
+        _check_zone(el, "treatment.layout.bands.eye_line", keys=("y0", "y1"))
+        base_el = dict(prof.get("eye_line") or {"max_shift_across_punch_in": 0.08, "punch_in_scale_jump": 1.15})
+        base_el.update(el)
+        prof["eye_line"] = base_el
+
+    if "panels" in bands and bands["panels"] is not None:
+        panels = bands["panels"]
+        if not isinstance(panels, list) or not panels:
+            raise ToolError("treatment.layout.bands.panels must be a nonempty list")
+        merged_panels = []
+        for i, panel in enumerate(panels):
+            if not isinstance(panel, dict) or not isinstance(panel.get("name"), str) or not panel["name"]:
+                raise ToolError(f"treatment.layout.bands.panels[{i}] needs a name")
+            _check_zone(panel.get("bounds"), f"treatment.layout.bands.panels[{i}].bounds")
+            _check_zone(panel.get("safe_zone"), f"treatment.layout.bands.panels[{i}].safe_zone")
+            p_copy = copy.deepcopy(panel)
+            if p_copy.get("eye_line") is not None:
+                _check_zone(p_copy["eye_line"], f"treatment.layout.bands.panels[{i}].eye_line", keys=("y0", "y1"))
+                p_copy["eye_line"].setdefault("max_shift_across_punch_in", 0.08)
+                p_copy["eye_line"].setdefault("punch_in_scale_jump", 1.15)
+            merged_panels.append(p_copy)
+        prof["panels"] = merged_panels
+    elif req_prof not in layout["profiles"] and "panels" in prof:
+        prof.pop("panels", None)
+
+    prot = bands.get("protected_regions")
+    if prot is not None:
+        if not isinstance(prot, list):
+            raise ToolError("treatment.layout.bands.protected_regions must be a list")
+        avoid = list(prof.get("avoid") or [])
+        for i, region in enumerate(prot):
+            if not isinstance(region, dict) or not isinstance(region.get("name"), str) or not region["name"]:
+                raise ToolError(f"treatment.layout.bands.protected_regions[{i}] needs a name")
+            _check_zone(region, f"treatment.layout.bands.protected_regions[{i}]")
+            avoid.append({
+                "name": f"protected:{region['name']}",
+                "x0": region["x0"],
+                "y0": region["y0"],
+                "x1": region["x1"],
+                "y1": region["y1"],
+            })
+        prof["avoid"] = avoid
+
+    label = f"{req_prof or base_name}+treatment"
+    return label, prof, t_sha
 
 
 def zone(z: dict, W: float, H: float) -> Box:
@@ -1177,6 +1279,8 @@ def emit(args, meta: dict, results: list[Result], waivers: tuple[list[dict], str
     entries, waiver_sha = waivers
     meta = {**meta, "waivers": apply_waivers(results, entries, input_sha),
             "waiver_file": {"path": args.waive, "sha256": waiver_sha} if args.waive else None}
+    if getattr(args, "_treatment_sha256", None):
+        meta["treatment_sha256"] = args._treatment_sha256
     v, counts = verdict(results, args.strict)
     payload = {**meta, "verdict": v, "counts": counts,
                "results": [r.__dict__ for r in results]}
@@ -1302,6 +1406,7 @@ def build_parser() -> argparse.ArgumentParser:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--layout", type=Path, default=None, help="layout contract JSON (default: layout/vertical-9x16.json)")
     ap.add_argument("--profile", default=None, help="profile name (default: the contract's default_profile)")
+    ap.add_argument("--treatment", type=Path, default=None, help="per-clip treatment.json whose layout.bands override the base profile (BRO-3979)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p, media: bool):
@@ -1350,7 +1455,11 @@ def main(argv: list[str] | None = None) -> int:
                 raise ToolError("--waive takes one file; put every waiver in it")
             args.waive = args.waive[0]
         layout = load_layout(args.layout)
-        pname, profile = get_profile(layout, args.profile)
+        if args.treatment is not None:
+            pname, profile, args._treatment_sha256 = apply_treatment(layout, args.treatment, args.profile)
+        else:
+            pname, profile = get_profile(layout, args.profile)
+            args._treatment_sha256 = None
         if args.cmd == "video":
             return cmd_media(args, layout, pname, profile, is_video=True)
         if args.cmd == "image":

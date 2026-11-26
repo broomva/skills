@@ -1190,3 +1190,89 @@ def test_stacked_checks_each_panel_even_if_content_face_is_larger():
     result = run([frame], profile)
     assert result["VL6"].status == "FAIL"
     assert "webcam" in result["VL6"].detail
+
+
+# --- BRO-3979: treatment-declared layout bands and protected regions ---
+
+def _write_treatment(tmp_path, overrides=None):
+    base = {
+        "type": "treatment",
+        "format": "reel-9x16",
+        "usable": True,
+        "layout": {
+            "profile": "stacked-stream",
+            "bands": {
+                "safe_zone": {"x0": 0.055, "y0": 0.08, "x1": 0.87, "y1": 0.85},
+                "caption_band": {"x0": 0.08, "y0": 0.66, "x1": 0.85, "y1": 0.78},
+                "protected_regions": [
+                    {"name": "gameplay_action", "x0": 0.10, "y0": 0.48, "x1": 0.85, "y1": 0.64}
+                ],
+                "panels": [
+                    {
+                        "name": "webcam",
+                        "bounds": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 0.47},
+                        "safe_zone": {"x0": 0.055, "y0": 0.08, "x1": 0.87, "y1": 0.46},
+                        "eye_line": {"y0": 0.12, "y1": 0.36},
+                    },
+                    {
+                        "name": "gameplay",
+                        "bounds": {"x0": 0.0, "y0": 0.47, "x1": 1.0, "y1": 1.0},
+                        "safe_zone": {"x0": 0.055, "y0": 0.48, "x1": 0.87, "y1": 0.85},
+                    },
+                ],
+            },
+        },
+    }
+    if overrides:
+        base["layout"]["bands"].update(overrides)
+    p = tmp_path / "treatment.json"
+    p.write_text(json.dumps(base, indent=2), encoding="utf-8")
+    return p
+
+
+def test_treatment_bands_apply_and_do_not_mutate_library(tmp_path):
+    p = _write_treatment(tmp_path)
+    orig_stacked = json.dumps(LAYOUT["profiles"]["stacked-stream"], sort_keys=True)
+    label, prof, sha = cvl.apply_treatment(LAYOUT, p)
+    assert label == "stacked-stream+treatment"
+    assert sha.startswith("sha256:")
+    assert prof["caption_band"]["y0"] == pytest.approx(0.66)
+    assert any(a["name"] == "protected:gameplay_action" for a in prof["avoid"])
+    # Base library contract stays untouched
+    assert json.dumps(LAYOUT["profiles"]["stacked-stream"], sort_keys=True) == orig_stacked
+
+
+def test_treatment_protected_region_blocks_caption_overlap(tmp_path):
+    p = _write_treatment(tmp_path)
+    _, prof, _ = cvl.apply_treatment(LAYOUT, p)
+    # Caption inside protected gameplay_action (y=0.48..0.64 => 921..1228 on 1920px height)
+    bad = cvl.Frame(label="a", texts=[text("BOOM", 200, 1000, 800, 1120)])
+    res = run([bad], prof)
+    assert res["VL3"].status == "FAIL"
+    assert any("protected:gameplay_action" in str(e) for e in res["VL3"].evidence)
+
+    # Caption inside treatment caption_band (y=0.66..0.78 => 1267..1497) passes VL3 and VL5
+    good = cvl.Frame(label="a", texts=[text("BOOM", 200, 1300, 800, 1420)])
+    res_ok = run([good], prof)
+    assert res_ok["VL3"].status == "PASS"
+    assert res_ok["VL5"].status == "PASS"
+
+
+def test_treatment_malformed_band_fails_closed(tmp_path):
+    p = _write_treatment(tmp_path, {"caption_band": {"y0": 0.8, "y1": 0.5}})
+    with pytest.raises(cvl.ToolError):
+        cvl.apply_treatment(LAYOUT, p)
+
+
+def test_treatment_cli_spec_emits_treatment_sha256(tmp_path, capsys):
+    p = _write_treatment(tmp_path)
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({
+        "canvas": [1080, 1920],
+        "elements": [{"role": "caption", "label": "CLEAN", "box": [220, 1300, 820, 1410]}],
+    }), encoding="utf-8")
+    rc = cvl.main(["--treatment", str(p), "spec", str(spec), "--json"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["treatment_sha256"].startswith("sha256:")
+    assert out["profile"] == "stacked-stream+treatment"
