@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -90,3 +91,27 @@ def test_cli_returns_tiers_and_rejects_empty_plan(tmp_path):
         [sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True
     )
     assert result.returncode == 2 and not json.loads(result.stdout)["valid"]
+
+
+def test_cli_reads_utf8_plan_under_non_utf8_locale(tmp_path):
+    op = operation("executable_now")
+    op["id"] = "café"
+    path = tmp_path / "utf8_plan.json"
+    path.write_text(json.dumps([op], ensure_ascii=False), encoding="utf-8")
+    env = {
+        **os.environ,
+        "LC_ALL": "C",
+        "LANG": "C",
+        "PYTHONUTF8": "0",
+        "PYTHONCOERCECLOCALE": "0",
+    }
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is True
+    assert payload["executable_now"] == ["café"]

@@ -280,9 +280,12 @@ def test_measurement_control_requires_receipt():
 def test_json_cli_preserves_invalid_vs_refuted(tmp_path):
     path = tmp_path / 'cases.json'
     assertions = [{'name': 'boundary held', 'kind': 'assertion', 'outcome': 'fail'}]
-    for controls, expected, code in [([], 'inconclusive_no_positive_control', 2),
-                                  ([{'name': 'live', 'kind': 'control', 'outcome': 'pass'}], 'refuted', 1)]:
-        path.write_text(json.dumps(controls + assertions))
+    for payload, expected, code in [
+        ([], 'inconclusive_no_positive_control', 2),
+        (assertions, 'inconclusive_no_positive_control', 2),
+        ([{'name': 'live', 'kind': 'control', 'outcome': 'pass'}] + assertions, 'refuted', 1),
+    ]:
+        path.write_text(json.dumps(payload), encoding='utf-8')
         result = subprocess.run([sys.executable, str(SCRIPT), '--json', str(path)], capture_output=True, text=True)
         assert result.returncode == code
         assert json.loads(result.stdout)['claim_verdict'] == expected

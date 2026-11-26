@@ -55,7 +55,7 @@ def main() -> int:
     ap.add_argument("plan", type=Path)
     args = ap.parse_args()
     try:
-        executable = validate(json.loads(args.plan.read_text()))
+        executable = validate(json.loads(args.plan.read_text(encoding="utf-8")))
     except (ValueError, OSError, TypeError) as exc:
         print(json.dumps({"valid": False, "error": str(exc)}))
         return 2

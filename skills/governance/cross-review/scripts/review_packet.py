@@ -81,7 +81,7 @@ def main() -> int:
     ap.add_argument("packet", type=Path)
     args = ap.parse_args()
     try:
-        validate(json.loads(args.packet.read_text()))
+        validate(json.loads(args.packet.read_text(encoding="utf-8")))
     except (ValueError, OSError, TypeError) as exc:
         print(json.dumps({"valid": False, "error": str(exc)}))
         return 2

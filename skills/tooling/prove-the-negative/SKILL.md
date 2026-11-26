@@ -177,8 +177,10 @@ sensitivity in the same conditions, not just a process somewhere being alive.
 Never infer global impossibility from one scoped null. Record separate controls
 for stages whose failures would confound the claim. The boundary-case matrix
 interface and PASS/FAIL/INVALID exits stay unchanged; add `--json` to expose a
-separate `claim_verdict` (`supported`, `refuted`, or inconclusive). Its claim is
-the assertion as written; it is not a detection signal.
+separate `claim_verdict` (`supported`, `refuted`,
+`inconclusive_no_positive_control` when `cases` is empty or positive controls
+are missing/non-passing, or `inconclusive` for other invalid runs). Its claim
+is the assertion as written; it is not a detection signal.
 
 The structured detection output is described by
 [references/measurement.schema.json](references/measurement.schema.json).

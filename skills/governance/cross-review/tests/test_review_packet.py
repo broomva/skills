@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -118,3 +119,24 @@ def test_cli_and_shell_gate(tmp_path):
         [sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True
     )
     assert result.returncode == 2 and json.loads(result.stdout)["valid"] is False
+
+
+def test_cli_reads_utf8_packet_under_non_utf8_locale(tmp_path):
+    p = packet()
+    p["claims"][0]["claim"] = "target is \u201cactive\u201d"
+    path = tmp_path / "utf8_packet.json"
+    path.write_text(json.dumps(p, ensure_ascii=False), encoding="utf-8")
+    env = {
+        **os.environ,
+        "LC_ALL": "C",
+        "LANG": "C",
+        "PYTHONUTF8": "0",
+        "PYTHONCOERCECLOCALE": "0",
+    }
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0 and json.loads(result.stdout)["valid"] is True
