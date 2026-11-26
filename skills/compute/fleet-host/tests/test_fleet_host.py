@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Local-state tests for scripts/fleet_host.py (BRO-3651). No gcloud, ssh or network calls."""
-import argparse, importlib.util, json, os, tempfile, unittest
+import argparse, importlib.util, json, os, shutil, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -742,6 +742,227 @@ class TemplateEdgeCases(unittest.TestCase):
     def test_help_needs_no_template(self):
         r = self.run_cli(None, '--help')
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class CensusProbe(unittest.TestCase):
+    """BRO-4084: the census source may sit in the active release or, before the switch, in the state folder."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.m = load_module(self.tmp)
+        self.release = self.tmp / 'releases/current/fleet_census.py'
+        self.legacy = self.tmp / 'fleet/meta/fleet_census.py'
+        self.m.CENSUS_SOURCES = (self.release, self.legacy)
+
+    def write(self, path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_no_census_anywhere_is_not_ready(self):
+        self.assertFalse(self.m.census_reads_registry())
+
+    def test_legacy_location_alone_is_read(self):
+        self.write(self.legacy, 'import hosts_registry\n')
+        self.assertTrue(self.m.census_reads_registry())
+
+    def test_release_alone_is_read(self):
+        self.write(self.release, 'import hosts_registry\n')
+        self.assertTrue(self.m.census_reads_registry())
+
+    def test_release_wins_over_a_stale_legacy_copy(self):
+        self.write(self.release, 'print(1)\n')
+        self.write(self.legacy, 'import hosts_registry\n')
+        self.assertFalse(self.m.census_reads_registry())
+
+
+# A stand-in for the fleet's setpoints.py (BRO-3771), with the contract fleet_host.py relies on: `get` prints the
+# merged row with `source` and `movable`; `set` and `unset` print a JSON result; a refusal exits 3 with the reason
+# on stderr and writes nothing. The view it regenerates has the same shape as the real one.
+SETPOINTS_STUB = r"""
+import json, sys
+from pathlib import Path
+here = Path(__file__).resolve().parent
+values_p, view_p, log_p = here / 'setpoint-values.json', here / 'setpoints.json', here / 'stub-calls.jsonl'
+HELD = {'host.held-1.max_live': 2}
+PATTERN = {'min': 0, 'max': 3, 'default': 0}
+values = json.loads(values_p.read_text()) if values_p.exists() else {}
+cmd, key = sys.argv[1], sys.argv[2]
+with log_p.open('a') as f:
+    f.write(json.dumps(sys.argv[1:]) + '\n')
+def row(k):
+    if k in HELD:
+        return {'value': HELD[k], 'source': 'bounds', 'movable': False, 'min': 0, 'max': 3}
+    return {'value': values.get(k, PATTERN['default']), 'source': 'values' if k in values else 'bounds',
+            'movable': True, 'min': PATTERN['min'], 'max': PATTERN['max']}
+def save():
+    values_p.write_text(json.dumps(values))
+    view = {k: {'value': v} for k, v in values.items()}
+    view.update({k: {'value': v, 'held': True} for k, v in HELD.items()})
+    view_p.write_text(json.dumps({'setpoints': view}))
+if cmd == 'get':
+    print(json.dumps(row(key)))
+elif cmd == 'set':
+    v = int(sys.argv[3])
+    if key in HELD:
+        sys.exit((sys.stderr.write('refused: bounds-only\n'), 3)[1])
+    if not PATTERN['min'] <= v <= PATTERN['max']:
+        sys.exit((sys.stderr.write('refused: outside bounds\n'), 3)[1])
+    prev = row(key)['value']; values[key] = v; save()
+    print(json.dumps({'key': key, 'value': v, 'previous': prev}))
+elif cmd == 'unset':
+    prev = row(key)['value']; values.pop(key, None); save()
+    print(json.dumps({'key': key, 'value': PATTERN['default'], 'previous': prev}))
+"""
+
+
+class SetpointCommand(unittest.TestCase):
+    """BRO-3771: with the fleet's setpoints.py installed, fleet_host.py changes values only through it."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.m = load_module(self.tmp)
+        self.m.META.mkdir(parents=True, exist_ok=True)
+        self.m.SETPOINTS_CLI.write_text(SETPOINTS_STUB)
+        self.m.atomic_json(self.m.SETPOINTS, {'setpoints': {'host.held-1.max_live': {'value': 2, 'held': True}}})
+        self.m.atomic_json(self.m.REGISTRY, {'hosts': []})
+
+    def host(self, name):
+        return self.m.Host(argparse.Namespace(name=name, zone='us-central1-a', shape='e2-standard-8', disk_gb=200,
+                                              drain_timeout=1, push_wip=False, dry=False, cmd='add'))
+
+    def calls(self):
+        log = self.m.META / 'stub-calls.jsonl'
+        return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+
+    def view(self):
+        return json.loads(self.m.SETPOINTS.read_text())['setpoints']
+
+    def test_add_sets_the_value_through_the_command_and_never_writes_bounds(self):
+        h = self.host('gcp-9')
+        self.assertEqual(self.m.s_setpoint(h, False)[0], self.m.WOULD)
+        self.assertEqual([c[0] for c in self.calls()], ['get'], 'a dry run only reads')
+        self.assertEqual(self.m.s_setpoint(h, True)[0], self.m.OK)
+        self.assertEqual(self.view()['host.gcp-9.max_live'], {'value': self.m.T['fleet']['max_live']})
+        self.assertEqual(self.m.s_setpoint(h, True)[0], self.m.OK)
+        self.assertEqual([c[0] for c in self.calls()].count('set'), 1, 'second run must be a no-op')
+
+    def test_a_row_fixed_by_the_bounds_is_left_alone_on_add(self):
+        self.assertEqual(self.m.s_setpoint(self.host('held-1'), True)[0], self.m.OK)
+        self.assertNotIn('set', [c[0] for c in self.calls()])
+
+    def test_drain_sets_zero_and_remove_unsets(self):
+        h = self.host('gcp-9')
+        self.m.s_setpoint(h, True)
+        with mock.patch.object(self.m.Host, 'instance_status', return_value=None):
+            self.assertEqual(self.m.r_drain_hold(h, True)[0], self.m.OK)
+            self.assertEqual(self.view()['host.gcp-9.max_live']['value'], 0)
+            self.assertEqual(self.m.r_deregister(h, True)[0], self.m.OK)
+        self.assertNotIn('host.gcp-9.max_live', self.view())
+        self.assertEqual(self.calls()[-1][:2], ['unset', 'host.gcp-9.max_live'])
+
+    def test_draining_a_held_host_is_blocked_before_anything_changes(self):
+        h = self.host('held-1')
+        self.m.atomic_json(self.m.REGISTRY, {'hosts': [{'id': 'held-1', 'state': 'active'}]})
+        status, why = self.m.r_drain_hold(h, True)
+        self.assertEqual(status, self.m.BLOCKED, why)
+        self.assertIn('setpoint-bounds.json', why)
+        self.assertEqual(json.loads(self.m.REGISTRY.read_text())['hosts'][0]['state'], 'active')
+        self.assertFalse(self.m.STATE.exists() and 'held-1' in json.loads(self.m.STATE.read_text()).get('remote_host_holds', {}))
+        self.assertEqual(self.view()['host.held-1.max_live']['value'], 2)
+
+    def test_a_bounds_only_row_is_not_ours_to_remove(self):
+        with mock.patch.object(self.m, 'pinned_host_keys', return_value=[]):
+            self.assertEqual(self.m.r_deregister(self.host('held-1'), True), (self.m.OK, 'deregistered'))
+        self.assertNotIn('unset', [c[0] for c in self.calls()])
+        self.assertEqual(self.view()['host.held-1.max_live']['value'], 2)
+
+    def registered(self, name):
+        self.m.atomic_json(self.m.REGISTRY, {'hosts': [{'id': name, 'state': 'active'}]})
+        return self.host(name)
+
+    def untouched(self, name):
+        reg = json.loads(self.m.REGISTRY.read_text())['hosts']
+        held = self.m.STATE.exists() and name in json.loads(self.m.STATE.read_text()).get('remote_host_holds', {})
+        return reg == [{'id': name, 'state': 'active'}] and not held
+
+    def test_a_failed_read_is_not_taken_for_no_value(self):
+        h = self.registered('gcp-9')
+        self.m.s_setpoint(h, True)
+        for answer in ((1, 'boom'), (0, 'not json'), (0, {'value': 1}), (0, ['value'])):
+            with mock.patch.object(self.m, 'setpoint_cli', return_value=answer), \
+                    mock.patch.object(self.m, 'pinned_host_keys', return_value=[]):
+                for step in (self.m.r_deregister, self.m.r_drain_hold, self.m.s_setpoint):
+                    self.assertEqual(step(h, True)[0], self.m.FAIL, (step.__name__, answer))
+            self.assertTrue(self.untouched('gcp-9'), answer)
+        self.assertEqual(self.view()['host.gcp-9.max_live']['value'], self.m.T['fleet']['max_live'])
+
+    def test_a_refused_unset_changes_nothing_else(self):
+        h = self.registered('gcp-9')
+        self.m.s_setpoint(h, True)
+        with mock.patch.object(self.m, 'setpoint_change', return_value='setpoints.py unset: refused'), \
+                mock.patch.object(self.m, 'pinned_host_keys', return_value=[]):
+            status, why = self.m.r_deregister(h, True)
+        self.assertEqual(status, self.m.FAIL)
+        self.assertIn('refused', why)
+        self.assertTrue(self.untouched('gcp-9'))
+
+    def test_a_refused_drain_changes_nothing_else(self):
+        h = self.registered('gcp-9')
+        self.m.s_setpoint(h, True)
+        with mock.patch.object(self.m, 'setpoint_change', return_value='setpoints.py set: refused'):
+            status, why = self.m.r_drain_hold(h, True)
+        self.assertEqual(status, self.m.FAIL)
+        self.assertTrue(self.untouched('gcp-9'))
+
+    def test_a_drain_that_stopped_before_the_hold_finishes_it_on_the_next_run(self):
+        h = self.registered('gcp-9')
+        self.m.s_setpoint(h, True)
+        real = self.m.atomic_json
+
+        def no_state(path, obj):
+            if path == self.m.STATE:
+                raise OSError('disk full')
+            return real(path, obj)
+        with mock.patch.object(self.m, 'atomic_json', side_effect=no_state):
+            with self.assertRaises(OSError):
+                self.m.r_drain_hold(h, True)
+        self.assertEqual(self.view()['host.gcp-9.max_live']['value'], 0, 'the cap change had already happened')
+        self.assertEqual(self.m.r_drain_hold(h, False)[0], self.m.WOULD, 'not done: the hold is missing')
+        self.assertEqual(self.m.r_drain_hold(h, True)[0], self.m.OK)
+        self.assertTrue(json.loads(self.m.STATE.read_text())['remote_host_holds']['gcp-9']['active'])
+        self.assertEqual(self.m.r_drain_hold(h, False)[0], self.m.OK, 'second run must be a no-op')
+
+    def test_a_host_that_is_gone_gets_no_new_hold(self):
+        h = self.host('gcp-9')
+        self.assertEqual(self.m.r_drain_hold(h, True), (self.m.OK, 'no new placements (draining, cap 0)'))
+        self.assertFalse(self.m.STATE.exists())
+
+    def test_a_change_the_command_does_not_confirm_is_a_failure(self):
+        for answer in ((0, 'done'), (0, {'key': 'host.other.max_live', 'value': 0}), (0, {'key': 'host.gcp-9.max_live'})):
+            with mock.patch.object(self.m, 'setpoint_cli', return_value=answer):
+                self.assertIsNotNone(self.m.setpoint_change('set', 'host.gcp-9.max_live', '0'), answer)
+
+    def test_drain_asks_the_command_and_not_the_view(self):
+        h = self.host('gcp-9')
+        self.m.s_setpoint(h, True)
+        self.m.atomic_json(self.m.REGISTRY, {'hosts': [{'id': 'gcp-9', 'state': 'draining'}]})
+        stale = json.loads(self.m.SETPOINTS.read_text())
+        stale['setpoints']['host.gcp-9.max_live']['value'] = 0
+        self.m.atomic_json(self.m.SETPOINTS, stale)     # the view says drained; the cap in force is still 1
+        self.assertEqual(self.m.r_drain_hold(h, False)[0], self.m.WOULD)
+        self.assertEqual(self.m.r_drain_hold(h, True)[0], self.m.OK)
+        self.assertEqual(self.calls()[-1][:3], ['set', 'host.gcp-9.max_live', '0'])
+
+    def test_a_refused_set_fails_the_step(self):
+        self.m.T['fleet']['max_live'] = 2
+        h = self.host('gcp-9')
+        with mock.patch.object(self.m, 'setpoint_cli', side_effect=[(0, {'source': 'bounds', 'movable': True, 'max': 3, 'value': 0}),
+                                                                    (3, 'refused: outside bounds')]):
+            status, why = self.m.s_setpoint(h, True)
+        self.assertEqual(status, self.m.FAIL)
+        self.assertIn('refused', why)
 
 if __name__ == '__main__':
     unittest.main()

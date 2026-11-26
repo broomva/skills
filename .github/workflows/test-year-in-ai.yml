@@ -1,0 +1,64 @@
+name: test-year-in-ai
+
+# Python test gate for the `year-in-ai` skill (skills/knowledge/year-in-ai/).
+# Path-filtered so it runs only when the skill or this workflow changes.
+# Python 3.9 is tested on purpose: the scheduled harvest runs under the macOS
+# system Python (3.9), because Homebrew's Python hangs under launchd. The
+# hosted runner no longer ships 3.9, so that leg runs in the official
+# python:3.9 container.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/knowledge/year-in-ai/**'
+      - '.github/workflows/test-year-in-ai.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/knowledge/year-in-ai/**'
+      - '.github/workflows/test-year-in-ai.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-year-in-ai-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/knowledge/year-in-ai
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install pytest and zstd
+        run: |
+          pip install pytest
+          command -v zstd || (sudo apt-get update -q && sudo apt-get install -y -q zstd)
+      - name: Tests
+        run: python -m pytest tests/ -v
+
+  test-py39:
+    name: pytest (Python 3.9, system-python floor)
+    runs-on: ubuntu-latest
+    container: python:3.9-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pytest and zstd
+        run: |
+          apt-get update -q && apt-get install -y -q zstd
+          pip install pytest
+      - name: Confirm the interpreter
+        run: python -c "import sys; assert sys.version_info[:2] == (3, 9), sys.version; print(sys.version)"
+      - name: Tests
+        run: python -m pytest tests/ -v

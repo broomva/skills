@@ -3,7 +3,7 @@ name: cross-review
 tier: D
 primitive: P20
 category: governance
-description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills in parallel on code (a knowledge-only diff takes one stratum on a claims rubric). Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
+description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, later rounds earned by a continuation verdict carrying a falsifiable prediction; a regression, refuted predictions, defect-free rounds and round 8 are signals the agent answers with a recorded decision, never an owner permission gate), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills in parallel on code (a knowledge-only diff takes one stratum on a claims rubric). Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
 ---
 
 # cross-review — bstack P20 Cross-Model Adversarial Review Gate
@@ -124,15 +124,19 @@ ANTI-SLOP RUBRIC (10 points total)
           (what happens on bad input, network fail, race condition,
            empty state, very large input, concurrent access)
 
-  2 pts — Tests cover the change
-          (unit/integration/E2E proportional to change shape;
-           coverage matches what the change introduces;
-           no critical path untested)
+  2 pts — Rerunnable evidence
+          (tests cover the change, AND each new check is shown able to
+           fail: a mutation, a replayed real past mistake, a model-checker
+           counterexample; claims rest on commands and output a reviewer
+           can rerun, not on narrative. Evidence outranks argument.)
 
 PASS: ≥7/10   (record --axes=a,b,c,d,e; a ZERO axis caps the stored score to 6)
 LOOP: <7 → fix the specific deductions → rescore
-BUDGET: 3 free rounds · 4-7 earned by a continuation verdict · ≥8 human
-ESCALATE: STOP verdict, two refuted predictions, a score regression, or round 8
+BUDGET: 3 free rounds · each later round earned by a continuation verdict
+SIGNAL: regression, two refuted predictions, two defect-free rounds, or round 8
+        → `round record-decision` (continue | hoist | subtract | change-approach | escalate)
+OWNER: only when rounds stop making progress — with alternatives, never
+        "may I run another round?" (BRO-3963)
 ```
 
 ### What blocks: severity, not volume (BRO-2844)
@@ -185,10 +189,58 @@ cross-review round record-round   --run-id=$ID --score=5/10 --axes=2,1,1,1,0 --d
                                                   # instead, or omit it (`unrecorded`);
                                                   # a passing round must give --stratum
 cross-review round budget         --run-id=$ID    # exit 0 authorized, 5 review-required,
-                                                  # 6 stop, 7 human, 3 passed
+                                                  # 6 stop, 7 signal, 3 passed
+cross-review round record-decision --run-id=$ID --decision=hoist \
+    --reason="the unread-field class recurred at a third site; one field rule"
 cross-review round record-verdict --run-id=$ID --verdict=CONTINUE \
     --prediction="unhandled empty-input branch in parse_args at scripts/foo.sh:88"
 ```
+
+### Signals, decisions, and when to reach the owner (BRO-3963)
+
+Owner direction, 2026-11-19: *"the most unneeded asks is to request permission
+for more verification rounds … about 90% of the time, I want to fully finish
+stuff, not just park it. … The modulation of how many rounds to do, how many
+more to do provided the insights and findings and the decisions to reach the
+user should be all on the agents reasoning and guidelines, I think hard caps are
+not very good since its making sessions mutilate their autonomy."*
+
+So the controller no longer hard-stops on progress signals. A **score
+regression**, **two consecutive refuted predictions**, **two consecutive rounds
+without a reproduced defect**, and **round 8** each raise a SIGNAL (`budget` exit
+7). The next round is refused until the agent records what it decided and why:
+
+```bash
+cross-review round record-decision --run-id=$ID \
+    --decision=continue|hoist|subtract|change-approach|escalate \
+    --reason="<the finding class, or the progress evidence>"
+```
+
+- **continue**: the findings are real and converging; fix them and run the round.
+- **hoist**: the same defect class keeps appearing at new sites; write one rule.
+- **subtract**: the findings land on scaffolding added to answer earlier reviews; remove it.
+- **change-approach**: the shape is wrong; reshape, then `reset --force` and start a new arc.
+  It does not answer the signal and no later decision may, so no round runs on
+  this arc after it; the archived ledger keeps the decision and its reason. A
+  plain `reset` still refuses.
+- **escalate**: the rounds have stopped producing meaningful progress, and the
+  next step needs the owner's judgement. Escalate does not answer the signal:
+  no round runs until the owner's answer is recorded as the next decision.
+
+A decision covers one round. An arc that still signals, for example after a
+regression, asks again before the next round. The same decision is not recorded
+twice for one signal. Every decision and its reason is in the ledger, and `show`
+prints it.
+
+**When to reach the owner.** Only when the rounds are not achieving anything
+meaningful or are stuck:
+- the same findings return after a structural fix;
+- reviewers disagree on what done means;
+- the next step changes the scope or the design.
+
+Then the question offers alternatives: a different design, a smaller scope, or
+another approach. Never ask for permission to run another round. A STOP or
+STRUCTURAL verdict from a reviewer still ends the arc as before.
 
 ### The continuation review brief
 
@@ -235,8 +287,9 @@ rounds, or the round-8 ceiling, and the next `budget` said *round 1 of 3 free*.
 and answers yes only for an arc that **declared itself finished**: a recorded
 `STOP`/`STRUCTURAL` verdict, or a passing score. A `STRUCTURAL` stop is
 therefore still cleared by step 2, which is what makes the sequence above work.
-A **nonterminal** stop is not: its remedy is the one the stop names, and it takes
-`reset --force`, which prints the stop it discarded. A **live** arc that still
+An arc with an outstanding **signal** is not finished either: record its
+decision, or discard the ledger with `reset --force`, which prints the signal it
+discarded. A **live** arc that still
 PARSES is refused, `--force` included — nothing there is blocked, so record its
 verdict instead. Corrupting it first is the one way through, and deliberately
 so: a corrupt ledger must stay discardable or `rm` becomes the only escape, and
@@ -261,12 +314,19 @@ ledger, so they do not depend on the agent recalling them correctly — see
 1. `CONTINUE` requires a non-empty prediction. A continuation that cannot be
    refuted is an opinion, not a verdict.
 2. A round following `CONTINUE` must settle it. Otherwise rule 3 can never fire.
-3. Two consecutive `REFUTED` predictions stop the loop — no override.
+3. Two consecutive `REFUTED` predictions raise a signal that a later `CONFIRMED`
+   does not clear: every round after it needs a recorded decision.
 4. `CONTINUE` verdicts cannot stack without an intervening round.
 
-The ceiling at round 8 is deliberate and is not timidity: an agent that grants
-itself unbounded budget by asking itself has begun acquiring its own resources,
-and the workspace leaves that pillar open **by design**.
+**Round 8 is a signal, not a gate.** Rounds past 7 are still earned one at a
+time by a `CONTINUE` with a located prediction, and each signalling round needs a
+recorded decision. The budget is bounded by written reasons and by an
+independent continuation review, not by a count that sends the session back to
+the owner.
+
+**The owner grant (BRO-3893) is retired.** It asked the owner once per arc at the
+ceiling, which was still a permission ask. `round grant` is now a no-op that
+points to `record-decision`; `GRANT` rows in older ledgers are shape-checked and ignored. A ledger that ran rounds under a grant therefore reads as a history the recorder would refuse (exit 6); archive it with `reset --force`.
 
 ### What this enforces, and what it does not
 
@@ -281,8 +341,8 @@ appended to it.
 
 | Property | Why it holds |
 |---|---|
-| A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: stops are checked before `PASSED`, because the score is the agent's own self-report and a stop that costs one integer to escape is not a stop. both recorders refuse to append past a terminal state |
-| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. Nonterminal stops and the ceiling need `--force`, which names what it discarded; a live arc that still parses is refused with or without it — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
+| A stop or signal cannot be cleared by appending | a round past an undecided signal is refused when recorded and when stored; every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: a terminal `STOP` outranks any pass, and a round past an undecided signal is refused when recorded and when stored, so no pass can be appended past one. A verified pass (per-stratum `PASS` verdicts) on the round that raises a signal ends the arc: a signal asks for reasoning before *another* round, and a passed arc has none. both recorders refuse to append past a terminal state |
+| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. An outstanding signal needs `--force`, which names what it discarded; a live arc that still parses is refused with or without it — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
 | A budget cannot be reset by re-running `pre-push`, or by a rebase | the ledger id is the **branch alone**. It was the PID first (every invocation reset it), then branch + merge-base (a mid-arc rebase reset it). Reusing a branch name deliberately reuses its ledger — run `cross-review round reset` to archive a finished arc, which is loud on purpose |
 | Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
@@ -327,6 +387,9 @@ appended to it.
   field — but it is a way to lose a round, so it is documented as one here
   rather than left for someone to discover by hand-editing on the strength of a
   sentence that said the field was read by nothing.
+- **`record-decision --reason` is the agent's own reasoning** (BRO-3963). The
+  tool checks that it is not blank, not that it is right. `show` puts every
+  decision and its reason in front of every reviewer.
 - **`--defect=yes` is the agent's own assertion.** The controller enforces that
   two consecutive `no` rounds stop the arc; it cannot verify that a `yes` was
   actually earned. That judgement belongs to the reviewer's findings.
@@ -350,9 +413,9 @@ does not, and cannot, bind an agent that has decided to evade it.
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
-## Mutation-proof — the one rubric dimension a machine can check
+## Mutation-proof — the test-coverage leg of Dimension 5 a machine can check
 
-Four of the five rubric dimensions are judgement calls. The fifth — *tests cover the change* — is not. It has an operational definition:
+Four of the five rubric dimensions are judgement calls. For the test-coverage leg of the fifth (*rerunnable evidence* — tests cover the change, each new check is shown able to fail — by a mutation, a replayed real past mistake, or a model-checker counterexample — and allow a control, and load-bearing claims carry a rerunnable artifact), "a test covers a change" has an operational definition:
 
 > **A test covers a change iff neutering the change turns the test red.**
 
@@ -602,7 +665,8 @@ Returns:
 
 Between rounds, `cross-review round budget --run-id=$ID` answers whether another
 one may run: 0 authorized · 3 passed · 5 continuation review required · 6 stop ·
-7 human.
+7 signal (record a decision with its reason; reach the owner only when rounds
+stop making progress, and then with alternatives).
 
 Agent's job: capture the output, paste into PR description or comment, only push after exit 0.
 
@@ -668,7 +732,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7 AND no dimension at 0. Below either → fix, rescore, ask the budget. Don't push override. |
 | "The reviewer said one more round seems reasonable" | That is the vacuous yes. A `CONTINUE` without a falsifiable prediction is refused by `round-budget.sh` at record time, because a verdict that cannot be wrong is not a verdict. |
 | "The score is flat but each round finds something real — keep going" | Check the *shape* first. Same defect class at a new location each round is `STRUCTURAL`: hoist the invariant instead of taking another swing. Eighteen rounds of BRO-2185 were this. |
-| "We are at round 9 but the last verdict said CONTINUE" | The ceiling overrides every verdict. Escalate through the handback contract with the ledger attached. |
+| "Round 8, or a regression: I should ask the owner whether to continue" | No. That is the permission ask the owner rejected on 2026-11-19. Decide from the findings, record it with `round record-decision --reason`, and act. Reach the owner only when rounds stop making progress, and then with alternatives. |
 | "The reviewer noticed a small thing and just fixed it — that's efficient" | Then the finding never existed. A reviewer that writes is optimising for a clean report. Dispatch it read-only; `reviewer-guard verify` exits 4 if it wrote. |
 | "I told the subagent not to edit anything" | A prose instruction is not a capability. `general-purpose` carries `Tools: *`; use `Explore`. The brief is layer 2, the tool set is layer 1. |
 | "Codex is a different vendor, the sandbox is belt-and-braces" | Different weights, same hands. `codex exec` unsandboxed patches the tree as readily as a subagent — pin `-c sandbox_mode=read-only`. |

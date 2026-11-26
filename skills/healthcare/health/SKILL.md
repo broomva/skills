@@ -1,9 +1,9 @@
 ---
 name: health
 category: healthcare
-version: 0.12.0
+version: 0.13.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
-description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
+description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc), plus a private meal log over a local food-composition table (USDA FoodData Central). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
 license: MIT
 tags: [health, garmin, apple-health, whoop, oura, hrv, training-load, vo2max, longevity, local-first, knowledge-graph]
@@ -19,6 +19,7 @@ trigger_keywords:
   - daily health note, health dashboard, healthos
   - daily check-in, health check-in, log my day, how am i doing, mood check
   - wellbeing, holistic health, mental health check-in, spiritual health
+  - meal photo, log my meal, what did I eat, calories, macros, protein, food log, nutrition
 ---
 
 # Health — Personal Health Knowledge Graph
@@ -93,6 +94,7 @@ Invoke this skill on any trigger in the frontmatter `trigger_keywords` list. The
 | "Recovery review" / 7-day rollup | [RecoveryReview](Workflows/RecoveryReview.md) | `health synthesis` (hrv_cv_30d + recovery_score) |
 | "VO2max arc" / longevity check | [VO2maxArc](Workflows/VO2maxArc.md) | `health synthesis` (vo2max_arc field) |
 | "Check in" / how am I doing (physical, mental, spiritual) | [CheckIn](Workflows/CheckIn.md) | AskUserQuestion → `health checkin record` |
+| "Log this meal" / meal photo / "what did I eat" | [MealLog](Workflows/MealLog.md) | `health food find` → `health food log` |
 | "Coach me / what should I do" | [Coaching](Workflows/Coaching.md) | **NOT IMPLEMENTED in v1** |
 
 Default discipline: any health-domain conversation opens with `health status` (a P15 Snapshot reflex). The agent **never** answers a health question from training-data priors when the live trace store could answer it.
@@ -144,6 +146,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
 | **VO2maxArc** | `health synthesis` → `vo2max_arc` | Quarterly check; longevity tracking | `{quarter_key: mean_vo2max}` |
 | **CheckIn** | AskUserQuestion → `health checkin record` / `show` | Daily (scheduled) or on request; holistic: physical, mental, spiritual | one journal line + a 4–6 line reflection |
+| **MealLog** | `health food import-usda DIR` once; `health food find Q`; `health food log --item [+]src:id=grams ...`; `health food show [--days N] [--totals]` | Meal photo or description; food vs energy/sleep/training questions | `Meal` (items, totals, ±30% low/high band) in a private `meals.jsonl` |
 | **Coaching** | *(not implemented in v1)* | — | — |
 
 Each workflow doc starts with a one-line **When invoked** rule and ends with example output. See `Workflows/*.md`.
@@ -299,6 +302,7 @@ The L3 cadence is deliberate: skills compose; primitives stabilize. Don't promot
 
 **Per-workflow docs:**
 - [Workflows/Sync.md](Workflows/Sync.md)
+- [Workflows/MealLog.md](Workflows/MealLog.md)
 - [Workflows/Backfill.md](Workflows/Backfill.md)
 - [Workflows/Status.md](Workflows/Status.md)
 - [Workflows/DailyNote.md](Workflows/DailyNote.md)

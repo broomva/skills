@@ -1,0 +1,90 @@
+:root {
+  color-scheme: dark;
+  font:
+    14px / 1.45 -apple-system,
+    system-ui,
+    sans-serif;
+}
+body {
+  margin: 0;
+  padding: 20px 22px;
+  background: #0b1020;
+  color: #e6e9f2;
+}
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+h1 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+.muted {
+  color: #8b93a7;
+  font-size: 12px;
+}
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #121a33;
+  color: inherit;
+  border: 1px solid #26304f;
+  border-radius: 8px;
+  padding: 10px;
+  font: inherit;
+  resize: vertical;
+}
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0;
+}
+select,
+button {
+  background: #1b2546;
+  color: inherit;
+  border: 1px solid #2e3a63;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+}
+button[type="submit"] {
+  background: #4f46e5;
+  border-color: #6366f1;
+}
+button:disabled {
+  opacity: 0.5;
+}
+pre {
+  background: #070b17;
+  border: 1px solid #1c2442;
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 160px;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.tool {
+  color: #7dd3fc;
+}
+.err {
+  color: #fca5a5;
+}
+#perms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.perm {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #2e3a63;
+}
+.perm.on {
+  background: #14532d;
+  border-color: #16a34a;
+}

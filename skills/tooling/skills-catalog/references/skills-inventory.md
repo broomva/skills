@@ -1,14 +1,15 @@
 # Skills Inventory
 
-> 113 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 119 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
-## Governance & control — `skills/governance/` (11)
+## Governance & control — `skills/governance/` (12)
 
 | Skill | What it does |
 |---|---|
 | `agentic-control-kernel` | Unifying control-systems metalayer for LLM-as-controller agent development |
 | `architecture-design-principles` | Distilled architecture & design principles for building self-service developer platforms, control-plane / data-plane separation, and edge-centralized cross-cutting |
 | `bstack` | bstack primer — the agent-readable contract for the Broomva Stack's twenty automation primitives (P1–P20) that turn an agent-driven workspace into a self-operating system (the primer skill; the bstack CLI is a separate clone + bootstrap product) |
+| `correct` | Turn mistakes agents keep repeating into checks that make them impossible: two occurrences make a class, fix it at the highest level (architecture, types, a lint or CI check whose error names the fix, test, hook, prose last), prove it refuses a real past mistake and allows a control, keep a rule-to-enforcer registry. Ships the registry's runner: `correct.py init` sets a repository up with one proven rule, `correct.py check` replays every row against its real enforcer |
 | `cross-review` | bstack P20 — Cross-Model Adversarial Review Gate |
 | `dogfood` | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | `harness-engineering-playbook` | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture |
@@ -37,7 +38,7 @@
 | `fleet-reconcile` | **Deprecated** alias of `fleet` (renamed in fleet 0.6.0, BRO-3122); forwards its scripts there for one release |
 | `fleet` | The Broomva fleet: every Claude Code and Paseo session, PR and loop the coordinators drive, and the workflows that manage it. reconcile is the hourly launchd tick (observe, classify, report, owner… |
 
-## Skill & prompt tooling — `skills/tooling/` (10)
+## Skill & prompt tooling — `skills/tooling/` (11)
 
 | Skill | What it does |
 |---|---|
@@ -49,10 +50,11 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 113 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 119 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
+| `agent-native-apps` | Build an agent-native app — a small web app installed as its own macOS app (Dock icon, menu bar) through Electron app shims, with a T3 Code thread, Claude Code or Codex wired in as the app's agent behind a tiered, version-bound permission gate; ships a host kit, a scaffold, a validator and an end-to-end check |
 
-## Knowledge & memory — `skills/knowledge/` (8)
+## Knowledge & memory — `skills/knowledge/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -64,6 +66,7 @@
 | `goodies` | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | `kg` | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 | `what` | Explain the *concepts* a session used, at the operator's register — ranked by what blocks understanding, anchored to where each term appeared, grounded in the knowledge graph; degrades to a re-pitch when the slice is short |
+| `year-in-ai` | A Spotify-Wrapped-style retrospective of your year with AI agents, computed from local history across harnesses (Claude Code, Codex, T3, Conductor, Gemini CLI, bridged transcripts, exports). Two… |
 
 ## Research — `skills/research/` (2)
 
@@ -104,7 +107,7 @@
 | `seo-llmeo` | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
 | `social-intelligence` | Autonomous social engagement + knowledge extraction loop for Moltbook and X/Twitter |
 
-## Video & multimedia — `skills/video/` (7)
+## Video & multimedia — `skills/video/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -115,14 +118,17 @@
 | `ltx-video` | Set up, configure, and run LTX-2/LTX-2.3 (Lightricks) for AI video and audio generation |
 | `video-cut` | Edit raw footage into a finished cut by conversation, fully local |
 | `motion-lab` | Directed, reproducible code-first motion: a render-contract linter, a Playwright freeze-frame renderer with a labelled contact sheet and purity check, and drift-free motion math (beats, springs, GIF timing) |
+| `reel-loop` | Run one short-form account as a loop: find the reels in a niche that broke out against their own creator's normal, take the best one apart (hook, structure, shots), write a new script in the… |
+| `filmcraft` | Thin terminal-first video production router and delivery-gate runner uniting Broomva's modular video, motion, design, and audio skills without duplicating them. Dissects references… |
 
-## Audio & music — `skills/audio/` (3)
+## Audio & music — `skills/audio/` (4)
 
 | Skill | What it does |
 |---|---|
 | `livecoding` | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a |
 | `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
 | `talkback` | Speak an explanation out loud while working in any project — tiered text-to-speech with a pluggable backend (ElevenLabs by default and quota-guarded, macOS `say` via `--fast` for free instant local… |
+| `soundcraft` | Design and verify sound for short films, product demos, motion graphics and launch videos. Use for real-recording Foley, music ducking and voice clarity, loudness and true-peak checks, clipping or… |
 
 ## Design & brand — `skills/design/` (9)
 
@@ -234,7 +240,7 @@
 
 ## Aggregates
 
-- **Total skills**: 113
+- **Total skills**: 119
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science

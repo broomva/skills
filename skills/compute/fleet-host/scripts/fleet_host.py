@@ -23,8 +23,14 @@ FLEET = Path(os.environ.get('FLEET_DIR', Path.home() / '.config/broomva/fleet'))
 META = FLEET / 'meta'
 REGISTRY = FLEET / 'hosts.json'
 SETPOINTS = META / 'setpoints.json'
+# The fleet's own command for changing a setpoint value (BRO-3771). When it is installed, setpoints.json
+# is a generated view: a direct write there is lost, and the owner's bounds are read-only.
+SETPOINTS_CLI = META / 'setpoints.py'
 STATE = META / 'state.json'
-CENSUS = META / 'fleet_census.py'
+# The census source left the state folder when the loops began running from a pinned release
+# (BRO-4084). Read the active release first, then the old location.
+RELEASES = Path(os.environ.get('FLEET_RELEASES_ROOT', Path.home() / '.broomva/releases/fleet'))
+CENSUS_SOURCES = (RELEASES / 'current' / 'fleet_census.py', META / 'fleet_census.py')
 HOSTDIR = META / 'fleet-hosts'
 APPROVAL = HOSTDIR / 'APPROVAL.json'
 SSH_CONFIG = Path(os.environ.get('FLEET_SSH_CONFIG', Path.home() / '.ssh/config'))
@@ -179,6 +185,14 @@ class Host:
 
 # ---- steps: each returns (status, detail); apply=True performs the change when not done ----------
 
+def census_reads_registry():
+    """True when the census that runs on this machine reads hosts.json."""
+    for src in CENSUS_SOURCES:
+        if src.exists():
+            return 'hosts_registry' in src.read_text()
+    return False
+
+
 def s_preflight(h, apply):
     rc, out = gcloud('projects', 'describe', PROJECT, '--format=value(projectNumber)')
     if rc != 0:
@@ -186,7 +200,7 @@ def s_preflight(h, apply):
     email = run(['git', 'config', 'user.email'])[1]
     if not email or email.endswith('@example.com'):
         return BLOCKED, f'Mac git identity is missing or a placeholder ({email!r})'
-    if not h.a.dry and h.a.cmd == 'add' and 'hosts_registry' not in (CENSUS.read_text() if CENSUS.exists() else ''):
+    if not h.a.dry and h.a.cmd == 'add' and not census_reads_registry():
         return BLOCKED, ('fleet readers do not read hosts.json yet (spec §4, phase 2); '
                          'a host added now would be invisible to census, gate and governor')
     return OK, f'project {PROJECT} #{out}; git identity {email}'
@@ -865,9 +879,51 @@ def s_agentic_verify(h, apply):
     return FAIL, 'agentic-vps gates failed: ' + ', '.join(failed or ['verify.py error'])
 
 
+def setpoint_cli(*args):
+    """Run the fleet's setpoint command. Return (rc, row or message); rc 3 means it refused the change."""
+    try:
+        r = subprocess.run([sys.executable, str(SETPOINTS_CLI), *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, type(e).__name__
+    text = (r.stdout if r.returncode == 0 else r.stderr).strip()
+    try:
+        return r.returncode, json.loads(text)
+    except ValueError:
+        return r.returncode, text
+
+
+def setpoint_row(key):
+    """(row, None) from `setpoints.py get`, or (None, why). A failed read is never taken for "no value"."""
+    rc, row = setpoint_cli('get', key)
+    if rc != 0 or not isinstance(row, dict) or 'value' not in row or row.get('source') not in ('values', 'bounds'):
+        return None, f'setpoints.py get {key} (exit {rc}): {row}'
+    return row, None
+
+
+def setpoint_change(verb, key, *args):
+    """Run `set` or `unset`. None when the command confirmed the change for this key, else why it did not."""
+    rc, out = setpoint_cli(verb, key, *args)
+    if rc != 0 or not isinstance(out, dict) or out.get('key') != key or 'value' not in out:
+        return f'setpoints.py {verb} {key} (exit {rc}): {out}'
+    return None
+
+
 def s_setpoint(h, apply):
-    sp = load(SETPOINTS, {})
     key = f'host.{h.name}.max_live'
+    if SETPOINTS_CLI.exists():
+        row, err = setpoint_row(key)
+        if err:
+            return FAIL, err
+        if row['source'] == 'values' or not row.get('movable'):
+            return OK, f'{key}={row["value"]}'
+        ceiling = row.get('max')
+        want = T['fleet']['max_live'] if not isinstance(ceiling, int) else min(T['fleet']['max_live'], ceiling)
+        if not apply:
+            return WOULD, f'setpoints.py set {key} {want}'
+        err = setpoint_change('set', key, str(want), '--why',
+                              'GCP host (BRO-3651): heavy capacity, not model concurrency; starts at 1.', '--by', 'fleet_host')
+        return (FAIL, err) if err else (OK, 'set')
+    sp = load(SETPOINTS, {})
     if key in sp.get('setpoints', {}):
         return OK, f'{key}={sp["setpoints"][key]["value"]}'
     entry = {'value': T['fleet']['max_live'], 'min': 0, 'max': T['fleet']['max_live_max'], 'max_step': 1, 'min_interval_h': 2, 'rule': 'host_load',
@@ -915,22 +971,40 @@ def s_register(h, apply):
 # ---- remove ----------------------------------------------------------------------------------------
 
 def r_drain_hold(h, apply):
-    e, sp = h.registry_entry(), load(SETPOINTS, {}).get('setpoints', {})
-    cap = sp.get(f'host.{h.name}.max_live', {}).get('value')
-    if (not e or e.get('state') == 'draining') and cap in (None, 0):
+    e, key, row = h.registry_entry(), f'host.{h.name}.max_live', None
+    if SETPOINTS_CLI.exists():
+        # The command's answer is the cap in force; setpoints.json is only a view of it.
+        row, err = setpoint_row(key)
+        if err:
+            return FAIL, err
+        cap = row['value']
+    else:
+        cap = load(SETPOINTS, {}).get('setpoints', {}).get(key, {}).get('value')
+    held = bool(load(STATE, {}).get('remote_host_holds', {}).get(h.name, {}).get('active'))
+    # Done means all three: no registry entry or a draining one, cap 0, and the hold. A run that stopped after the
+    # cap and before the hold must finish the hold on the next run. A host that is gone needs no hold.
+    if cap in (None, 0) and (not e or (e.get('state') == 'draining' and held)):
         return OK, 'no new placements (draining, cap 0)'
     if not apply:
-        return WOULD, f'registry state=draining, host.{h.name}.max_live {cap}->0, governor hold active'
+        return WOULD, f'registry state=draining, {key} {cap}->0, governor hold active'
+    if row is not None and cap != 0:
+        # The cap goes first: if it cannot be set to 0, nothing else has changed.
+        if not row.get('movable'):
+            return BLOCKED, f'{key} is fixed by the reviewed bounds; drain it with a change to setpoint-bounds.json in broomva/fleet'
+        err = setpoint_change('set', key, '0', '--why', 'draining (fleet_host.py remove)', '--by', 'fleet_host')
+        if err:
+            return FAIL, err
     if e:
         reg = load(REGISTRY, {'hosts': []})
         for x in reg['hosts']:
             if x.get('id') == h.name:
                 x['state'] = 'draining'
         atomic_json(REGISTRY, reg)
-    full = load(SETPOINTS, {})
-    if f'host.{h.name}.max_live' in full.get('setpoints', {}):
-        full['setpoints'][f'host.{h.name}.max_live']['value'] = 0
-        atomic_json(SETPOINTS, full)
+    if row is None:
+        full = load(SETPOINTS, {})
+        if key in full.get('setpoints', {}):
+            full['setpoints'][key]['value'] = 0
+            atomic_json(SETPOINTS, full)
     st = load(STATE, {})
     st.setdefault('remote_host_holds', {})[h.name] = {
         'active': True, 'at': datetime.now(timezone.utc).isoformat(), 'why': 'draining (fleet_host.py remove)'}
@@ -1129,9 +1203,18 @@ def r_service_account(h, apply):
 
 def r_deregister(h, apply):
     reg, sp, st = load(REGISTRY, {'hosts': []}), load(SETPOINTS, {}), load(STATE, {})
+    key, by_command = f'host.{h.name}.max_live', SETPOINTS_CLI.exists()
+    if by_command:
+        # A value of its own is ours to remove; a row that only the reviewed bounds define is not.
+        row, err = setpoint_row(key)
+        if err:
+            return FAIL, err
+        has_setpoint = row['source'] == 'values'
+    else:
+        has_setpoint = key in sp.get('setpoints', {})
     text = SSH_CONFIG.read_text() if SSH_CONFIG.exists() else ''
     left = [x for x, present in (('registry', bool(h.registry_entry())),
-                                 ('setpoint', f'host.{h.name}.max_live' in sp.get('setpoints', {})),
+                                 ('setpoint', has_setpoint),
                                  ('hold', h.name in st.get('remote_host_holds', {})),
                                  ('ssh-alias', f'# >>> fleet-host {h.name} ' in text),
                                  ('known-host', bool(pinned_host_keys(h))),
@@ -1140,11 +1223,16 @@ def r_deregister(h, apply):
         return OK, 'deregistered'
     if not apply:
         return WOULD, f'remove {left}'
+    if 'setpoint' in left and by_command:
+        # The value goes first: if the command refuses, nothing else has changed.
+        err = setpoint_change('unset', key, '--why', 'host removed (fleet_host.py remove)')
+        if err:
+            return FAIL, err
     if 'registry' in left:
         reg['hosts'] = [x for x in reg['hosts'] if x.get('id') != h.name]
         atomic_json(REGISTRY, reg)
-    if 'setpoint' in left:
-        del sp['setpoints'][f'host.{h.name}.max_live']
+    if 'setpoint' in left and not by_command:
+        del sp['setpoints'][key]
         atomic_json(SETPOINTS, sp)
     if 'hold' in left:
         del st['remote_host_holds'][h.name]

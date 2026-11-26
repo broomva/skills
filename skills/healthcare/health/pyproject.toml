@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "broomva-health"
-version = "0.12.0"
+version = "0.13.0"
 description = "Broomva-stack Health skill — personal health knowledge graph with hex-architecture trace ingest"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Broomva", email = "devteam@getstimulus.ai" }]
-keywords = ["health", "garmin", "apple-health", "whoop", "oura", "hrv", "longevity", "knowledge-graph", "local-first"]
+keywords = ["health", "nutrition", "garmin", "apple-health", "whoop", "oura", "hrv", "longevity", "knowledge-graph", "local-first"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: End Users/Desktop",
@@ -43,7 +43,7 @@ keychain = ["keyring>=24.0"]
 dev = [
   "pytest>=8.2",
   "pytest-cov>=5.0",
-  "pytest-asyncio>=0.23",
+  "pytest-asyncio>=0.24",  # 0.24 added asyncio_default_fixture_loop_scope
   "hypothesis>=6.100",
   "ruff>=0.4",
   "mypy>=1.10",
@@ -116,6 +116,8 @@ ignore_missing_imports = true
 minversion = "8.0"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
+# pytest-asyncio warns (and filterwarnings=error fails collection) when this is unset.
+asyncio_default_fixture_loop_scope = "function"
 markers = [
   "e2e: end-to-end test requiring real Garmin credentials (gated on BROOMVA_HEALTH_E2E=1)",
   "slow: takes > 1s",

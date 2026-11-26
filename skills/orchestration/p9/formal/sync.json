@@ -1,0 +1,6 @@
+{
+  "covers": [{"file": "scripts/p9.py", "function": "_p20_verdict"}],
+  "sha256": "fdb1da6df0b48953ff20ce278b7fbc2757d24338af7d5a24bb03f6389c176237",
+  "confirmed_at": "1f5f6d4980b922fe8318910750de34112d410c1e",
+  "note": "sha256 of the function's source (ast.get_source_segment). When it changes, re-read the function against P9Lifecycle.tla, update the model if the rule changed, then update sha256 and confirmed_at."
+}

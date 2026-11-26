@@ -61,16 +61,16 @@ echo ""
 # Now --defect is load-bearing, so the null control is real: rounds that
 # reproduce nothing STOP, and the arm below distinguishes them from rounds that
 # reproduce something at the same score.
-echo "T1. null control: rounds that reproduce NO defect stop the arc"
+echo "T1. null control: rounds that reproduce NO defect raise a SIGNAL (BRO-3963)"
 LED=$(newledger t1)
 bash "$RB" record-round --run-id=null --ledger="$LED" --score=5/10 --defect=no >/dev/null
 bash "$RB" record-round --run-id=null --ledger="$LED" --score=5/10 --defect=no >/dev/null
 RC=$(rb budget --run-id=null --ledger="$LED")
 OUT=$(rbout budget --run-id=null --ledger="$LED")
-if [ "$RC" = "6" ] && echo "$OUT" | grep -q "reproduced NO defect"; then
-    ok "T1: dead arc STOPs, and names liveness as the reason"
+if [ "$RC" = "7" ] && echo "$OUT" | grep -q "two consecutive rounds without a defect"; then
+    ok "T1: a dead arc SIGNALS (7), and names liveness as the reason"
 else
-    fail "T1: dead arc STOPs, and names liveness as the reason" "exit $RC: $OUT"
+    fail "T1: dead arc signals, and names liveness as the reason" "exit $RC: $OUT"
 fi
 
 # ── T2: POLARITY CONTROL for T1 — same scores, but the rounds are alive ──────
@@ -106,15 +106,15 @@ RC=$(rb budget --run-id=free --ledger="$LED")
 if [ "$RC" = "5" ]; then ok "T4: REVIEW-REQUIRED at round 4"; else fail "T4: REVIEW-REQUIRED at round 4" "exit $RC, want 5"; fi
 
 # ── T5: score regression stops immediately ────────────────────────────────
-echo "T5. score regression -> STOP"
+echo "T5. score regression -> SIGNAL"
 LED=$(newledger t4)
 bash "$RB" record-round --run-id=reg --ledger="$LED" --score=6/10 --defect=yes >/dev/null
 bash "$RB" record-round --run-id=reg --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 RC=$(rb budget --run-id=reg --ledger="$LED")
-if [ "$RC" = "6" ]; then ok "T5: STOP on regression (6->5)"; else fail "T5: STOP on regression" "exit $RC, want 6"; fi
+if [ "$RC" = "7" ]; then ok "T5: SIGNAL on regression (6->5)"; else fail "T5: SIGNAL on regression" "exit $RC, want 7"; fi
 
 # ── T6: two refuted predictions -> STOP, even under a live CONTINUE ───────
-echo "T6. two consecutive REFUTED predictions -> STOP"
+echo "T6. two consecutive REFUTED predictions -> SIGNAL"
 LED=$(newledger t5)
 bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
@@ -123,7 +123,7 @@ bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --pred
 bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5/10 --defect=yes --settles=REFUTED >/dev/null
 bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="off-by-one in the retry loop at scripts/baz.sh:41" >/dev/null
 RC=$(rb budget --run-id=ref --ledger="$LED")
-if [ "$RC" = "6" ]; then ok "T6: STOP after two REFUTED"; else fail "T6: STOP after two REFUTED" "exit $RC, want 6 — a live CONTINUE must not override it"; fi
+if [ "$RC" = "7" ]; then ok "T6: SIGNAL after two REFUTED"; else fail "T6: SIGNAL after two REFUTED" "exit $RC, want 7 — a live CONTINUE must not override it"; fi
 
 # ── T7: the human ceiling overrides any verdict ───────────────────────────
 echo "T7. round ceiling -> HUMAN, whatever the verdict says"
@@ -255,10 +255,13 @@ for pr in "a at scripts/a.sh:1" "b at scripts/b.sh:2"; do
     bash "$RB" record-verdict --run-id=t21 --ledger="$LED" --verdict=CONTINUE --prediction="$pr" >/dev/null
     bash "$RB" record-round  --run-id=t21 --ledger="$LED" --score=5/10 --defect=yes --settles=REFUTED >/dev/null
 done
-bash "$RB" record-verdict --run-id=t21 --ledger="$LED" --verdict=CONTINUE --prediction="c at scripts/c.sh:3" >/dev/null 2>&1 || true
-bash "$RB" record-round --run-id=t21 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null 2>&1 || true
+# The signal is answered first, so the CONFIRMED round is really stored: without
+# the decision the recorder refused it and the assertion read the old history.
+bash "$RB" record-decision --run-id=t21 --ledger="$LED" --decision=continue --reason="t21: decide before confirming" >/dev/null 2>&1
+bash "$RB" record-verdict --run-id=t21 --ledger="$LED" --verdict=CONTINUE --prediction="c at scripts/c.sh:3" >/dev/null 2>&1
+RC_CONF=$(rb record-round --run-id=t21 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED)
 RC=$(rb budget --run-id=t21 --ledger="$LED")
-if [ "$RC" = "6" ]; then ok "T21: two-REFUTED is absorbing"; else fail "T21: two-REFUTED is absorbing" "exit $RC, want 6"; fi
+if [ "$RC_CONF" = "0" ] && [ "$RC" = "7" ]; then ok "T21: two-REFUTED still signals after a stored CONFIRMED"; else fail "T21: two-REFUTED signal persists" "confirmed=$RC_CONF (want 0), budget=$RC (want 7)"; fi
 
 # ── T22: an unknown verdict token must not read as AUTHORIZED ─────────────
 # The verdict dispatch was a three-arm `case` with no default: an unrecognised
@@ -347,38 +350,27 @@ printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
 RC=$(rb record-round --run-id=t30 --ledger="$LED" --score=5/10 --defect=yes)
 if [ "$RC" = "6" ]; then ok "T30: corrupt ledger refuses appends"; else fail "T30: corrupt ledger refuses appends" "exit $RC, want 6"; fi
 
-# ── T31: a stop OUTRANKS a passing score ──────────────────────────────────
+# ── T31: what a passing score can and cannot end ──────────────────────────
 # `PASSED` used to be checked above the absorbing stops, so every stop was
-# cleared by appending one round claiming a 7 -- and the score is the agent's own
-# self-report, so the cost of escaping any stop was a single integer.
-echo "T31. a self-reported passing score does not clear a stop"
+# cleared by appending one round claiming a 7. Since BRO-3963 the stops are
+# signals, and the property is held by three rules, one case each.
+echo "T31. a pass cannot be appended past a stop or an undecided signal; a verified one ends a decided or signalling arc"
 LED=$(newledger t31)
 printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\nROUND\t2\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED"
 RC=$(rb budget --run-id=t31 --ledger="$LED")
 LED2=$(newledger t31b)
-printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t8/10\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED2"
+printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t3/10\tyes\t\t-\tA\tA:3/10:FAIL\nROUND\t3\t8/10\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED2"
 RC2=$(rb budget --run-id=t31b --ledger="$LED2")
 LED3=$(newledger t31c)
-printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t8/10\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED3"
+printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t3/10\tyes\t\t-\tA\tA:3/10:FAIL\nDECISION\tcontinue\t2\tthe fix is located\nROUND\t3\t8/10\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED3"
 RC3=$(rb budget --run-id=t31c --ledger="$LED3")
-# All FOUR stops, not two. The ordering was pinned for terminal-then-pass and
-# regression-then-pass only; moving PASSED above the refuted or no-defect stop
-# alone left the suite green. A predicate with four arms needs four cases.
 LED4=$(newledger t31d)
-{
-    printf 'ROUND\t1\t5\tyes\t\t-\n'
-    printf 'VERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\n'
-    printf 'VERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\n'
-    printf 'ROUND\t4\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n'
-} > "$LED4"
+printf 'ROUND\t1\t5/10\tno\t\t-\tA\tA:5/10:FAIL\nROUND\t2\t8/10\tno\t\t-\tA\tA:8/10:PASS\n' > "$LED4"
 RC4=$(rb budget --run-id=t31d --ledger="$LED4")
-LED5=$(newledger t31e)
-printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\nROUND\t3\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED5"
-RC5=$(rb budget --run-id=t31e --ledger="$LED5")
-if [ "$RC" = "6" ] && [ "$RC2" = "6" ] && [ "$RC4" = "6" ] && [ "$RC5" = "6" ] && [ "$RC3" = "3" ]; then
-    ok "T31: all four stops outrank a pass; a clean arc still passes"
+if [ "$RC" = "6" ] && [ "$RC2" = "6" ] && [ "$RC3" = "3" ] && [ "$RC4" = "3" ]; then
+    ok "T31: terminal 6, past an undecided signal 6; decided 3, signalling verified pass 3"
 else
-    fail "T31: all four stops outrank a pass" "terminal=$RC regression=$RC2 refuted=$RC4 no-defect=$RC5 (want 6 each), clean=$RC3 (want 3)"
+    fail "T31: pass precedence" "terminal=$RC undecided=$RC2 (want 6 6) decided=$RC3 signalling=$RC4 (want 3 3)"
 fi
 
 # ── T35: record-verdict is guarded by the terminal state too ──────────────
@@ -518,7 +510,7 @@ fi
 # The recorders refused only past a terminal VERDICT, so the ledger grew past a
 # no-defect / refuted / regression stop and the appended pass then read as
 # "finished" to reset. Live-vs-finished now comes from the budget's precedence.
-echo "T42. a passing round cannot be appended past a nonterminal stop"
+echo "T42. no round is appended past an undecided signal"
 LED=$(newledger t42)
 bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5/10 --defect=no >/dev/null
 bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5/10 --defect=no >/dev/null
@@ -526,10 +518,10 @@ RC_APPEND=$(rb record-round --run-id=t42 --ledger="$LED" --score=7/10 --stratum=
 LED2=$(newledger t42b)
 printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\n' > "$LED2"
 RC_REG=$(rb record-round --run-id=t42b --ledger="$LED2" --score=9/10 --stratum=A:9/10:PASS --defect=yes)
-if [ "$RC_APPEND" = "6" ] && [ "$RC_REG" = "6" ]; then
-    ok "T42: no appending past a nonterminal stop (no-defect and regression)"
+if [ "$RC_APPEND" = "7" ] && [ "$RC_REG" = "7" ]; then
+    ok "T42: no appending past an undecided signal (no-defect and regression)"
 else
-    fail "T42: nonterminal stop is absorbing for recorders" "nodefect=$RC_APPEND regression=$RC_REG (want 6 each)"
+    fail "T42: an undecided signal refuses recorders" "nodefect=$RC_APPEND regression=$RC_REG (want 7 each)"
 fi
 
 # ── T40: archiving never clobbers a previous archive ──────────────────────
@@ -574,7 +566,7 @@ STILL=$([ -f "$LED" ] && echo yes || echo no)
 # command and would have held even if the archival itself had failed.
 OUT=$(bash "$RB" reset --run-id=t43 --ledger="$LED" --force 2>&1); RC_FORCE=$?
 ARCH=$(archives_of "$LED")
-if [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ] && echo "$OUT" | grep -q "FORCED past regressed"; then
+if [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ] && echo "$OUT" | grep -q "FORCED past signal"; then
     ok "T43: regression refused plainly, discarded only by --force"
 else
     fail "T43: regression is not a finished arc" "plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1), out: $OUT"
@@ -633,17 +625,21 @@ fi
 # `budget` at T31, unpinned for `reset` until now. The two arms of this test are
 # the same ledger minus the regression, so a gate that simply always refuses
 # cannot pass it.
-echo "T47. a trailing self-reported pass does not make a stopped arc finished"
+echo "T47. an unverified high score does not make a live arc finished"
+# Since BRO-3963 a round past an undecided signal is refused as corrupt history,
+# so the old fixture (a 9 appended after a regression) is refused before the pass
+# arm is read. What still separates the RULE from the SCORE is a high score the
+# budget does not read as a pass: a bare, unverified 9.
 LED=$(newledger t47)
-printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED"
-RC_LAUNDER=$(rb reset --run-id=t47 --ledger="$LED")
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t9\tyes\t\t-\n' > "$LED"
+RC_UNVERIFIED=$(rb reset --run-id=t47 --ledger="$LED")
 LED2=$(newledger t47b)
-printf 'ROUND\t1\t3\tyes\t\t-\nROUND\t2\t6\tyes\t\t-\nROUND\t3\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED2"
+printf 'ROUND\t1\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\nROUND\t2\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED2"
 RC_CLEAN=$(rb reset --run-id=t47b --ledger="$LED2")
-if [ "$RC_LAUNDER" = "6" ] && [ "$RC_CLEAN" = "0" ]; then
-    ok "T47: pass-after-regression refused, a clean pass still archives"
+if [ "$RC_UNVERIFIED" = "6" ] && [ "$RC_CLEAN" = "0" ]; then
+    ok "T47: an unverified 9 is still a live arc, a verified pass archives"
 else
-    fail "T47: pass arm reads the rule" "laundered=$RC_LAUNDER (want 6), clean=$RC_CLEAN (want 0)"
+    fail "T47: pass arm reads the rule" "unverified=$RC_UNVERIFIED (want 6), clean=$RC_CLEAN (want 0)"
 fi
 
 # ── T48: --force is a reset flag, not a global one ────────────────────────
@@ -1030,7 +1026,7 @@ fi
 # SEVEN-field rows carrying a full A,B,C panel -- the strongest panel available,
 # which is the direction that would flatter the writer if the field leaked into
 # a predicate.
-echo "T63. every pre-existing stop still holds on rows that carry a panel"
+echo "T63. every signal and stop still holds on rows that carry a panel"
 # regression, on 7-field rows
 LED=$(newledger t63a)
 printf 'ROUND\t1\t6\tyes\t\t-\tA,B,C\nROUND\t2\t5\tyes\t\t-\tA,B,C\n' > "$LED"
@@ -1041,13 +1037,12 @@ LED=$(newledger t63b)
     printf 'ROUND\t1\t5\tyes\t\t-\tA,B,C\n'
     printf 'VERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\tA,B,C\n'
     printf 'VERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\tA,B,C\n'
-    printf 'ROUND\t4\t9\tyes\t\tCONFIRMED\tA,B,C\n'
 } > "$LED"
 RC_REF=$(rb budget --run-id=t63b --ledger="$LED")
 OUT_REF=$(rbout budget --run-id=t63b --ledger="$LED")
 # two no-defect rounds, then a passing round: PASSED must not outrank the stop
 LED=$(newledger t63c)
-printf 'ROUND\t1\t5\tno\t\t-\tA,B,C\nROUND\t2\t5\tno\t\t-\tA,B,C\nROUND\t3\t9\tyes\t\t-\tA,B,C\n' > "$LED"
+printf 'ROUND\t1\t5\tno\t\t-\tA,B,C\nROUND\t2\t5\tno\t\t-\tA,B,C\n' > "$LED"
 RC_NOD=$(rb budget --run-id=t63c --ledger="$LED")
 # a terminal verdict, then a passing round appended past it
 LED=$(newledger t63d)
@@ -1057,13 +1052,13 @@ RC_TERM=$(rb budget --run-id=t63d --ledger="$LED")
 LED=$(newledger t63e)
 for i in 1 2 3 4 5 6 7 8; do printf 'ROUND\t%s\t5\tyes\t\t-\tA,B,C\n' "$i"; done > "$LED"
 RC_CEIL=$(rb budget --run-id=t63e --ledger="$LED")
-if [ "$RC_REG" = "6" ] && [ "$RC_REF" = "6" ] && [ "$RC_NOD" = "6" ] && \
+if [ "$RC_REG" = "7" ] && [ "$RC_REF" = "7" ] && [ "$RC_NOD" = "7" ] && \
    [ "$RC_TERM" = "6" ] && [ "$RC_CEIL" = "7" ] && \
-   printf '%s\n' "$OUT_REF" | grep -q "REFUTED"; then
-    ok "T63: regression / two REFUTED / two no-defect / terminal / ceiling all still absorbing"
+   printf '%s\n' "$OUT_REF" | grep -qi "refuted"; then
+    ok "T63: regression / two REFUTED / two no-defect / ceiling signal (7); terminal stops (6)"
 else
     fail "T63: stops on 7-field rows" \
-        "reg=$RC_REG ref=$RC_REF nodefect=$RC_NOD terminal=$RC_TERM ceiling=$RC_CEIL (want 6 6 6 6 7)"
+        "reg=$RC_REG ref=$RC_REF nodefect=$RC_NOD terminal=$RC_TERM ceiling=$RC_CEIL (want 7 7 7 6 7)"
 fi
 
 echo "T64. a BLANK panel on a 7-field row renders as MALFORMED, never as unrecorded"
@@ -1365,10 +1360,15 @@ RC_CROSS=$(rb budget --run-id=t78 --ledger="$LED")
 LED2=$(newledger t78b)
 printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\n' > "$LED2"
 RC_SCALED=$(rb budget --run-id=t78b --ledger="$LED2")
-if [ "$RC_CROSS" = "3" ] && [ "$RC_SCALED" = "6" ] && printf '%s' "$OUT_LEGACY" | grep -q "not read as a pass"; then
+# A FAILING round across the boundary too: PASSED outranks a signal, so the pass
+# above cannot show that a bare 9 then a scaled 6/10 is not a regression.
+LED3=$(newledger t78c)
+printf 'ROUND\t1\t9\tyes\t\t-\nROUND\t2\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\n' > "$LED3"
+RC_CROSS_FAIL=$(rb budget --run-id=t78c --ledger="$LED3")
+if [ "$RC_CROSS" = "3" ] && [ "$RC_CROSS_FAIL" = "0" ] && [ "$RC_SCALED" = "7" ] && printf '%s' "$OUT_LEGACY" | grep -q "not read as a pass"; then
     ok "T78: bare 9 then scaled 8/10 PASSES; scaled 6 then 5 still STOPs; a legacy 9 says why it is not a pass"
 else
-    fail "T78: bare/scaled boundary" "cross=$RC_CROSS (want 3) scaled-regression=$RC_SCALED (want 6) legacy-note=$(printf '%s' "$OUT_LEGACY" | grep -c 'not read as a pass') (want 1)"
+    fail "T78: bare/scaled boundary" "cross=$RC_CROSS (want 3) cross-fail=$RC_CROSS_FAIL (want 0) scaled-regression=$RC_SCALED (want 7) legacy-note=$(printf '%s' "$OUT_LEGACY" | grep -c 'not read as a pass') (want 1)"
 fi
 
 # ── T79: `show` renders a blank verdicts field as MALFORMED ───────────────
@@ -1543,10 +1543,10 @@ LED2=$(newledger t102b)
 bash "$RB" record-round --run-id=t102b --ledger="$LED2" --score=6/10 --defect=yes --axes=2,1,1,1,1 >/dev/null 2>&1
 bash "$RB" record-round --run-id=t102b --ledger="$LED2" --score=4/10 --defect=yes --axes=1,1,1,1,0 >/dev/null 2>&1
 RC_REAL=$(rb budget --run-id=t102b --ledger="$LED2")
-if [ "$RC_W1" = "0" ] && [ "$STORED1" = "6/10" ] && [ "$RC_FIX" = "0" ] && [ "$RC" = "3" ] && [ "$RC_REAL" = "6" ]; then
+if [ "$RC_W1" = "0" ] && [ "$STORED1" = "6/10" ] && [ "$RC_FIX" = "0" ] && [ "$RC" = "3" ] && [ "$RC_REAL" = "7" ]; then
     ok "T102: floored 8 -> clean 7 records and PASSES (3); a true 6 -> 4 fall still STOPs (6)"
 else
-    fail "T102: regression compare on derived scores" "first_write=$RC_W1 stored1=$STORED1 fix_write=$RC_FIX after=$RC real_regression=$RC_REAL (want 0 6/10 0 3 6)"
+    fail "T102: regression compare on derived scores" "first_write=$RC_W1 stored1=$STORED1 fix_write=$RC_FIX after=$RC real_regression=$RC_REAL (want 0 6/10 0 3 7)"
 fi
 
 # ── T103: CONSUMER 3 — stratum PASS/FAIL admissibility ────────────────────
@@ -1580,10 +1580,10 @@ LED=$(newledger t104)
 RC1=$(rb record-round --run-id=t104 --ledger="$LED" --score=8/10 --defect=no --axes=2,2,2,2,0 --stratum=B:8/10:FAIL)
 RC2=$(rb record-round --run-id=t104 --ledger="$LED" --score=6/10 --defect=no --axes=2,2,1,1,0)
 RC=$(rb budget --run-id=t104 --ledger="$LED")
-if [ "$RC1" = "0" ] && [ "$RC2" = "0" ] && [ "$RC" = "6" ]; then
+if [ "$RC1" = "0" ] && [ "$RC2" = "0" ] && [ "$RC" = "7" ]; then
     ok "T104: zero + --defect=no records at both scores (0,0) and two of them still STOP on nodefect (6)"
 else
-    fail "T104: nodefect streak on derived scores" "first=$RC1 second=$RC2 streak=$RC (want 0 0 6)"
+    fail "T104: nodefect streak on derived scores" "first=$RC1 second=$RC2 streak=$RC (want 0 0 7)"
 fi
 
 # ── T105: axis SHAPE is refused at write, nothing written ─────────────────
@@ -1725,6 +1725,252 @@ if [ "$RC_SENT" = "2" ] && [ "$WROTE" = "no" ] && [ "$RC_OMIT" = "0" ] && [ "$ST
     ok "T110: --axes=- refused (2, nothing written); omitting stores the sentinel '-' (0)"
 else
     fail "T110: axes sentinel" "sentinel=$RC_SENT wrote=$WROTE omitted=$RC_OMIT stored=$STORED (want 2 no 0 -)"
+fi
+
+# ── T111-T122: signals and recorded decisions (BRO-3963) ──────────────────
+# Owner direction 2026-11-19: how many rounds to run is the agent's call, made
+# from the findings; hard caps that send every regression or ceiling to the owner
+# "mutilate autonomy". A regression, two REFUTED, two no-defect rounds and the
+# round-8 ceiling are SIGNALS (exit 7): the next round is refused until the agent
+# records a DECISION with a reason, which keeps the reasoning auditable.
+# A ledger at round N: round 1, then rounds 2..N each earned by a CONTINUE.
+# The 8-round fixture is built ONCE and copied (rows carry no run id).
+CEIL8=""
+to_round() {  # to_round RUN LEDGER N
+    if [ "$3" = "8" ] && [ -n "$CEIL8" ]; then cp "$CEIL8" "$2"; return; fi
+    bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes >/dev/null
+    local i
+    for i in $(seq 2 "$3"); do
+        bash "$RB" record-verdict --run-id="$1" --ledger="$2" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
+        bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+    done
+    if [ "$3" = "8" ]; then CEIL8="$TMP/ceil8.fixture.tsv"; cp "$2" "$CEIL8"; fi
+}
+regressed() {  # regressed RUN LEDGER: two free rounds, 6 then 5
+    bash "$RB" record-round --run-id="$1" --ledger="$2" --score=6/10 --defect=yes >/dev/null
+    bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes >/dev/null
+}
+
+echo "T111. a signal refuses the next round until a decision with a reason is recorded"
+LED=$(newledger t111); regressed t111 "$LED"
+RC_B1=$(rb budget --run-id=t111 --ledger="$LED")
+RC_R1=$(rb record-round --run-id=t111 --ledger="$LED" --score=6/10 --defect=yes)
+RC_D=$(rb record-decision --run-id=t111 --ledger="$LED" --decision=hoist --reason="the unread-field class recurred at a third site; one field rule")
+RC_B2=$(rb budget --run-id=t111 --ledger="$LED")
+RC_R2=$(rb record-round --run-id=t111 --ledger="$LED" --score=6/10 --defect=yes)
+ROUNDS=$(grep -c '^ROUND' "$LED")
+if [ "$RC_B1" = "7" ] && [ "$RC_R1" = "7" ] && [ "$RC_D" = "0" ] && [ "$RC_B2" = "0" ] && [ "$RC_R2" = "0" ] && [ "$ROUNDS" = "3" ]; then
+    ok "T111: signal (7) refuses the round (7); a decision (0) authorizes it (0, 0); 3 rounds stored"
+else
+    fail "T111: decision lifecycle" "budget=$RC_B1 round=$RC_R1 decision=$RC_D budget2=$RC_B2 round2=$RC_R2 rounds=$ROUNDS (want 7 7 0 0 0 3)"
+fi
+
+echo "T112. a decision is spent by one round: a still-signalling arc asks for the next"
+RC=$(rb budget --run-id=t111 --ledger="$LED")
+RC_R=$(rb record-round --run-id=t111 --ledger="$LED" --score=6/10 --defect=yes)
+if [ "$RC" = "7" ] && [ "$RC_R" = "7" ]; then ok "T112: a regression still signals after the decided round (7, 7)"; else fail "T112: decision is per round" "budget=$RC round=$RC_R (want 7 7)"; fi
+
+echo "T113. record-decision needs an outstanding signal, a known decision, and a reason"
+LED=$(newledger t113)
+bash "$RB" record-round --run-id=t113 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
+RC_NOSIG=$(rb record-decision --run-id=t113 --ledger="$LED" --decision=continue --reason="no signal here")
+LED2=$(newledger t113b); regressed t113b "$LED2"
+RC_WORD=$(rb record-decision --run-id=t113b --ledger="$LED2" --decision=maybe --reason="a reason")
+RC_EMPTY=$(rb record-decision --run-id=t113b --ledger="$LED2" --decision=continue --reason="")
+RC_BLANK=$(rb record-decision --run-id=t113b --ledger="$LED2" --decision=continue --reason="  	 ")
+RC_OK=$(rb record-decision --run-id=t113b --ledger="$LED2" --decision=continue --reason="score fell on a new surface; the fix is local")
+RC_TWICE=$(rb record-decision --run-id=t113b --ledger="$LED2" --decision=continue --reason="again")
+DEC=$(grep -c '^DECISION' "$LED2"); NONE=$(grep -c '^DECISION' "$LED" || true)
+if [ "$RC_NOSIG" = "2" ] && [ "$RC_WORD" = "2" ] && [ "$RC_EMPTY" = "2" ] && [ "$RC_BLANK" = "2" ] && [ "$RC_OK" = "0" ] && [ "$RC_TWICE" = "2" ] && [ "$DEC" = "1" ] && [ "$NONE" = "0" ]; then
+    ok "T113: no signal / unknown word / empty / blank / second decision refused (2); one row written"
+else
+    fail "T113: decision arguments" "nosig=$RC_NOSIG word=$RC_WORD empty=$RC_EMPTY blank=$RC_BLANK ok=$RC_OK twice=$RC_TWICE rows=$DEC/$NONE (want 2 2 2 2 0 2 1/0)"
+fi
+
+echo "T114. every decision word is accepted"
+ALL=0
+for w in continue hoist subtract change-approach escalate; do
+    L=$(newledger "t114-$w"); regressed "t114-$w" "$L"
+    [ "$(rb record-decision --run-id="t114-$w" --ledger="$L" --decision="$w" --reason="reason for $w")" = "0" ] && ALL=$((ALL+1))
+done
+if [ "$ALL" = "5" ]; then ok "T114: continue / hoist / subtract / change-approach / escalate all record (0)"; else fail "T114: decision words" "$ALL of 5 recorded"; fi
+
+echo "T115. each signal is named, and the decision command is printed"
+L1=$(newledger t115a); regressed t115a "$L1"
+L2=$(newledger t115b)
+bash "$RB" record-round --run-id=t115b --ledger="$L2" --score=5/10 --defect=no >/dev/null
+bash "$RB" record-round --run-id=t115b --ledger="$L2" --score=5/10 --defect=no >/dev/null
+L3=$(newledger t115c); to_round t115c "$L3" 8
+O1=$(rbout budget --run-id=t115a --ledger="$L1"); O2=$(rbout budget --run-id=t115b --ledger="$L2"); O3=$(rbout budget --run-id=t115c --ledger="$L3")
+if printf '%s' "$O1" | grep -q "score regression" && printf '%s' "$O2" | grep -q "without a defect" \
+   && printf '%s' "$O3" | grep -q "round 8 reached" && printf '%s' "$O1" | grep -q "record-decision"; then
+    ok "T115: regression / no-defect / round 8 each named; the remedy is record-decision"
+else
+    fail "T115: signal messages" "reg: $O1 | nodefect: $O2 | ceiling: $O3"
+fi
+
+echo "T116. past round 8 a decision opens the way, and rounds are still earned by a CONTINUE"
+LED=$(newledger t116); to_round t116 "$LED" 8
+RC_B1=$(rb budget --run-id=t116 --ledger="$LED")
+RC_D=$(rb record-decision --run-id=t116 --ledger="$LED" --decision=continue --reason="each round fixes a distinct reproduced defect")
+RC_B2=$(rb budget --run-id=t116 --ledger="$LED")
+bash "$RB" record-verdict --run-id=t116 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+RC_B3=$(rb budget --run-id=t116 --ledger="$LED")
+RC_R9=$(rb record-round --run-id=t116 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED)
+if [ "$RC_B1" = "7" ] && [ "$RC_D" = "0" ] && [ "$RC_B2" = "5" ] && [ "$RC_B3" = "0" ] && [ "$RC_R9" = "0" ]; then
+    ok "T116: ceiling signals (7); decision (0) -> continuation review required (5) -> CONTINUE authorizes (0); round 9 records"
+else
+    fail "T116: past the ceiling" "budget=$RC_B1 decision=$RC_D budget2=$RC_B2 budget3=$RC_B3 round9=$RC_R9 (want 7 0 5 0 0)"
+fi
+
+echo "T117. a STOP or STRUCTURAL verdict still ends the arc; a decision cannot reopen it"
+LED=$(newledger t117)
+bash "$RB" record-round --run-id=t117 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
+bash "$RB" record-verdict --run-id=t117 --ledger="$LED" --verdict=STRUCTURAL --directive="hoist the invariant" >/dev/null
+RC_B=$(rb budget --run-id=t117 --ledger="$LED")
+RC_D=$(rb record-decision --run-id=t117 --ledger="$LED" --decision=continue --reason="try anyway")
+RC_R=$(rb record-round --run-id=t117 --ledger="$LED" --score=6/10 --defect=yes)
+if [ "$RC_B" = "6" ] && [ "$RC_D" = "6" ] && [ "$RC_R" = "6" ]; then ok "T117: STRUCTURAL is terminal (6); decision and round refused (6, 6)"; else fail "T117: terminal still absorbing" "budget=$RC_B decision=$RC_D round=$RC_R (want 6 6 6)"; fi
+
+echo "T118. the stored ledger is held to the same rules as the recorder"
+L1=$(newledger t118a)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t6\tyes\t\t-\n' > "$L1"
+O1=$(rbout budget --run-id=t118a --ledger="$L1"); R1=$(rb budget --run-id=t118a --ledger="$L1")
+L2=$(newledger t118b)
+printf 'ROUND\t1\t5\tyes\t\t-\nDECISION\tcontinue\t1\tno signal was outstanding\n' > "$L2"
+O2=$(rbout budget --run-id=t118b --ledger="$L2"); R2=$(rb budget --run-id=t118b --ledger="$L2")
+L3=$(newledger t118c)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nDECISION\tmaybe\t2\ta reason\n' > "$L3"
+R3=$(rb budget --run-id=t118c --ledger="$L3")
+L4=$(newledger t118d)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nDECISION\tcontinue\t1\twrong round\n' > "$L4"
+R4=$(rb budget --run-id=t118d --ledger="$L4")
+L5=$(newledger t118e)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nDECISION\tcontinue\t2\t \n' > "$L5"
+R5=$(rb budget --run-id=t118e --ledger="$L5")
+L6=$(newledger t118f)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nDECISION\tcontinue\t2\ta reason\textra\n' > "$L6"
+R6=$(rb budget --run-id=t118f --ledger="$L6")
+L7=$(newledger t118g)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nDECISION\tcontinue\t2\tone\nDECISION\thoist\t2\ttwo\n' > "$L7"
+O7=$(rbout budget --run-id=t118g --ledger="$L7"); R7=$(rb budget --run-id=t118g --ledger="$L7")
+if [ "$R1" = "6" ] && printf '%s' "$O1" | grep -q "without a decision" && [ "$R2" = "6" ] && printf '%s' "$O2" | grep -q "requires an outstanding signal" \
+   && [ "$R3" = "6" ] && [ "$R4" = "6" ] && [ "$R5" = "6" ] && [ "$R6" = "6" ] && [ "$R7" = "6" ] && printf '%s' "$O7" | grep -q "second decision"; then
+    ok "T118: undecided round, unsignalled decision, unknown word, wrong round, blank reason, five-field row, second decision: each refused when stored (6)"
+else
+    fail "T118: stored decision rules" "undecided=$R1 unsignalled=$R2 word=$R3 round=$R4 blank=$R5 fivefield=$R6 second=$R7 (want 6 each) | $O1 | $O2 | $O7"
+fi
+
+echo "T119. show prints each decision with its reason"
+OUT=$(rbout show --run-id=t111 --ledger="$(newledger t111)")
+case "$OUT" in *"decision hoist at round 2"*"one field rule"*) ok "T119: show lists the decision, its round and its reason" ;; *) fail "T119: show" "$OUT" ;; esac
+
+echo "T120. grant is retired: it writes nothing and points to record-decision"
+LED=$(newledger t120); to_round t120 "$LED" 8
+OUT=$(bash "$RB" grant --run-id=t120 --ledger="$LED" --rounds=2 --evidence="owner said yes" 2>&1); RC=$?
+GR=$(grep -c '^GRANT' "$LED" || true)
+if [ "$RC" = "0" ] && [ "$GR" = "0" ] && printf '%s' "$OUT" | grep -q "record-decision"; then ok "T120: grant is a no-op (0), no row, names record-decision"; else fail "T120: grant retired" "rc=$RC rows=$GR out=$OUT (want 0 0 record-decision)"; fi
+
+echo "T121. a ledger written under BRO-3893 still reads"
+LED=$(newledger t121); to_round t121 "$LED" 8
+printf 'GRANT\t2\t8\tOwner answered in AskUserQuestion 2026-11-18: grant 2 more rounds\n' >> "$LED"
+RC=$(rb budget --run-id=t121 --ledger="$LED")
+OUT=$(rbout show --run-id=t121 --ledger="$LED")
+BAD=$(newledger t121b); to_round t121b "$BAD" 8
+printf 'GRANT\t2\t8\n' >> "$BAD"
+RC_BAD=$(rb budget --run-id=t121b --ledger="$BAD")
+# GRANT rows are shape-checked and ignored, so a round run under a grant reads
+# as a round past an undecided signal (6); reset --force archives it.
+USED=$(newledger t121c); cp "$LED" "$USED"
+printf 'VERDICT\tCONTINUE\tclass 9 at scripts/loop.sh:9\t\nROUND\t9\t5/10\tyes\t\tCONFIRMED\tA\tA:5/10:FAIL\n' >> "$USED"
+RC_USED=$(rb budget --run-id=t121c --ledger="$USED")
+RC_ARCH=$(rb reset --run-id=t121c --ledger="$USED" --force)
+if [ "$RC" = "7" ] && printf '%s' "$OUT" | grep -q "grant" && [ "$RC_BAD" = "6" ] && [ "$RC_USED" = "6" ] && [ "$RC_ARCH" = "0" ]; then ok "T121: an old GRANT row parses (7); a round run under it reads 6 and --force archives it; a malformed row reads 6"; else fail "T121: old GRANT rows" "rc=$RC (want 7) used=$RC_USED bad=$RC_BAD (want 6 6) archive=$RC_ARCH (want 0) out=$OUT"; fi
+
+echo "T122. --decision and --reason belong to record-decision only"
+RC1=$(rb budget --run-id=t122 --ledger="$(newledger t122)" --decision=continue)
+RC2=$(rb record-round --run-id=t122 --ledger="$(newledger t122)" --score=5/10 --defect=yes --reason=x)
+if [ "$RC1" = "2" ] && [ "$RC2" = "2" ]; then ok "T122: decision flags refused elsewhere (2, 2)"; else fail "T122: flag scope" "budget=$RC1 round=$RC2 (want 2 2)"; fi
+
+echo "T123. a DECISION or GRANT row after a live CONTINUE does not hide it"
+LED=$(newledger t123); to_round t123 "$LED" 8
+bash "$RB" record-verdict --run-id=t123 --ledger="$LED" --verdict=CONTINUE --prediction="d at scripts/d.sh:4" >/dev/null 2>&1
+bash "$RB" record-decision --run-id=t123 --ledger="$LED" --decision=continue --reason="t123: converging" >/dev/null 2>&1
+RC_DEC=$(rb budget --run-id=t123 --ledger="$LED")
+LED2=$(newledger t123b); to_round t123b "$LED2" 3
+bash "$RB" record-verdict --run-id=t123b --ledger="$LED2" --verdict=CONTINUE --prediction="d at scripts/d.sh:4" >/dev/null 2>&1
+printf 'GRANT\t2\t8\towner\n' >> "$LED2"
+RC_GRANT=$(rb budget --run-id=t123b --ledger="$LED2")
+if [ "$RC_DEC" = "0" ] && [ "$RC_GRANT" = "0" ]; then ok "T123: the CONTINUE still earns the round (0, 0)"; else fail "T123: annotation hides the verdict" "after decision=$RC_DEC after grant=$RC_GRANT (want 0 0)"; fi
+
+echo "T124. change-approach is archived under --force, decision kept; continue is not"
+LED=$(newledger t124); to_round t124 "$LED" 8
+bash "$RB" record-decision --run-id=t124 --ledger="$LED" --decision=change-approach --reason="t124: reshape" >/dev/null 2>&1
+RC_HOLD=$(rb budget --run-id=t124 --ledger="$LED")
+RC_ROUND=$(rb record-verdict --run-id=t124 --ledger="$LED" --verdict=CONTINUE --prediction="f at scripts/f.sh:6")
+RC_ANSWER=$(rb record-decision --run-id=t124 --ledger="$LED" --decision=continue --reason="t124: changed my mind")
+AFTER=$(newledger t124h); cp "$LED" "$AFTER"; printf 'DECISION\tcontinue\t8\tt124 hand-written answer\n' >> "$AFTER"
+RC_AFTER=$(rb budget --run-id=t124h --ledger="$AFTER")
+VAFTER=$(newledger t124v); cp "$LED" "$VAFTER"; printf 'VERDICT\tCONTINUE\tg at scripts/g.sh:7\t\n' >> "$VAFTER"
+RC_VAFTER=$(rb budget --run-id=t124v --ledger="$VAFTER")
+RC_PLAIN=$(rb reset --run-id=t124 --ledger="$LED")
+OUT=$(bash "$RB" reset --run-id=t124 --ledger="$LED" --force 2>&1); RC_FORCE=$?
+KEPT=$(cat "$LED".archived.* 2>/dev/null | grep -c '^DECISION	change-approach	8	t124: reshape$')
+RC_NEW=$(rb budget --run-id=t124 --ledger="$LED")
+NEW_OUT=$(rbout budget --run-id=t124 --ledger="$LED")
+LED2=$(newledger t124b); to_round t124b "$LED2" 8
+bash "$RB" record-decision --run-id=t124b --ledger="$LED2" --decision=continue --reason="t124: converging" >/dev/null 2>&1
+RC_CONT=$(rb reset --run-id=t124b --ledger="$LED2" --force)
+if [ "$RC_HOLD" = "7" ] && [ "$RC_ROUND" = "2" ] && [ "$RC_VAFTER" = "6" ] && [ "$RC_ANSWER" = "2" ] && [ "$RC_AFTER" = "6" ] && [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$KEPT" = "1" ] && printf '%s' "$OUT" | grep -q "change-approach decision" \
+   && [ "$RC_NEW" = "0" ] && printf '%s' "$NEW_OUT" | grep -q "round 1 of" && [ "$RC_CONT" = "6" ]; then
+    ok "T124: change-approach holds the arc (7) and takes no CONTINUE (2, 6) and no later answer (2, 6); plain reset 6, forced 0 with decision and reason archived, next arc at round 1; a continue arc stays live (6)"
+else
+    fail "T124: change-approach reset" "hold=$RC_HOLD (want 7) verdict=$RC_ROUND stored-verdict=$RC_VAFTER (want 2 6) answer=$RC_ANSWER stored=$RC_AFTER (want 2 6) plain=$RC_PLAIN force=$RC_FORCE kept=$KEPT new=$RC_NEW continue=$RC_CONT out=$OUT new-out=$NEW_OUT"
+fi
+
+echo "T125. past round 8 a decision does not earn the round; a CONTINUE does"
+LED=$(newledger t125); to_round t125 "$LED" 8
+bash "$RB" record-decision --run-id=t125 --ledger="$LED" --decision=continue --reason="t125: converging" >/dev/null 2>&1
+RC_BARE=$(rb record-round --run-id=t125 --ledger="$LED" --score=5/10 --defect=yes)
+HAND=$(newledger t125h); cp "$LED" "$HAND"
+printf 'ROUND\t9\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\n' >> "$HAND"
+RC_HAND=$(rb budget --run-id=t125h --ledger="$HAND")
+bash "$RB" record-verdict --run-id=t125 --ledger="$LED" --verdict=CONTINUE --prediction="e at scripts/e.sh:5" >/dev/null 2>&1
+RC_EARNED=$(rb record-round --run-id=t125 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED)
+if [ "$RC_BARE" = "2" ] && [ "$RC_HAND" = "6" ] && [ "$RC_EARNED" = "0" ]; then
+    ok "T125: unearned round 9 refused (2), hand-written one unreadable (6), earned one stored (0)"
+else
+    fail "T125: post-ceiling rounds are earned" "bare=$RC_BARE (want 2) hand=$RC_HAND (want 6) earned=$RC_EARNED (want 0)"
+fi
+
+echo "T126. escalate leaves the signal open until the owner's answer is recorded"
+LED=$(newledger t126)
+printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\n' > "$LED"
+bash "$RB" record-decision --run-id=t126 --ledger="$LED" --decision=escalate --reason="t126: alternatives sent to the owner" >/dev/null 2>&1
+RC_BUDGET=$(rb budget --run-id=t126 --ledger="$LED")
+RC_ROUND=$(rb record-round --run-id=t126 --ledger="$LED" --score=5/10 --defect=yes)
+RC_ANSWER=$(rb record-decision --run-id=t126 --ledger="$LED" --decision=continue --reason="t126: the owner chose a smaller scope")
+RC_AFTER=$(rb budget --run-id=t126 --ledger="$LED")
+if [ "$RC_BUDGET" = "7" ] && [ "$RC_ROUND" = "7" ] && [ "$RC_ANSWER" = "0" ] && [ "$RC_AFTER" = "0" ]; then
+    ok "T126: escalate holds (7, 7); the owner's answer as a decision releases it (0, 0)"
+else
+    fail "T126: escalate" "budget=$RC_BUDGET round=$RC_ROUND (want 7 7) answer=$RC_ANSWER after=$RC_AFTER (want 0 0)"
+fi
+
+echo "T127. a decision is not repeated for the same signal; a later signal may take the same word"
+LED=$(newledger t127)
+printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\n' > "$LED"
+bash "$RB" record-decision --run-id=t127 --ledger="$LED" --decision=escalate --reason="t127: first" >/dev/null 2>&1
+RC_REPEAT=$(rb record-decision --run-id=t127 --ledger="$LED" --decision=escalate --reason="t127: again")
+HAND=$(newledger t127h); cp "$LED" "$HAND"; printf 'DECISION\tescalate\t2\tt127 again\n' >> "$HAND"
+RC_HAND=$(rb budget --run-id=t127h --ledger="$HAND")
+bash "$RB" record-decision --run-id=t127 --ledger="$LED" --decision=continue --reason="t127: owner answered" >/dev/null 2>&1
+bash "$RB" record-round --run-id=t127 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:5/10:FAIL >/dev/null 2>&1
+RC_LATER=$(rb record-decision --run-id=t127 --ledger="$LED" --decision=continue --reason="t127: round 3 converging")
+if [ "$RC_REPEAT" = "2" ] && [ "$RC_HAND" = "6" ] && [ "$RC_LATER" = "0" ]; then
+    ok "T127: a repeat is refused (2) and unreadable (6); the next signal takes the same word (0)"
+else
+    fail "T127: repeated decisions" "repeat=$RC_REPEAT (want 2) hand=$RC_HAND (want 6) later=$RC_LATER (want 0)"
 fi
 
 echo ""

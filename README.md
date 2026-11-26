@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 113 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 119 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -60,7 +60,7 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**113 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**119 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -69,6 +69,7 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`agentic-control-kernel`](skills/governance/agentic-control-kernel/) | Unifying control-systems metalayer for LLM-as-controller agent development |
 | [`architecture-design-principles`](skills/governance/architecture-design-principles/) | Distilled architecture & design principles for building self-service developer platforms, control-plane / data-plane separation, and edge-centralized cross-cutting… |
 | [`bstack`](skills/governance/bstack/) | bstack primer — the agent-readable contract for the Broomva Stack's twenty automation primitives (P1–P20) that turn an agent-driven workspace into a self-operating system (the primer skill; the bstack CLI is a separate clone + bootstrap product) |
+| [`correct`](skills/governance/correct/) | Turn mistakes agents keep repeating into checks that make them impossible: two occurrences make a class, fix it at the highest level (architecture, types, a lint or CI check whose error names the fix, test, hook, prose last), prove it refuses a real past mistake and allows a control, keep a rule-to-enforcer registry. Ships the registry's runner: `correct.py init` sets a repository up with one proven rule, `correct.py check` replays every row against its real enforcer |
 | [`cross-review`](skills/governance/cross-review/) | bstack P20 — Cross-Model Adversarial Review Gate |
 | [`dogfood`](skills/governance/dogfood/) | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | [`harness-engineering-playbook`](skills/governance/harness-engineering-playbook/) | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture… |
@@ -110,7 +111,8 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`prove-the-negative`](skills/tooling/prove-the-negative/) | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 113 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 119 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`agent-native-apps`](skills/tooling/agent-native-apps/) | Build an agent-native app — a small web app installed as its own macOS app (Dock icon, menu bar) through Electron app shims, with a T3 Code thread, Claude Code or Codex wired in as the app's agent behind a tiered, version-bound permission gate; ships a host kit, a scaffold, a validator and an end-to-end check |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -124,6 +126,7 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`goodies`](skills/knowledge/goodies/) | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | [`kg`](skills/knowledge/kg/) | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 | [`what`](skills/knowledge/what/) | Explain the *concepts* a session used, at the operator's register — ranked by what blocks understanding, anchored to where each term appeared, grounded in the knowledge graph; degrades to a re-pitch when the slice is short |
+| [`year-in-ai`](skills/knowledge/year-in-ai/) | A Spotify-Wrapped-style retrospective of your year with AI agents, computed from local history across harnesses (Claude Code, Codex, T3, Conductor, Gemini CLI, bridged transcripts, exports). Two… |
 
 ### Research — `skills/research/`
 
@@ -175,6 +178,8 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`ltx-video`](skills/video/ltx-video/) | Set up, configure, and run LTX-2/LTX-2.3 (Lightricks) for AI video and audio generation |
 | [`video-cut`](skills/video/video-cut/) | Edit raw footage into a finished cut by conversation, fully local |
 | [`motion-lab`](skills/video/motion-lab/) | Directed, reproducible code-first motion: a render-contract linter, a Playwright freeze-frame renderer with a labelled contact sheet and purity check, and drift-free motion math (beats, springs, GIF timing) |
+| [`reel-loop`](skills/video/reel-loop/) | Run one short-form account as a loop: find the reels in a niche that broke out against their own creator's normal, take the best one apart (hook, structure, shots), write a new script in the… |
+| [`filmcraft`](skills/video/filmcraft/) | Thin terminal-first video production router and delivery-gate runner uniting Broomva's modular video, motion, design, and audio skills without duplicating them. Dissects references… |
 
 ### Audio & music — `skills/audio/`
 
@@ -183,6 +188,7 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`livecoding`](skills/audio/livecoding/) | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a… |
 | [`omnivoice`](skills/audio/omnivoice/) | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on… |
 | [`talkback`](skills/audio/talkback/) | Speak an explanation out loud while working in any project — tiered text-to-speech with a pluggable backend (ElevenLabs by default and quota-guarded, macOS `say` via `--fast` for free instant local… |
+| [`soundcraft`](skills/audio/soundcraft/) | Design and verify sound for short films, product demos, motion graphics and launch videos. Use for real-recording Foley, music ducking and voice clarity, loudness and true-peak checks, clipping or… |
 
 ### Design & brand — `skills/design/`
 
@@ -292,20 +298,20 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 
 ## Catalog inventory
 
-The 113 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
+The 119 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
-| Governance & control | `skills/governance/` | 11 |
+| Governance & control | `skills/governance/` | 12 |
 | Orchestration & autonomy | `skills/orchestration/` | 14 |
-| Skill & prompt tooling | `skills/tooling/` | 10 |
-| Knowledge & memory | `skills/knowledge/` | 8 |
+| Skill & prompt tooling | `skills/tooling/` | 11 |
+| Knowledge & memory | `skills/knowledge/` | 9 |
 | Research | `skills/research/` | 2 |
 | Strategy & decisions | `skills/strategy/` | 6 |
 | Operating cadence | `skills/cadence/` | 4 |
 | Publishing & growth | `skills/publishing/` | 7 |
-| Video & multimedia | `skills/video/` | 7 |
-| Audio & music | `skills/audio/` | 3 |
+| Video & multimedia | `skills/video/` | 9 |
+| Audio & music | `skills/audio/` | 4 |
 | Design & brand | `skills/design/` | 9 |
 | Finance & payments | `skills/finance/` | 4 |
 | Compute infrastructure | `skills/compute/` | 5 |

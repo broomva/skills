@@ -49,6 +49,9 @@ from broomva_health.cli import (
     doctor as doctor_cli,
 )
 from broomva_health.cli import (
+    food as food_cli,
+)
+from broomva_health.cli import (
     health as health_metric_cli,
 )
 from broomva_health.cli import (
@@ -202,6 +205,7 @@ app.add_typer(series_cli.app, name="series")
 app.add_typer(raw_cli.app, name="raw")
 app.add_typer(doctor_cli.app, name="doctor")
 app.add_typer(checkin_cli.app, name="checkin")
+app.add_typer(food_cli.app, name="food")
 
 
 def _silence_format_for_helpers(fmt: Format) -> Format:

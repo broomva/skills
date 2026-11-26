@@ -584,6 +584,28 @@ def _proposal_fixture(tmp_path):
     return owned.parent.parent, install
 
 
+def test_proposal_runs_against_the_real_scan(tmp_path):
+    """CONTRACT (P20 #335 round 1, blocker). The other proposal tests stub `scan` with
+    a 3-tuple, so a change to the real function's shape broke `--propose` while every
+    test passed. This one runs the real scan on a real-shaped transcript."""
+    import json as _json
+    repo, install = _proposal_fixture(tmp_path)
+    tr = tmp_path / "projects" / "p"
+    tr.mkdir(parents=True)
+    rows = [
+        {"type": "assistant", "message": {"id": "m0", "usage": {"input_tokens": 1, "output_tokens": 1},
+         "content": [{"type": "tool_use", "id": "t0", "name": "Skill", "input": {"skill": "used"}}]}},
+    ]
+    (tr / "2772651f-25f3-4aee-8b5d-b44a9cd2dbfb.jsonl").write_text(
+        "".join(_json.dumps(r) + "\n" for r in rows))
+    lst = L.Listing(names=("used", "unused"), content="- used: described.\n- unused\n",
+                    source="t.jsonl", is_initial=True)
+    prop = L.trim_proposal(lst, roots=[install], skills_root=repo / "skills",
+                           transcripts=tmp_path / "projects")
+    by = {r["skill"]: r for r in prop["rows"]}
+    assert by["used"]["verdict"] == L.KEEP
+
+
 def test_proposal_separates_the_four_verdict_classes(tmp_path, monkeypatch):
     repo, install = _proposal_fixture(tmp_path)
     lst = L.Listing(

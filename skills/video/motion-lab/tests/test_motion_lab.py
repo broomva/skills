@@ -645,3 +645,166 @@ def test_motion_js_spring_and_tokens_agree_with_the_python_math():
     assert o["f"] == mm.ms_to_frames(400, 24)
     assert o["ph"] == pytest.approx(95 / 96)
     assert o["r1"] == o["r2"]  # same seed, same sequence
+
+
+class TestSeekSafeLint:
+    @pytest.mark.parametrize("css", [
+        ".wipe { clip-path: inset(0); }",
+        ".wipe { clip-path: inset(0 10%); }",
+        "@keyframes wipe { to { clip-path: inset(calc(1% + 2px) 0 30% round 4px); } }",
+    ])
+    def test_clip_inset_shorthand_warns(self, css):
+        assert rules(ml.lint_text(html(style=css)), "warn") == {"MC11"}
+
+    def test_clip_inset_four_offsets_and_other_functions_pass(self):
+        css = (".wipe { clip-path: inset(calc(2px + var(--top)) 0 3% 4px round 12px 4px); }"
+               ".round { clip-path: circle(10px); } /* .x { clip-path: inset(0); } */")
+        assert ml.lint_text(html(style=css)) == []
+
+    def test_clip_inset_inline_reports_its_line(self):
+        doc = '<div\n style="clip-path: inset(2px 2px)"></div>'
+        assert [(f.rule, f.severity, f.line) for f in ml.lint_text(doc)] == [("MC11", "warn", 2)]
+
+    @pytest.mark.parametrize("css,js", [
+        ("@keyframes draw { to { stroke-dashoffset: 0; } }", ""),
+        ("path { transition: stroke-dashoffset 1s; }", ""),
+        ("", "window.renderAt = t => { path.style.strokeDashoffset = t; };"),
+        ("", "window.renderAt = t => path.style.setProperty('stroke-dashoffset', t);"),
+        ("", "window.renderAt = t => gsap.set(path, {strokeDashoffset: t});"),
+    ])
+    def test_normalized_svg_dash_css_warns(self, css, js):
+        doc = html(js, style=css).replace("<body>", '<body><svg><path pathLength="1"/></svg>')
+        hit, = [f for f in ml.lint_text(doc) if f.rule == "MC12"]
+        assert hit.severity == "warn" and "setAttribute" in hit.message
+
+    def test_svg_attribute_seek_and_unnormalized_css_pass(self):
+        good = '<svg><path pathLength="1" stroke-dashoffset="1" style="stroke-dashoffset: 1"/></svg>'
+        js = ("const tl = gsap.timeline({paused: true}); tl.to(path, {attr: {'stroke-dashoffset': 0}});"
+              "window.renderAt = t => path.setAttribute('stroke-dashoffset', t);")
+        assert ml.lint_text(html(js).replace("<body>", "<body>" + good)) == []
+        css = "@keyframes draw { to { stroke-dashoffset: 0; } }"
+        doc = html(style=css).replace("<body>", '<body><svg><path pathLength="42"/></svg>')
+        assert ml.lint_text(doc) == []
+
+    @pytest.mark.parametrize("css,js", [
+        (".x { transition: transform 200ms; }", "el.style.transform = 'none';"),
+        (".x { transition: transform cubic-bezier(.1,.3,.1,1) 200ms; }",
+         "el.style.transform = 'none';"),
+        (".x { transition-property: transform; transition-duration: 1s; }",
+         "el.style.setProperty('transform', 'none');"),
+        ("@keyframes spin { to { transform: rotate(1turn); } }",
+         "const tl = gsap.timeline({paused:true}); tl.to(el, {x: 9});"),
+        ("@keyframes spin { to { transform: rotate(1turn); } }", "el.style['transform'] = 'none';"),
+    ])
+    def test_mixed_transform_drivers_warn(self, css, js):
+        doc = html(f"window.renderAt = t => {{ {js} }};", style=css)
+        assert "MC13" in rules(ml.lint_text(doc), "warn")
+
+    @pytest.mark.parametrize("css,js", [
+        (".x { transition: opacity 1s; transform: none; }", "el.style.transform = 'none';"),
+        (".x { transition: transform-origin 1s; }", "el.style.transform = 'none';"),
+        (".x { transition: opacity 1s, transform 0s; }", "el.style.transform = 'none';"),
+        (".x { transition: transform 0s 1s; }", "el.style.transform = 'none';"),
+        ("@keyframes spin { to { transform: rotate(1turn); } }", "el.style.opacity = 1;"),
+        ("@keyframes spin { to { transform: rotate(1turn); } }",
+         'const tl = gsap.timeline({paused:true}); tl.to(el, {opacity: 1});'),
+        ("@keyframes spin { to { transform: rotate(1turn); } }", "const str = \"el.style.transform = 'none';\";"),
+    ])
+    def test_single_transform_driver_passes(self, css, js):
+        assert "MC13" not in rules(ml.lint_text(html(f"window.renderAt = t => {{ {js} }};", style=css)))
+
+
+def test_p20_gsap_fromto_nested_and_map_set_no_false_positive_and_js_clip_inset():
+    import motion_lint
+    """GSAP fromTo toVars and nested objects trigger MC13; Map.set does not; JS clipPath shorthand triggers MC11."""
+    html_fromto = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.fromTo('.a', {opacity: 0}, {x: 100});"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    codes_ft = [f.rule for f in motion_lint.lint_text(html_fromto, is_html=True)]
+    assert "MC13" in codes_ft
+
+    html_nested = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const anim = gsap.timeline({paused:true});"
+        "anim.to('.a', {ease: {power: 2}, x: 100});"
+        "window.renderAt = (t) => anim.time(t);</script>"
+    )
+    codes_nested = [f.rule for f in motion_lint.lint_text(html_nested, is_html=True)]
+    assert "MC13" in codes_nested
+
+    html_map = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const m = new Map(); m.set('pt', {x: 1, y: 2});"
+        "gsap.to('.a', {opacity: 1});"
+        "window.renderAt = (t) => {};</script>"
+    )
+    codes_map = [f.rule for f in motion_lint.lint_text(html_map, is_html=True)]
+    assert "MC13" not in codes_map
+
+    html_js_clip = (
+        "<script>window.renderAt = (t) => { el.style.clipPath = 'inset(0 10%)'; };</script>"
+    )
+    codes_clip = [f.rule for f in motion_lint.lint_text(html_js_clip, is_html=True)]
+    assert "MC11" in codes_clip
+
+
+def test_p20_r2_chained_gsap_nested_attr_and_js_clip_calc():
+    """Covers R2 MAJOR 1 (chained timeline calls), MAJOR 2 (depth-1 vars keys only: attr:/onUpdate don't false-positive),
+    and MAJOR 3 (JS clipPath calc()/var() balanced parens)."""
+    import motion_lint
+
+    # Chained GSAP timeline calls must trigger MC13
+    for js in (
+        "const tl = gsap.timeline({paused:true}).to('.a', {x: 100}); window.renderAt = (t) => tl.time(t);",
+        "const tl = gsap.timeline({paused:true}); tl.to('.a', {opacity: 1}).to('.b', {x: 100}); window.renderAt = (t) => tl.time(t);",
+        "const anim = gsap.timeline({paused:true}).fromTo('.a', {opacity: 0}, {y: 50}); window.renderAt = (t) => anim.time(t);",
+    ):
+        html = f"<style>.a {{ transition: transform 0.3s ease; }}</style><script>{js}</script>"
+        assert "MC13" in [f.rule for f in motion_lint.lint_text(html, is_html=True)], js
+
+    # Nested attr: and onUpdate callback objects must NOT false-positive MC12/MC13
+    html_attr = (
+        '<svg><path pathLength="1" d="M0 0 L10 0"/></svg>'
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.to('rect', { attr: { x: 10, y: 20 } });"
+        "tl.to('path', { attr: { strokeDashoffset: 0 } });"
+        "tl.to('.a', { opacity: 1, onUpdate: () => { const p = { x: 1 }; } });"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    rules_attr = [f.rule for f in motion_lint.lint_text(html_attr, is_html=True)]
+    assert "MC12" not in rules_attr
+    assert "MC13" not in rules_attr
+
+    # JS clipPath with 4 sides including calc() / var() must NOT trigger MC11
+    html_calc = (
+        "<script>window.renderAt = (t) => {"
+        "el.style.clipPath = 'inset(0 calc(10% + 2px) 0 0)';"
+        "el.style.setProperty('clip-path', 'inset(0 var(--r) 0 var(--l))');"
+        "};</script>"
+    )
+    assert "MC11" not in [f.rule for f in motion_lint.lint_text(html_calc, is_html=True)]
+
+
+def test_p20_r3_timeline_addlabel_chain_and_ternary_no_false_positive():
+    """tl.addLabel().to() starts chain -> MC13; depth-1 ternary { opacity: cond ? x : 1 } does NOT false-positive."""
+    import motion_lint
+
+    html_chain = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.addLabel('s').to('.a', { x: 100 });"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    assert "MC13" in [f.rule for f in motion_lint.lint_text(html_chain, is_html=True)]
+
+    html_tern = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.to('.a', { opacity: cond ? x : 1 });"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    assert "MC13" not in [f.rule for f in motion_lint.lint_text(html_tern, is_html=True)]

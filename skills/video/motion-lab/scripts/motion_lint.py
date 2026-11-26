@@ -40,6 +40,10 @@ an HTML file (or a bare .js/.mjs/.ts/.tsx module):
                     timeline or seek, or an autoplaying <video>/<audio>. WARN:
                     drive it from renderAt (tl.seek(t), el.currentTime = t).
 
+  MC11 clip-inset   clip-path: inset() with fewer than four explicit sides. WARN.
+  MC12 svg-dash     CSS-driven stroke-dashoffset with SVG pathLength="1". WARN.
+  MC13 transform    CSS transform motion and JS/GSAP transform writes. WARN.
+
 Exit 0 when no ERROR is found (WARNs allowed), 1 on any ERROR, 2 on a usage or
 read error. --strict makes a WARN fail too. --json prints machine output.
 
@@ -306,6 +310,203 @@ def _first_time_positive(value: str) -> bool:
         if times and float(times[0][0]) > 0:
             return True
     return False
+
+
+CLIP_INSET = re.compile(r"(?:^|[;{])\s*(clip-path\s*:\s*inset\()", re.I)
+SVG_UNIT_PATH = re.compile(
+    r'<(?:path|rect|circle|ellipse|line|polyline|polygon)\b[^>]*?\spathLength\s*=\s*(?:"1"|\'1\'|1(?=[\s/>]))',
+    re.I,
+)
+JS_STYLE_DASH = re.compile(r"\.style\s*\.\s*strokeDashoffset\s*=(?!=|>)")
+JS_STYLE_TRANSFORM = re.compile(r"\.style\s*\.\s*transform\s*(?:[+]?=(?!=|>))")
+JS_STYLE_NAMED = re.compile(
+    r"""\.style\s*(?:\.\s*setProperty\s*\(\s*(['"`])(transform|stroke-dashoffset)\1\s*,|"""
+    r"""\[\s*(['"])(transform|strokeDashoffset|stroke-dashoffset)\3\s*\]\s*=(?!=|>))"""
+)
+JS_CLIP_INSET_START = re.compile(
+    r"""\.style\s*(?:\.\s*clipPath\s*=(?!=|>)\s*(['"`])\s*inset\(|"""
+    r"""\.\s*setProperty\s*\(\s*(['"`])clip-path\2\s*,\s*(['"`])\s*inset\()""",
+    re.I,
+)
+GSAP_TL_ASSIGN = re.compile(r"\b([A-Za-z_$][\w$]*)\s*=\s*gsap\s*\.\s*timeline\s*\(")
+GSAP_CHAIN_START_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(")
+GSAP_CHAIN_NEXT_RE = re.compile(r"\s*\.\s*([A-Za-z_$][\w$]*)\s*\(")
+GSAP_TWEEN_METHODS = frozenset({"set", "to", "from", "fromTo"})
+GSAP_KEY_RE = re.compile(
+    r"(?:^|,)\s*(transform|x|y|z|xPercent|yPercent|scale[XYZ]?|rotation[XYZ]?|skew[XY]|strokeDashoffset)\s*:"
+)
+
+
+def _top_level_obj_slice(blank: str, open_brace: int) -> tuple[str, int]:
+    """Return (top-level depth-1 contents of {...} with nested {...}/(...) blanked, index after matching '}')."""
+    out = []
+    b_depth = 1
+    p_depth = 0
+    i = open_brace + 1
+    while i < len(blank) and b_depth > 0:
+        ch = blank[i]
+        if ch == "{":
+            b_depth += 1
+            out.append(" ")
+        elif ch == "}":
+            b_depth -= 1
+            out.append(" ")
+        elif ch == "(":
+            p_depth += 1
+            out.append(" ")
+        elif ch == ")":
+            if p_depth > 0:
+                p_depth -= 1
+            out.append(" ")
+        elif b_depth == 1 and p_depth == 0:
+            out.append(ch)
+        else:
+            out.append(" ")
+        i += 1
+    return "".join(out), i
+
+
+def iter_gsap_writes(blank: str):
+    """Scan gsap.* and gsap.timeline() fluent chains, checking ONLY top-level vars keys (not nested attr:/callbacks)."""
+    receivers = {"gsap", "tl", "timeline"}
+    receivers.update(m.group(1) for m in GSAP_TL_ASSIGN.finditer(blank))
+    visited_starts: set[int] = set()
+    for m in GSAP_CHAIN_START_RE.finditer(blank):
+        recv, method = m.group(1), m.group(2)
+        if recv not in receivers:
+            continue
+        if recv == "gsap" and method not in GSAP_TWEEN_METHODS and method != "timeline":
+            continue
+        call_pos = m.start()
+        i = m.end()
+        cur_method = method
+        while True:
+            if call_pos in visited_starts:
+                break
+            visited_starts.add(call_pos)
+            depth = 1
+            arg_idx = 0
+            while i < len(blank) and depth > 0:
+                ch = blank[i]
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                elif ch == "," and depth == 1:
+                    arg_idx += 1
+                elif ch == "{" and depth == 1 and arg_idx >= 1 and cur_method in GSAP_TWEEN_METHODS:
+                    top_body, i = _top_level_obj_slice(blank, i)
+                    for km in GSAP_KEY_RE.finditer(top_body):
+                        yield call_pos, km.group(1)
+                    continue
+                i += 1
+            # Follow fluent chains: ).to(...).fromTo(...).set(...)
+            nxt = GSAP_CHAIN_NEXT_RE.match(blank, i)
+            if not nxt:
+                break
+            call_pos = nxt.start()
+            cur_method = nxt.group(1)
+            i = nxt.end()
+
+
+def inset_side_count(value: str) -> int:
+    """Count space-separated offsets, treating nested calc()/var() as one value."""
+    depth, token, count = 0, "", 0
+    for char in value:
+        if depth == 0 and (char == ")" or char.isspace()):
+            if token.lower() == "round":
+                return count
+            count += bool(token)
+            token = ""
+            if char == ")":
+                return count
+        else:
+            token += char
+            depth += {"(": 1, ")": -1}.get(char, 0)
+    return count + bool(token)
+
+
+def css_items(value: str):
+    """Split a CSS list at top-level commas, keeping timing functions intact."""
+    depth, start = 0, 0
+    for i, char in enumerate(value):
+        if char == "," and depth == 0:
+            yield value[start:i]
+            start = i + 1
+        depth += {"(": 1, ")": -1}.get(char, 0)
+    yield value[start:]
+
+
+def css_moves_property(css: str, prop: str) -> bool:
+    declaration = re.compile(rf"(?<![-\w]){prop}\s*:", re.I)
+    if any(declaration.search(m.group(1)) for m in KEYFRAMES.finditer(css)):
+        return True
+    for m in TRANSITION.finditer(css):
+        if m.group(1) is None:
+            for item in css_items(m.group(2)):
+                timing = re.sub(r"(?:cubic-bezier|steps|linear)\([^)]*\)", "", item, flags=re.I)
+                if not transition_is_live(None, timing):
+                    continue
+                # Remove durations/functions and timing keywords to find the
+                # property. With no property named, the shorthand defaults to all.
+                tokens = re.sub(r"[\w-]+\([^)]*\)", "", DURATION.sub("", item.lower())).split()
+                names = set(tokens) - {"ease", "ease-in", "ease-out", "ease-in-out", "linear",
+                                       "step-start", "step-end", "allow-discrete", "normal", "!important"}
+                if not names or names & {prop, "all"}:
+                    return True
+        if m.group(1) == "-duration" and transition_is_live("-duration", m.group(2)):
+            # Keep longhands within a declaration block.
+            rule = css[css.rfind("{", 0, m.start()) + 1:css.find("}", m.end()) if "}" in css[m.end():] else len(css)]
+            properties = re.search(r"(?<![-\w])transition-property\s*:\s*([^;{}]+)", rule, re.I)
+            if not properties or re.search(rf"(?<![-\w])(?:{prop}|all)(?![-\w])", properties.group(1), re.I):
+                return True
+    return False
+
+
+def seek_safe_findings(text: str, blocks: list[Block], js_views: list[tuple[int, str, str]]) -> list[Finding]:
+    markup = blank_blocks(text)
+    markup = re.sub(r"<!--.*?-->", lambda m: re.sub(r"[^\n]", " ", m.group()), markup, flags=re.S)
+    styles = [(b.start, strip_css_comments(b.body)) for b in blocks if b.kind == "style"]
+    styles.extend((m.start(2), strip_css_comments(m.group(2))) for m in STYLE_ATTR.finditer(markup))
+    styles = [(start, re.sub(r"""(['"])(?:\\.|(?!\1).)*\1""",
+              lambda m: re.sub(r"[^\n]", " ", m.group()), css, flags=re.S)) for start, css in styles]
+    dash_css = [start for start, css in styles if css_moves_property(css, "stroke-dashoffset")]
+    transform_css = any(css_moves_property(css, "transform") for _, css in styles)
+    findings = []
+    for start, css in styles:
+        for m in CLIP_INSET.finditer(css):
+            if inset_side_count(css[m.end():]) < 4:
+                findings.append(Finding("MC11", "warn", line_of(text, start + m.start(1)),
+                    "use four explicit sides in clip-path: inset(top right bottom left) for seeking"))
+    dash_writes = []
+    transform_writes = []
+    for start, keep, blank in js_views:
+        for m in JS_CLIP_INSET_START.finditer(keep):
+            if blank[m.start():m.start() + len(".style")].strip():
+                quote = m.group(1) or m.group(3)
+                end_q = keep.find(quote, m.end())
+                chunk = keep[m.end():end_q] if end_q != -1 else keep[m.end():]
+                if inset_side_count(chunk) < 4:
+                    findings.append(Finding("MC11", "warn", line_of(text, start + m.start()),
+                        "use four explicit sides in clip-path: inset(top right bottom left) for seeking"))
+        dash_writes.extend(start + m.start() for m in JS_STYLE_DASH.finditer(blank))
+        transform_writes.extend(start + m.start() for m in JS_STYLE_TRANSFORM.finditer(blank))
+        for m in JS_STYLE_NAMED.finditer(keep):
+            # Inspect quoted property names only when the call starts in code.
+            if blank[m.start():m.start() + len(".style")].strip():
+                target = transform_writes if (m.group(2) or m.group(4)) == "transform" else dash_writes
+                target.append(start + m.start())
+        if re.search(r"\bgsap\b", blank):
+            for pos, prop_name in iter_gsap_writes(blank):
+                target = dash_writes if prop_name == "strokeDashoffset" else transform_writes
+                target.append(start + pos)
+    if SVG_UNIT_PATH.search(markup) and (dash_css or dash_writes):
+        findings.append(Finding("MC12", "warn", line_of(text, min(dash_css + dash_writes)),
+            'with SVG pathLength="1", seek stroke-dashoffset via GSAP attr: or setAttribute'))
+    if transform_css and transform_writes:
+        findings.append(Finding("MC13", "warn", line_of(text, min(transform_writes)),
+            "CSS and JavaScript both drive transform in this file; give each element a single transform driver"))
+    return findings
 
 
 def render_at_spans(blank: str) -> list[tuple[int, int]]:
@@ -607,6 +808,9 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
     uses_webfont = bool(re.search(r"@font-face|fonts\.googleapis\.com|use\.typekit\.net|fonts\.bunny\.net", text))
     if uses_webfont and not FONTS_READY.search(all_js_blank + all_js_keep):
         findings.append(Finding("MC08", "warn", 1, "web fonts with no document.fonts.ready wait: frame 0 may capture the fallback font"))
+
+    if is_html:
+        findings.extend(seek_safe_findings(text, blocks, js_views))
 
     unique = {(f.rule, f.severity, f.line, f.message): f for f in findings}
     return sorted(unique.values(), key=lambda f: (f.line, f.rule))
