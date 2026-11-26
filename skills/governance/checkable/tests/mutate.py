@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Mutation check for scripts/checkable.py.
 
-Two kinds of mutant, one at a time:
+Four kinds of mutant, one at a time:
 
   refusal    a statement that records a refusal (`add(...)`, `invalid(...)`)
              is replaced by `pass`
   condition  the test of an `if` or `elif` is negated
+  pattern    a module-level `re.compile(...)` pattern is replaced by one that
+             matches anything
+  accept     a function that answers a yes-or-no question about a value is
+             made to answer the permissive way for every value
 
-in the functions that decide something: shape, check, replay, pin_state,
-index_report and route. A mutant is killed only when pytest exits 1, which
+The first two are applied in the functions that decide something: shape,
+check, replay, pin_state, index_report and route. What this does not mutate:
+operators inside one condition, comprehension filters, the tables of allowed
+values, and the code in main. A mutant is killed only when pytest exits 1, which
 means a test failed. Any other status (a collection error, an interrupted
 run) is reported as an error and fails this check, because it is not
 evidence that a test noticed the change.
@@ -31,6 +37,22 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parent.parent
 DECIDERS = ("shape", "check", "replay", "pin_state", "index_report", "route")
 REFUSERS = ("add", "invalid")
+# Each of these answers a question about one value. The mutant makes it give
+# the permissive answer always: `True` for a shape predicate, `None` (no
+# problem) for a gate, and the same text for every statement for the pin.
+ALWAYS = {
+    "_text": "True",
+    "_id": "True",
+    "_origin": "True",
+    "_performer": "True",
+    "_date": "True",
+    "_whole": "True",
+    "_mapping": "True",
+    "_mappings": "True",
+    "gate_problem": "None",
+    "pinned_text": "''",
+    "_no_duplicate_keys": "dict(pairs)",
+}
 
 # The suite runs on a copy outside the repository, so the settings that make
 # CI require the repository's roster do not apply to it.
@@ -78,6 +100,38 @@ def sites(source: str) -> list[dict]:
                         "text": f"not ({original})",
                     }
                 )
+    for node in tree.body:
+        # ID = re.compile(r"...")
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            call = node.value
+            if ast.unparse(call.func) == "re.compile" and call.args:
+                pattern = call.args[0]
+                found.append(
+                    {
+                        "kind": "pattern",
+                        "function": ast.unparse(node.targets[0]),
+                        "line": pattern.lineno,
+                        "start": (pattern.lineno, pattern.col_offset),
+                        "end": (pattern.end_lineno, pattern.end_col_offset),
+                        "text": 'r"(?s).*"',
+                    }
+                )
+        if isinstance(node, ast.FunctionDef) and node.name in ALWAYS:
+            first, last = node.body[0], node.body[-1]
+            indent = lines[first.lineno - 1][: len(lines[first.lineno - 1]) - len(lines[first.lineno - 1].lstrip())]
+            found.append(
+                {
+                    "kind": "accept",
+                    "function": node.name,
+                    "line": node.lineno,
+                    "start": (first.lineno, 0),
+                    "end": (last.end_lineno, len(lines[last.end_lineno - 1].rstrip("\n"))),
+                    "text": f"{indent}return {ALWAYS[node.name]}",
+                }
+            )
+    missing = sorted(set(ALWAYS) - {s["function"] for s in found if s["kind"] == "accept"})
+    if missing:
+        raise SystemExit(f"mutate.py names functions the checker no longer has: {', '.join(missing)}")
     found.sort(key=lambda s: (s["start"], s["kind"]))
     return found
 

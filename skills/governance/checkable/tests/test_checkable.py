@@ -472,6 +472,90 @@ def test_c6_a_human_gate_names_someone():
     assert "C6" in codes(doc)
 
 
+# --- one spelling: an id, an origin or a date has exactly one written form ---
+
+def _set(path, value):
+    def edit(doc):
+        target = doc
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value(target[path[-1]]) if callable(value) else value
+    return edit
+
+
+CANONICAL_FIELDS = {
+    "claim id": ["claims", 0, "id"],
+    "action id": ["actions", 0, "id"],
+    "performer": ["performers", 0],
+    "verifier origin": ["claims", 1, "verifier", "origin"],
+    "required claim": ["actions", 1, "requires", 0],
+    "flow step": ["flow", "steps", 0],
+    "hop check": ["feeds", 0, "check"],
+}
+VARIANTS = {
+    "trailing newline": lambda s: s + "\n",
+    "leading newline": lambda s: "\n" + s,
+    "trailing space": lambda s: s + " ",
+    "leading space": lambda s: " " + s,
+    "trailing tab": lambda s: s + "\t",
+    "upper case": lambda s: s.upper(),
+    "inner space": lambda s: s[:1] + " " + s[1:],
+    "trailing carriage return": lambda s: s + "\r",
+    "zero width space": lambda s: s + "\u200b",
+    "non-ascii digit": lambda s: s + "\u0661",
+}
+
+
+@pytest.mark.parametrize("field", CANONICAL_FIELDS)
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_a_canonical_field_has_exactly_one_spelling(field, variant):
+    # Round 2 of the review passed "model:alpha\\n" as an origin: it matched the
+    # pattern and still differed from the performer "model:alpha".
+    doc = good()
+    _set(CANONICAL_FIELDS[field], VARIANTS[variant])(doc)
+    assert codes(doc) == {"C0"}, f"{field} with {variant} was not refused as malformed"
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_an_independent_origin_cannot_be_respelled_into_the_performer(variant):
+    doc = good()
+    doc["claims"][1]["verifier"]["origin"] = VARIANTS[variant]("model:anthropic")
+    assert "FAIL" in {f["level"] for f in checkable.check(doc, PINNED)}
+
+
+@pytest.mark.parametrize("value", ["2026-11-01\n", "2026-11-01X", " 2026-11-01", "2026-11-1", "26-11-01", "2026/11/01", "\u0662\u0660\u0662\u0666-11-01"])
+def test_a_date_has_exactly_one_spelling(value):
+    doc = good()
+    doc["claims"].append({"id": "forecast", "text": "x", "rung": "track-record", "verifier": {"origin": "code", "scored_by": "y", "prediction_recorded": value}})
+    assert codes(doc) == {"C0"}
+
+
+@pytest.mark.parametrize("gate", ["human:owner\n", "human:Owner", "human: owner", " human:owner", "human:"])
+def test_a_gate_has_exactly_one_spelling(gate):
+    doc = good()
+    doc["actions"][1]["gate"] = gate
+    assert "C6" in codes(doc)
+
+
+@pytest.mark.parametrize(
+    "predicate, accepted, refused",
+    [
+        ("_id", ["a", "tests", "a-1", "0x"], ["", "-a", "A", "a_b", "a b", "a\n", 1, None, ["a"]]),
+        ("_origin", ["code", "model:openai", "sensor:http-probe", "human:the.owner_1"], ["", "code:x", "model:", "tool:x", "model:a b", "code\n", "CODE", 1, None]),
+        ("_performer", ["model:anthropic", "human:owner"], ["code", "sensor:x", "model:", "model:A", "human:owner\n", None]),
+        ("_date", ["2026-11-01"], ["2026-11-1", "2026-11-01\n", "x2026-11-01", 20261101, None]),
+        ("_whole", [0, 1, 127], [True, False, "1", 1.0, None]),
+        ("_text", ["x", " x "], ["", "   ", "\n", 1, None, ["x"]]),
+        ("_mapping", [{}, {"a": 1}], [[], "x", None, 1]),
+        ("_mappings", [[], [{}], [{"a": 1}, {}]], [{}, [1], ["x"], [{}, "x"], None, "x"]),
+    ],
+)
+def test_each_shape_predicate_accepts_and_refuses(predicate, accepted, refused):
+    test = getattr(checkable, predicate)
+    assert [value for value in accepted if not test(value)] == []
+    assert [value for value in refused if test(value)] == []
+
+
 # --- shape: nothing is skipped ---------------------------------------------
 
 @pytest.mark.parametrize(

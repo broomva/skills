@@ -135,26 +135,33 @@ def load_doc(path: Path) -> dict:
 # format does not define, is refused instead of skipped: an entry the checker
 # silently ignored would be an entry no invariant applies to.
 
-ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-ORIGIN = re.compile(r"^(?:code|(?:sensor|model|human):[a-z0-9][a-z0-9._-]*)$")
-PERFORMER = re.compile(r"^(?:model|human):[a-z0-9][a-z0-9._-]*$")
-DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+ORIGIN = re.compile(r"code|(?:sensor|model|human):[a-z0-9][a-z0-9._-]*")
+PERFORMER = re.compile(r"(?:model|human):[a-z0-9][a-z0-9._-]*")
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 def _text(value) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+# `fullmatch`, never `match`: with `match`, a pattern ending in `$` also
+# accepts a trailing newline, and "model:alpha\n" would then pass as an origin
+# that differs from the performer "model:alpha".
 def _id(value) -> bool:
-    return isinstance(value, str) and bool(ID.match(value))
+    return isinstance(value, str) and bool(ID.fullmatch(value))
 
 
 def _origin(value) -> bool:
-    return isinstance(value, str) and bool(ORIGIN.match(value))
+    return isinstance(value, str) and bool(ORIGIN.fullmatch(value))
 
 
 def _performer(value) -> bool:
-    return isinstance(value, str) and bool(PERFORMER.match(value))
+    return isinstance(value, str) and bool(PERFORMER.fullmatch(value))
+
+
+def _date(value) -> bool:
+    return isinstance(value, str) and bool(DATE.fullmatch(value))
 
 
 def _whole(value) -> bool:
@@ -192,7 +199,7 @@ VERIFIER_SHAPE = {
     "falsification_criterion": A_TEXT,
     "rubric": A_TEXT,
     "pass_rule": A_TEXT,
-    "prediction_recorded": (lambda value: isinstance(value, str) and bool(DATE.match(value)), "the date the prediction was written, as a quoted YYYY-MM-DD string"),
+    "prediction_recorded": (_date, "the date the prediction was written, as a quoted YYYY-MM-DD string"),
     "scored_by": A_TEXT,
 }
 RECEIPT_SHAPE = {"revision": A_TEXT, "replay": A_TEXT, "result": (_one_of(("pass", "fail")), "pass or fail")}
@@ -352,7 +359,7 @@ def gate_problem(action: dict, by_id: dict, performers: set) -> str | None:
     claim that the action also requires."""
     gate = action.get("gate", "")
     kind, _, name = gate.partition(":")
-    if kind == "human" and PERFORMER.match(gate):
+    if kind == "human" and _performer(gate):
         if gate in performers:
             return f"{gate} performs the work and cannot also be its gate"
         return None

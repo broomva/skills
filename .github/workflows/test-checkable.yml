@@ -49,7 +49,10 @@ jobs:
         run: pip install pytest pyyaml
       - name: Unit tests
         run: python -m pytest skills/governance/checkable/tests -v
-      - name: Mutation check, each refusal removed in turn must fail the suite
+      # One Python version is enough here: the mutants change the checker, not
+      # the interpreter, and the run is the slow part of this job.
+      - name: Mutation check, every mutant of the checker must fail a test
+        if: matrix.python == '3.12'
         run: python skills/governance/checkable/tests/mutate.py
 
       # The exit code is the contract, so CI asserts each one directly. A run
