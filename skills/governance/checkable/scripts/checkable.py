@@ -14,12 +14,12 @@ claims are the right claims; that is a reader's job.
 Exit codes: 0 holds, 1 a finding, 2 the input could not be read or a control
 did not behave, 3 a comparison that was asked for could not be made.
 
-Statements are JSON, or YAML when PyYAML is installed. Standard library only
-otherwise.
+A statement is one JSON document of at most 1 MiB. Standard library only.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -27,6 +27,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 RUNGS = ("proof", "replay", "measurement", "judgment", "track-record", "none")
@@ -84,50 +85,39 @@ def _no_duplicate_keys(pairs: list) -> dict:
     return seen
 
 
-def parse(text: str, suffix: str, label: str) -> dict:
-    """Read a statement or index. A key written twice in one mapping is
-    refused, because a reader would see one value and a parser the other."""
-    if suffix.lower() == ".json":
-        try:
-            doc = json.loads(text, object_pairs_hook=_no_duplicate_keys)
-        except (json.JSONDecodeError, RecursionError) as exc:
-            raise InputError(f"{label} is not valid JSON: {exc.__class__.__name__}: {exc}") from exc
-        except InputError as exc:
-            raise InputError(f"{label}: {exc}") from exc
-    else:
-        try:
-            import yaml  # type: ignore
-        except ImportError as exc:
-            raise InputError(
-                f"{label} is YAML and PyYAML is not installed; "
-                "`pip install pyyaml` or write the statement as .json"
-            ) from exc
+# A statement or an index is one JSON document of bounded size. Every copy
+# goes through `parse`, the working copy and the copy at the base alike, so a
+# limit set here holds for both.
+MAX_BYTES = 1024 * 1024
+GIT_TIMEOUT = 60
 
-        class Loader(yaml.SafeLoader):
-            pass
 
-        def mapping(loader, node, deep=False):
-            pairs = [(loader.construct_object(k, deep=True), loader.construct_object(v, deep=True)) for k, v in node.value]
-            return _no_duplicate_keys(pairs)
-
-        Loader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
-        try:
-            doc = yaml.load(text, Loader=Loader)  # noqa: S506 (a SafeLoader subclass)
-        except yaml.YAMLError as exc:
-            raise InputError(f"{label} is not valid YAML: {exc}") from exc
-        except (InputError, TypeError, ValueError, RecursionError) as exc:
-            raise InputError(f"{label}: {exc.__class__.__name__}: {exc}") from exc
+def parse(text: str, label: str) -> dict:
+    """Read one JSON document. A key written twice in one mapping is refused,
+    because a reader would see one value and a parser the other."""
+    if len(text.encode("utf-8", errors="replace")) > MAX_BYTES:
+        raise InputError(f"{label} is larger than {MAX_BYTES} bytes")
+    try:
+        doc = json.loads(text, object_pairs_hook=_no_duplicate_keys)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise InputError(f"{label} is not valid JSON: {exc.__class__.__name__}: {exc}") from exc
+    except InputError as exc:
+        raise InputError(f"{label}: {exc}") from exc
     if not isinstance(doc, dict):
         raise InputError(f"{label} must hold a mapping at the top level")
     return doc
 
 
 def load_doc(path: Path) -> dict:
+    if path.suffix.lower() in (".yaml", ".yml"):
+        raise InputError(f"{path}: statements are JSON; YAML is not read")
     try:
+        if path.stat().st_size > MAX_BYTES:
+            raise InputError(f"{path} is larger than {MAX_BYTES} bytes")
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise InputError(f"cannot read {path}: {exc}") from exc
-    return parse(text, path.suffix, str(path))
+    return parse(text, str(path))
 
 
 # --- shape -----------------------------------------------------------------
@@ -308,19 +298,7 @@ def pinned_text(doc: dict) -> str:
             {k: v for k, v in claim.items() if k not in MOVES_WITH_THE_WORK} if isinstance(claim, dict) else claim
             for claim in claims
         ]
-    return json.dumps(_plain(kept), sort_keys=True, ensure_ascii=False)
-
-
-def _plain(value):
-    """A copy that always serializes: keys become strings and a value JSON has
-    no form for (a YAML date, say) becomes its text."""
-    if isinstance(value, dict):
-        return {str(key): _plain(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_plain(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
+    return json.dumps(kept, sort_keys=True, ensure_ascii=False)
 
 
 def pin_state(path: Path, base: str | None, doc: dict) -> tuple[str, str]:
@@ -332,27 +310,37 @@ def pin_state(path: Path, base: str | None, doc: dict) -> tuple[str, str]:
     folder = path.resolve().parent
 
     def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        return subprocess.run(
+            ["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
+        )
 
     try:
         top = git("-C", str(folder), "rev-parse", "--show-toplevel")
+        if top.returncode != 0:
+            return "unknown", f"{folder} is not inside a git repository"
+        root = Path(top.stdout.strip()).resolve()
+        try:
+            rel = path.resolve().relative_to(root).as_posix()
+        except ValueError:
+            return "unknown", f"{path} resolves to a file outside the repository at {root}"
+        known = git("-C", str(root), "rev-parse", "--verify", "--quiet", "--end-of-options", f"{base}^{{commit}}")
+        if known.returncode != 0:
+            return "unknown", f"revision {base} does not exist in this repository"
+        size = git("-C", str(root), "cat-file", "-s", f"{base}:{rel}")
+        if size.returncode != 0:
+            return "absent", f"{rel} does not exist at {base}"
+        if not size.stdout.strip().isdigit() or int(size.stdout) > MAX_BYTES:
+            return "unknown", f"the copy at {base} is larger than {MAX_BYTES} bytes"
+        shown = git("-C", str(root), "show", f"{base}:{rel}")
     except OSError as exc:
         return "unknown", f"git could not be run: {exc}"
-    if top.returncode != 0:
-        return "unknown", f"{folder} is not inside a git repository"
-    root = Path(top.stdout.strip()).resolve()
-    try:
-        rel = path.resolve().relative_to(root).as_posix()
-    except ValueError:
-        return "unknown", f"{path} resolves to a file outside the repository at {root}"
-    known = git("-C", str(root), "rev-parse", "--verify", "--quiet", "--end-of-options", f"{base}^{{commit}}")
-    if known.returncode != 0:
-        return "unknown", f"revision {base} does not exist in this repository"
-    shown = git("-C", str(root), "show", f"{base}:{rel}")
+    except subprocess.TimeoutExpired:
+        return "unknown", f"git did not answer within {GIT_TIMEOUT} seconds"
     if shown.returncode != 0:
         return "absent", f"{rel} does not exist at {base}"
     try:
-        base_doc = parse(shown.stdout, path.suffix, f"{base}:{rel}")
+        base_doc = parse(shown.stdout, f"{base}:{rel}")
     except InputError as exc:
         return "unknown", f"the copy at {base} could not be read: {exc}"
     if pinned_text(base_doc) == pinned_text(doc):
@@ -429,7 +417,7 @@ def check(doc: dict, pin: tuple[str, str], folder: Path | None = None) -> list[d
             # C8: a claim nobody checks is named in the remainder, by its id
             named = [item for item in (unverified or []) if item == claim["id"] or item.startswith(claim["id"] + ":")]
             if not named:
-                add("C8", "FAIL", where, f"a claim with no check starts an `unverified` entry, as `{claim['id']}: ...`")
+                add("C8", "FAIL", where, f"a claim with no check is named in `unverified`, as `{claim['id']}` or `{claim['id']}: ...`")
             if verifier:
                 add("C3", "FAIL", where, "a claim on rung none has no verifier; give it a rung or remove the verifier")
             continue
@@ -595,6 +583,36 @@ MAX_TIMEOUT = 24 * 60 * 60
 COULD_NOT_RUN = (126, 127)
 # A shell reports a command ended by signal N as exit 128 + N.
 SIGNAL_BASE = 128
+
+
+class Terminated(BaseException):
+    """This process was asked to stop by a signal."""
+
+    def __init__(self, signum: int):
+        super().__init__(signum)
+        self.signum = signum
+
+
+@contextlib.contextmanager
+def stop_on_signal():
+    """While a command runs, turn SIGTERM and SIGHUP into an exception, so
+    `_run` stops the command's process group before this process ends. The
+    default action for both would end this process and leave the command
+    running. Handlers can only be set from the main thread; elsewhere this
+    does nothing."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def stop(signum, _frame):
+        raise Terminated(signum)
+
+    before = {signum: signal.signal(signum, stop) for signum in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for signum, handler in before.items():
+            signal.signal(signum, handler)
 
 
 def replay(doc: dict, cwd: Path, timeout: int) -> tuple[list[dict], int]:
@@ -863,7 +881,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise InputError(f"--cwd {cwd} is not a directory")
             if not 0 < args.timeout <= MAX_TIMEOUT:
                 raise InputError(f"--timeout must be between 1 and {MAX_TIMEOUT} seconds")
-            rows, code = replay(doc, cwd, args.timeout)
+            with stop_on_signal():
+                rows, code = replay(doc, cwd, args.timeout)
             if args.json:
                 print(json.dumps({"rows": rows, "exit": code}, indent=2))
             else:
@@ -909,6 +928,12 @@ def main(argv: list[str] | None = None) -> int:
             if report.get("dangling"):
                 print(f"  fix: remove each dangling name from {args.index}")
         return code
+    except KeyboardInterrupt:
+        print("checkable: interrupted", file=sys.stderr)
+        return 128 + signal.SIGINT
+    except Terminated as exc:
+        print(f"checkable: stopped by signal {exc.signum}", file=sys.stderr)
+        return 128 + exc.signum
     except InputError as exc:
         print(f"checkable: {_one_line(exc)}", file=sys.stderr)
         return EXIT_INVALID

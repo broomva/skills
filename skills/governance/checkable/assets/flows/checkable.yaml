@@ -4,8 +4,8 @@
 #   maestro flow start --definition checkable.yaml --params \
 #     '{"repo":"<repo>","head":"<sha>","statement":"<path>","base":"origin/main","tool":"<path to checkable.py>","bin":"<dir>"}'
 #
-# `bin` is optional: a directory put first on PATH, for a python3 that has
-# PyYAML and whatever the statement's own commands need.
+# `bin` is optional: a directory put first on PATH, for the python3 and
+# whatever else the statement's own commands need.
 #
 # `statement` runs in the repository itself, because comparing the claims with
 # the base needs the repository's history. `replay` runs in a snapshot of the
@@ -20,7 +20,9 @@ nodes:
     class: observe
     # At the named commit, and the statement and the tool are the committed
     # ones: `statement` reads them from the working copy.
-    run: [sh, -c, 'test "$(git -C "$1" rev-parse HEAD)" = "$2" && git -C "$1" diff --quiet HEAD -- "$3" "$4"', pin, "{{params.repo}}", "{{params.head}}", "{{params.statement}}", "{{params.tool}}"]
+    # `ls-files --error-unmatch` first: `git diff` says nothing about a file
+    # git does not track, so an untracked statement or tool would pass it.
+    run: [sh, -c, 'test "$(git -C "$1" rev-parse HEAD)" = "$2" && git -C "$1" ls-files --error-unmatch -- "$3" "$4" >/dev/null 2>&1 && git -C "$1" diff --quiet HEAD -- "$3" "$4"', pin, "{{params.repo}}", "{{params.head}}", "{{params.statement}}", "{{params.tool}}"]
     fresh_for: 10m
     inputs: [params.head]
     exit_map: {0: at_head, 1: moved}

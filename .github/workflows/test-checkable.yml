@@ -39,6 +39,7 @@ jobs:
     env:
       # A skipped comparison must not read as a pass in CI.
       CHECKABLE_REQUIRE_ROSTER: "1"
+      # PyYAML is a test dependency only: three tests read the flow definition.
       CHECKABLE_REQUIRE_YAML: "1"
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +61,7 @@ jobs:
       # that only ever saw non-zero could not tell a working gate from a
       # script that crashes on startup.
       - name: Exit 0, a statement that breaks no invariant
-        run: python skills/governance/checkable/scripts/checkable.py check skills/governance/checkable/examples/monthly-close.yaml
+        run: python skills/governance/checkable/scripts/checkable.py check skills/governance/checkable/examples/monthly-close.json
       - name: Exit 1, a statement that breaks several
         run: |
           set +e

@@ -34,45 +34,83 @@ in science, two signatures on a payment, a checklist before take-off.
 
 ## The statement
 
-```yaml
-checkable: 1
-problem: Close the month's books and file the tax prepayment.
-domain: [finance]              # used by the router
-performers: [model:anthropic]  # who does the work
+A statement is one JSON document of at most 1 MiB. JSON is the only format:
+it has no anchors, tags or implicit types, so the text a person reads is the
+data the checker gets.
 
-claims:
-  - id: books-balance
-    text: Debits equal credits for the month.
-    rung: proof                # see the ladder below
-    verifier:
-      origin: code             # code | sensor:<name> | model:<provider> | human:<role>
-      check: ledger balance --month 2026-10
-      rejects: ledger balance --file fixtures/one-sided-entry.ledger
-    status: open               # open | accepted | refuted
-  - id: treatment
-    text: The chosen tax treatment is the best one available.
-    rung: none                 # nobody checks this; it is listed below
-
-actions:
-  - id: file-prepayment
-    text: File and pay the prepayment
-    reversibility: irreversible   # reversible | compensable | irreversible
-    reach: the tax authority's record and the bank account
-    gate: human:owner
-    requires: [books-balance]
-
-flow:
-  steps: [books-balance, file-prepayment]
-
-feeds:
-  - {from: this month's closing balance, to: next month's opening balance, check: books-balance}
-
-learning:
-  on_correction: a misfiled transaction becomes a classifier rule with that transaction as its test
-
-unverified:
-  - "treatment: whether the chosen tax treatment is the best one available"
+```json
+{
+  "checkable": 1,
+  "problem": "Close the month's books and file the tax prepayment.",
+  "domain": [
+    "finance"
+  ],
+  "performers": [
+    "model:anthropic"
+  ],
+  "claims": [
+    {
+      "id": "books-balance",
+      "text": "Debits equal credits for the month.",
+      "rung": "proof",
+      "verifier": {
+        "origin": "code",
+        "check": "ledger balance --month 2026-10",
+        "rejects": "ledger balance --file fixtures/one-sided-entry.ledger"
+      },
+      "status": "open"
+    },
+    {
+      "id": "treatment",
+      "text": "The chosen tax treatment is the best one available.",
+      "rung": "none"
+    }
+  ],
+  "actions": [
+    {
+      "id": "file-prepayment",
+      "text": "File and pay the prepayment",
+      "reversibility": "irreversible",
+      "reach": "the tax authority's record and the bank account",
+      "gate": "human:owner",
+      "requires": [
+        "books-balance"
+      ]
+    }
+  ],
+  "flow": {
+    "steps": [
+      "books-balance",
+      "file-prepayment"
+    ]
+  },
+  "feeds": [
+    {
+      "from": "this month's closing balance",
+      "to": "next month's opening balance",
+      "check": "books-balance"
+    }
+  ],
+  "learning": {
+    "on_correction": "a misfiled transaction becomes a classifier rule with that transaction as its test"
+  },
+  "unverified": [
+    "treatment: whether the chosen tax treatment is the best one available"
+  ]
+}
 ```
+
+| Field | What it holds |
+|---|---|
+| `domain` | names the router matches against the index |
+| `performers` | who does the work, as `model:<provider>` or `human:<role>` |
+| `claims[].rung` | where the claim sits on the ladder below |
+| `claims[].verifier.origin` | `code`, `sensor:<name>`, `model:<provider>` or `human:<role>` |
+| `claims[].status` | `open`, `accepted` or `refuted`; an accepted or refuted claim also carries a `receipt` |
+| `actions[].reversibility` | `reversible`, `compensable` or `irreversible` |
+| `flow.steps` | claim and action ids in the order they happen |
+| `feeds` | each output that becomes an input, with the claim that checks it |
+| `unverified` | what nobody checks; a claim on rung `none` is named here by its id |
 
 Two complete statements ship in `examples/`: the one this skill was shipped
 under, and a monthly close.
@@ -88,7 +126,7 @@ under, and a monthly close.
 | C5 | Order is declared | Two actions, or one irreversible action, with no `flow.steps`; an action missing from the steps; a required claim placed after its action |
 | C6 | Actions are classed by reversibility | No class, no `undo` for a reversible or compensable action, or an irreversible action whose gate is missing, is a performer, or is a claim weaker than proof or replay |
 | C7 | Every hand-off passes a check | A `feeds` hop names no checking claim, or no place is given for corrections |
-| C8 | The remainder is written down | `unverified` is missing, or a claim on rung `none` does not start one of its entries as `<id>: ...` |
+| C8 | The remainder is written down | `unverified` is missing, or no entry names a claim on rung `none`: an entry names it when it is the bare `<id>` or starts with `<id>:` |
 
 C0 comes first: the statement is read strictly. A value of the wrong type, a
 key this format does not define, or a key written twice is refused, and the
@@ -156,17 +194,19 @@ python3 scripts/checkable.py index  [--require-roster]
 | `route` | which indexed skills and services serve each part, for the statement's domains and rungs | 0, or 2 for a malformed statement |
 | `index` | that every installable skill (`skills/<bucket>/<name>/SKILL.md`) is indexed or set aside, and nothing indexed is gone; a `SKILL.md` nested deeper is not counted | 0, 1, 2, or 3 when a roster was required and not found |
 
-Unreadable input exits 2 with one line on stderr, never a traceback.
-Statements are JSON, or YAML when PyYAML is installed. A YAML statement without
-PyYAML exits 2 and says so.
+Unreadable input exits 2 with one line on stderr, never a traceback. That
+includes a file named `.yaml` or `.yml`, a document over 1 MiB, and a key
+written twice. The copy of a statement at the base goes through the same reader
+with the same limits, and each git call has a 60-second limit.
 
 In `replay`, a known-bad case that could not run proves nothing, so it is
 INVALID, not a refusal: a missing command (exit 126 or 127), a timeout, or an
 exit status above 128, which is also how a shell reports a signal. When a
 status above 128 really is the refusal, state it as `rejects_exit`. Commands
-read nothing from standard input. A timeout, or an interrupt of `replay`
-itself, stops the command's process group; a process that leaves that group is
-not stopped.
+read nothing from standard input. A timeout stops the command's process group,
+and so does SIGINT, SIGTERM or SIGHUP sent to `replay`, which then exits with
+128 plus the signal number. A process that leaves that group is not stopped,
+and SIGKILL to `replay` cannot be handled.
 
 `replay` runs the commands written in the statement, through a shell. Run it
 only on a statement you would run as a script.
@@ -202,7 +242,8 @@ skill's own field, and a statement is not a measurement record.
 
 `assets/flows/checkable.yaml` is a flow definition for the Maestro flow kernel.
 It has three steps. `pin` confirms the repository is at the commit you named
-and that the statement and the tool in the working copy are the committed ones.
+and that the statement and the tool are tracked files whose working copies
+match that commit.
 `statement` runs `check --base`, so it fails with exit 3 until the statement is
 on the base. `replay` runs the statement's proof and replay claims in a
 snapshot of that commit, so uncommitted work cannot satisfy them. The kernel

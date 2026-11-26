@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -681,14 +682,6 @@ def test_a_key_written_twice_is_refused(tmp_path: Path):
     assert checkable.main(["check", str(twice)]) == checkable.EXIT_INVALID
 
 
-def test_a_yaml_key_written_twice_is_refused(tmp_path: Path):
-    _yaml_or_skip()
-    twice = tmp_path / "s.yaml"
-    twice.write_text("checkable: 1\nproblem: a\nproblem: b\n")
-    with pytest.raises(checkable.InputError, match="appears twice"):
-        checkable.load_doc(twice)
-
-
 def test_c8_an_unchecked_claim_is_named_as_unverified():
     doc = good()
     doc["unverified"] = ["something else entirely"]
@@ -1003,14 +996,6 @@ def test_route_and_json_on_the_command_line(tmp_path: Path, capsys):
     assert json.loads(capsys.readouterr().out)["rows"][0]["verdict"] == "PASS"
 
 
-def test_a_yaml_statement_without_pyyaml_exits_2(tmp_path: Path, monkeypatch, capsys):
-    path = tmp_path / "s.yaml"
-    path.write_text("checkable: 1\n")
-    monkeypatch.setitem(sys.modules, "yaml", None)
-    assert checkable.main(["check", str(path)]) == checkable.EXIT_INVALID
-    assert "PyYAML is not installed" in capsys.readouterr().err
-
-
 GOOD_ENTRY = {"name": "x", "kind": "skill", "parts": ["claims"], "domains": ["any"]}
 
 
@@ -1112,9 +1097,8 @@ def _yaml_or_skip():
         pytest.importorskip("yaml")
 
 
-@pytest.mark.parametrize("name", ["ship-checkable.yaml", "monthly-close.yaml"])
+@pytest.mark.parametrize("name", ["ship-checkable.json", "monthly-close.json"])
 def test_the_shipped_examples_break_no_invariant(name):
-    _yaml_or_skip()
     doc = checkable.load_doc(SKILL / "examples" / name)
     fails = [f for f in checkable.check(doc, PINNED) if f["level"] == "FAIL"]
     assert fails == []
@@ -1185,33 +1169,114 @@ def test_input_that_cannot_be_read_exits_2(tmp_path: Path, name, content):
         assert checkable.main([command, str(path)]) == checkable.EXIT_INVALID
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "checkable: 1\nwhen: 2026-13-45\n",
-        "checkable: 1\nproblem: [unclosed\n",
-        "- just\n- a list\n",
-    ],
-)
-def test_yaml_that_cannot_be_read_exits_2(tmp_path: Path, text):
-    _yaml_or_skip()
-    path = tmp_path / "s.yaml"
-    path.write_text(text)
-    assert checkable.main(["check", str(path)]) == checkable.EXIT_INVALID
+@pytest.mark.parametrize("name", ["s.yaml", "s.yml", "S.YAML"])
+def test_a_yaml_statement_is_not_read(tmp_path: Path, name, capsys):
+    path = tmp_path / name
+    path.write_text(json.dumps(good()))
+    for command in ("check", "replay", "route"):
+        assert checkable.main([command, str(path)]) == checkable.EXIT_INVALID
+    assert "statements are JSON" in capsys.readouterr().err
 
 
-def test_a_value_yaml_typed_as_a_date_is_a_shape_error_not_a_crash(tmp_path: Path):
-    _yaml_or_skip()
-    import yaml
-
+def test_a_statement_has_a_size_limit(tmp_path: Path):
     doc = good()
-    doc["claims"][0]["text"] = "PLACEHOLDER"
-    path = tmp_path / "s.yaml"
-    path.write_text(yaml.safe_dump(doc).replace("PLACEHOLDER", "2026-01-01"))
-    _git(tmp_path, "init", "-q", "-b", "main")
-    _git(tmp_path, "add", "s.yaml")
-    _git(tmp_path, "commit", "-q", "-m", "x")
-    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_FINDING
+    doc["problem"] = "x" * (checkable.MAX_BYTES + 1)
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(doc))
+    assert checkable.main(["check", str(path)]) == checkable.EXIT_INVALID
+    with pytest.raises(checkable.InputError, match="larger than"):
+        checkable.parse(json.dumps(doc), "inline")
+    doc["problem"] = "x" * 1000
+    assert checkable.parse(json.dumps(doc), "inline")["problem"] == "x" * 1000
+
+
+def test_the_base_copy_has_the_same_size_limit(repo: Path):
+    path = repo / "statement.json"
+    doc = good()
+    doc["problem"] = "x" * (checkable.MAX_BYTES + 1)
+    path.write_text(json.dumps(doc))
+    _git(repo, "add", "statement.json")
+    _git(repo, "commit", "-q", "-m", "an oversized statement on the base")
+    small = good()
+    path.write_text(json.dumps(small))
+    state, why = checkable.pin_state(path, "main", small)
+    assert state == "unknown" and "larger than" in why
+    assert checkable.main(["check", str(path), "--base", "main"]) == checkable.EXIT_NO_COMPARISON
+
+
+def test_the_base_copy_is_read_by_the_same_strict_reader(repo: Path):
+    path = repo / "statement.json"
+    path.write_text('{"checkable": 1, "problem": "a", "problem": "b"}')
+    _git(repo, "add", "statement.json")
+    _git(repo, "commit", "-q", "-m", "a key written twice on the base")
+    path.write_text(json.dumps(good()))
+    state, why = checkable.pin_state(path, "main", good())
+    assert state == "unknown" and "appears twice" in why
+
+
+def test_the_pin_gives_up_when_git_does_not_answer(repo: Path, monkeypatch):
+    def hang(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(checkable.subprocess, "run", hang)
+    state, why = checkable.pin_state(repo / "statement.json", "main", good())
+    assert state == "unknown" and "did not answer" in why
+
+
+def _replay_process(tmp_path: Path, note: Path) -> subprocess.Popen:
+    doc = good()
+    doc["claims"][0]["verifier"]["check"] = f"echo $$ > {note}; exec sleep 60"
+    statement = tmp_path / "s.json"
+    statement.write_text(json.dumps(doc))
+    return subprocess.Popen(
+        [sys.executable, str(SKILL / "scripts" / "checkable.py"), "replay", str(statement), "--cwd", str(tmp_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+
+
+def _wait_until_gone(pid: int) -> bool:
+    import time
+
+    for _ in range(100):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+@pytest.mark.parametrize("signum, status", [(signal.SIGTERM, 143), (signal.SIGHUP, 129), (signal.SIGINT, 130)])
+def test_a_signal_to_replay_stops_the_command_it_started(tmp_path: Path, signum, status):
+    import time
+
+    note = tmp_path / "command.pid"
+    tool = _replay_process(tmp_path, note)
+    try:
+        for _ in range(200):
+            if note.exists() and note.read_text().strip():
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("the replayed command never started")
+        command = int(note.read_text())
+        tool.send_signal(signum)
+        _out, err = tool.communicate(timeout=30)
+        assert tool.returncode == status, err
+        assert b"Traceback" not in err
+        if not _wait_until_gone(command):
+            os.kill(command, 9)
+            pytest.fail(f"the replayed command outlived signal {signum}")
+    finally:
+        if tool.poll() is None:
+            tool.kill()
+
+
+def test_stop_on_signal_restores_the_handlers_it_replaced():
+    before = signal.getsignal(signal.SIGTERM), signal.getsignal(signal.SIGHUP)
+    with checkable.stop_on_signal():
+        assert signal.getsignal(signal.SIGTERM) is not before[0]
+    assert (signal.getsignal(signal.SIGTERM), signal.getsignal(signal.SIGHUP)) == before
 
 
 def test_replay_in_a_folder_that_does_not_exist_exits_2(tmp_path: Path):
@@ -1418,9 +1483,8 @@ def test_index_refuses_a_roster_with_an_untagged_or_a_dangling_skill(tmp_path: P
 
 
 def test_an_error_is_one_line(tmp_path: Path, capsys):
-    _yaml_or_skip()
-    path = tmp_path / "s.yaml"
-    path.write_text("checkable: 1\nproblem: [unclosed\n")
+    path = tmp_path / "s.json"
+    path.write_text('{\n  "checkable": 1,\n  "problem": [\n    "unclosed"\n')
     assert checkable.main(["check", str(path)]) == checkable.EXIT_INVALID
     assert capsys.readouterr().err.count("\n") == 1
 
@@ -1444,6 +1508,25 @@ def test_the_flow_pin_step_refuses_an_uncommitted_statement(repo: Path):
     assert pin() == 1
     params["head"] = "0" * 40
     assert pin() == 1
+
+
+def test_the_flow_pin_step_refuses_an_untracked_statement_or_tool(repo: Path):
+    _yaml_or_skip()
+    import yaml
+
+    flow = yaml.safe_load((SKILL / "assets" / "flows" / "checkable.yaml").read_text())
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    (repo / "untracked.json").write_text(json.dumps(good()))
+
+    def pin(statement: str, tool: str) -> int:
+        params = {"repo": str(repo), "head": head, "statement": statement, "tool": tool}
+        argv = [part.replace("{{params.", "{").replace("}}", "}").format(**params) for part in flow["nodes"]["pin"]["run"]]
+        return subprocess.run(argv, capture_output=True).returncode
+
+    assert pin("statement.json", "statement.json") == 0
+    assert pin("untracked.json", "statement.json") == 1
+    assert pin("statement.json", "untracked.json") == 1
+    assert pin("statement.json", "missing.json") == 1
 
 
 def test_index_with_a_root_that_has_no_skills_exits_2(tmp_path: Path):
