@@ -371,8 +371,10 @@ ones the lift is computed on), with the same trials per case, and shows it as a 
 beside the present and absent arms, computed exactly as they are, with a count of the
 replicate attempts that produced no signal. Two with-skill rows that land far apart say
 either that run-to-run noise is large next to the lift, or that the arms graded different
-trials (compare the trials column: an error in one arm drops that arm's trials); the rows
-do not say which. No number is computed across the arms:
+prompts: an error drops a trial from its arm, so equal `trials` counts (each row's outcome
+denominator) can cover different prompts. The rows do not say which. `checked` counts the
+trials that ran an outcome check; an arm with none prints `n/a`, and when the present or
+absent arm has none the verdict is `inconclusive-weak-checks`, with or without the band. No number is computed across the arms:
 an A/A gap was tried and subtracted, because over unaligned trials it sat on a different
 scale from the lift and moved when one prompt errored in one arm. It applies no test and changes no verdict: six P20 rounds
 showed every inference built on it could be fooled by inputs this harness produces

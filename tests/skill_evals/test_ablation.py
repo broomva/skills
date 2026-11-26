@@ -860,7 +860,7 @@ def test_a_row_with_no_outcome_evidence_prints_na_not_zero():
     text = A.format_comparison(cmp)
     assert re.search(r"(?m)^  present\s+12\s+12\s+1\.00\s+1\.00$", text), text
     assert re.search(r"(?m)^  replicate\s+12\s+0\s+n/a\s+1\.00$", text), text
-    assert "compare its trials and checked columns" in text
+    assert "equal counts can cover different prompts" in text
 
 
 def test_the_checked_count_never_changes_a_verdict_field():
@@ -910,3 +910,35 @@ def test_an_unusable_baseline_does_not_override_a_state_exit(tmp_path):
                               write_during=3, baseline_outcome="ERROR")
     assert rc == R.EXIT_BELOW_THRESHOLD
     assert rep.get("exit_cause") == "real_state_change"
+
+
+@pytest.mark.parametrize("unchecked", ["present", "absent"])
+@pytest.mark.parametrize("band", [False, True])
+def test_an_arm_with_no_outcome_evidence_gets_no_actionable_verdict(unchecked, band):
+    """Continuation review before r7: an arm whose trials ran no outcome check entered
+    the lift as rate 0.0, giving load-bearing or retire-candidate on no evidence."""
+    checked = _cases(_outcome(12, 12), _outcome(12, 12))
+    trigger_only = _cases(_trigger_only(12), _trigger_only(12))
+    absent_checked = _cases(_outcome(3, 12), _outcome(3, 12))
+    present, absent = ((trigger_only, absent_checked) if unchecked == "present"
+                       else (checked, trigger_only))
+    cmp = A.compare(present, absent, non_pass=NON_PASS, min_trials=10,
+                    replicate_report=checked if band else None)
+    assert cmp["verdict"] == A.VERDICT_WEAK_CHECKS
+    assert cmp["skill_lift"] is None
+    assert f"no {unchecked}-arm trial ran an outcome check" in cmp["why"]
+    text = A.format_comparison(cmp)
+    assert "skill lift   NOT MEASURED" in text
+
+
+def test_stats_built_without_counting_are_not_treated_as_unchecked():
+    p = A.ArmStats(graded_positive_trials=20, outcome_passes=18, trigger_events=20, check_failures=2)
+    b = A.ArmStats(graded_positive_trials=20, outcome_passes=2, trigger_events=0, check_failures=18)
+    assert A.decide_verdict(p, b)["verdict"] == A.VERDICT_LOAD_BEARING
+
+
+def test_a_row_built_without_counting_shows_its_rate_and_no_checked_count():
+    stats = A.ArmStats(graded_positive_trials=4, outcome_passes=3, trigger_events=4).to_dict()
+    cmp = {"skill": "s", "present": stats, "absent": stats, "noise": None, "skill_lift": None,
+           "verdict": "v", "why": "w"}
+    assert re.search(r"(?m)^  present\s+4\s+n/a\s+0\.75\s+1\.00$", A.format_comparison(cmp))

@@ -43,8 +43,10 @@ THE NOISE BAND (``--noise-band``, BRO-4110) — a description, not a test
 replicate) and reports it as a third row beside the present and absent arms, computed
 by the same arm_stats() as they are, plus how many of its attempts produced no signal.
 Two with-skill rows that land far apart say either that run-to-run noise is large next
-to the lift, or that the arms graded different trials (compare the trials column: an
-error in one arm drops that arm's trials); the rows do not say which. It computes no cross-arm number, applies no test and changes no verdict. Six P20
+to the lift, or that the arms graded different prompts: an error drops a trial from its
+arm, so equal "trials" counts (each row's outcome denominator) can cover different
+prompts. The rows do not say which. It computes no cross-arm number, applies no test and
+changes no verdict. Six P20
 rounds showed every number built across the arms (intervals, sign-flip gates, an A/A
 gap) could be fooled by inputs this harness produces: arms that run one after another,
 unequal trials per prompt, prompts with trigger checks only, a prompt that errors in
@@ -158,8 +160,9 @@ class ArmStats:
     check_failures: int = 0
     #: Graded trials that ran at least one outcome check. A trigger-only trial runs
     #: none, so it counts as an outcome non-pass; this says how much of the outcome
-    #: column is evidence, so a row with none prints n/a, not 0.00 (P20 #336 r6).
-    outcome_checked_trials: int = 0
+    #: rate is evidence. A row with none prints n/a, and the verdict refuses to decide
+    #: on it (P20 #336 r6). None when the caller built the stats without counting.
+    outcome_checked_trials: int | None = None
 
     @property
     def outcome_pass_rate(self) -> float | None:
@@ -304,6 +307,18 @@ def decide_verdict(
     # The main report path already carries this floor — runner.py's "ZERO POSITIVE
     # PASSES ... no --threshold lowers this floor". The verdict that recommends
     # DELETING a skill had no equivalent, which is the wrong way round.
+    # Zero observations is not a rate: an arm whose trials ran no outcome check has an
+    # outcome "rate" of 0.0 by construction, and a lift computed from it would read as
+    # load-bearing or retire-candidate on no evidence (continuation review before r7).
+    unchecked = [name for name, arm in (("present", present), ("absent", absent))
+                 if arm.outcome_checked_trials == 0]
+    if unchecked:
+        return undecided(
+            VERDICT_WEAK_CHECKS,
+            f"no {' or '.join(unchecked)}-arm trial ran an outcome check (only trigger "
+            "checks, which are excluded from both arms), so there is no outcome rate to "
+            "compare. Add outcome checks to the prompt set's expected_checks",
+        )
     total_passes = present.outcome_passes + absent.outcome_passes
     total_failures = present.check_failures + absent.check_failures
     if not total_failures:
@@ -424,9 +439,10 @@ def format_comparison(cmp: dict[str, Any]) -> str:
 
     def row(name: str, arm: dict[str, Any], trigger: bool = True) -> str:
         # An arm whose trials ran no outcome check has no outcome rate: n/a, not 0.00.
-        checked = arm.get("outcome_checked_trials", arm["graded_positive_trials"])
-        outcome = arm["outcome_pass_rate"] if checked else None
-        return (f"  {name:10}{arm['graded_positive_trials']:>8}{checked:>9}"
+        checked = arm.get("outcome_checked_trials")  # None: built without counting
+        outcome = None if checked == 0 else arm["outcome_pass_rate"]
+        shown = "n/a" if checked is None else checked
+        return (f"  {name:10}{arm['graded_positive_trials']:>8}{shown:>9}"
                 f"{rate(outcome):>9}{rate(arm['trigger_rate']) if trigger else '  n/a':>9}")
 
     lines = [
@@ -452,8 +468,9 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         if noise.get("replicate_errors"):
             lines.append(f"  replicate    {noise['replicate_errors']} of "
                          f"{noise['replicate_attempts']} attempts produced no signal")
-        lines.append("  replicate    the with-skill arm again, positive cases; compare its trials "
-                     "and checked columns with present before its outcome. Not tested (BRO-4140)")
+        lines.append("  replicate    the with-skill arm again, positive cases. trials is each row's "
+                     "outcome denominator; equal counts can cover different prompts. Not tested "
+                     "(BRO-4140)")
     else:
         lines.append("  replicate    not run (--noise-band adds it)")
     lines.append(f"  VERDICT      {cmp['verdict']}")
