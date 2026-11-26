@@ -156,6 +156,10 @@ class ArmStats:
     #: if no check ever failed in either arm, a lift of zero is a tautology rather
     #: than evidence of absorption.
     check_failures: int = 0
+    #: Graded trials that ran at least one outcome check. A trigger-only trial runs
+    #: none, so it counts as an outcome non-pass; this says how much of the outcome
+    #: column is evidence, so a row with none prints n/a, not 0.00 (P20 #336 r6).
+    outcome_checked_trials: int = 0
 
     @property
     def outcome_pass_rate(self) -> float | None:
@@ -174,6 +178,7 @@ class ArmStats:
             "outcome_pass_rate": self.outcome_pass_rate,
             "trigger_rate": self.trigger_rate,
             "check_failures": self.check_failures,
+            "outcome_checked_trials": self.outcome_checked_trials,
         }
 
 
@@ -186,6 +191,9 @@ def arm_stats(report: dict[str, Any], non_pass: Sequence[str]) -> ArmStats:
         check_failures=sum(
             1 for t in trials for c in (t.get("checks") or [])
             if _check_passed(c) is False
+        ),
+        outcome_checked_trials=sum(
+            1 for t in trials if any(_check_passed(c) is not None for c in t.get("checks") or [])
         ),
     )
 
@@ -414,23 +422,24 @@ def format_comparison(cmp: dict[str, Any]) -> str:
     def rate(v: float | None) -> str:
         return "  n/a" if v is None else f"{v:5.2f}"
 
+    def row(name: str, arm: dict[str, Any], trigger: bool = True) -> str:
+        # An arm whose trials ran no outcome check has no outcome rate: n/a, not 0.00.
+        checked = arm.get("outcome_checked_trials", arm["graded_positive_trials"])
+        outcome = arm["outcome_pass_rate"] if checked else None
+        return (f"  {name:10}{arm['graded_positive_trials']:>8}{checked:>9}"
+                f"{rate(outcome):>9}{rate(arm['trigger_rate']) if trigger else '  n/a':>9}")
+
     lines = [
         "",
         f"ABLATION  {cmp['skill']}",
         "-" * 68,
-        f"  {'arm':10}{'trials':>8}{'outcome':>9}{'trigger':>9}",
-        f"  {'present':10}{p['graded_positive_trials']:>8}"
-        f"{rate(p['outcome_pass_rate']):>9}{rate(p['trigger_rate']):>9}",
-        f"  {'absent':10}{a['graded_positive_trials']:>8}"
-        f"{rate(a['outcome_pass_rate']):>9}{'  n/a':>9}",
+        f"  {'arm':10}{'trials':>8}{'checked':>9}{'outcome':>9}{'trigger':>9}",
+        row("present", p),
+        row("absent", a, trigger=False),
     ]
     noise = cmp.get("noise")
     if noise:
-        r = noise["replicate"]
-        lines.append(
-            f"  {'replicate':10}{r['graded_positive_trials']:>8}"
-            f"{rate(r['outcome_pass_rate']):>9}{rate(r['trigger_rate']):>9}"
-        )
+        lines.append(row("replicate", noise["replicate"]))
     lines.append("-" * 68)
     if cmp.get("skill_lift") is None:
         lines.append(f"  skill lift   NOT MEASURED — {cmp['verdict']}")
@@ -443,8 +452,8 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         if noise.get("replicate_errors"):
             lines.append(f"  replicate    {noise['replicate_errors']} of "
                          f"{noise['replicate_attempts']} attempts produced no signal")
-        lines.append("  replicate    the with-skill arm again, positive cases; read its row "
-                     "beside present. Not tested (BRO-4140)")
+        lines.append("  replicate    the with-skill arm again, positive cases; compare its trials "
+                     "and checked columns with present before its outcome. Not tested (BRO-4140)")
     else:
         lines.append("  replicate    not run (--noise-band adds it)")
     lines.append(f"  VERDICT      {cmp['verdict']}")

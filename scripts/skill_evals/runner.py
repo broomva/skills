@@ -1717,8 +1717,8 @@ def format_report(
         )
     if state_exit:
         lines.append(
-            "              ^ exit 1 is --fail-on-real-state-change: the run changed real "
-            "state, the numbers above stand"
+            "              ^ exit 1 is --fail-on-real-state-change: watched real state "
+            "changed during the run, the numbers above stand"
         )
     lines.append("")
     return "\n".join(lines)
@@ -1790,7 +1790,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompts", type=Path, help="explicit path to prompts.json")
     p.add_argument("--skills-root", type=Path, default=DEFAULT_SKILLS_ROOT)
     p.add_argument("--skill-dir", type=Path, help="explicit skill directory (overrides lookup)")
-    p.add_argument("--trials", type=int, default=DEFAULT_TRIALS, help="trials per case (default 3)")
+    p.add_argument("--trials", type=_positive_int, default=DEFAULT_TRIALS, help="trials per case (default 3)")
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
                    help="aggregate trial pass-rate required to exit 0 (default 0.80)")
     p.add_argument("--case-threshold", type=float, default=DEFAULT_CASE_THRESHOLD,
@@ -1872,6 +1872,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--validate-only", action="store_true", help="validate the prompt set and exit")
     p.add_argument("--list-checks", action="store_true", help="print CHECK_REGISTRY ids and exit")
     return p
+
+
+def _positive_int(text: str) -> int:
+    """Trials per case, at least 1: 0 or a negative count planned no trial yet each arm
+    reported one placeholder error per case as an attempt (P20 #336 r6 C)."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {text!r}")
+    return value
 
 
 def _finite_unit(text: str) -> float:
@@ -2350,6 +2359,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mode=runner.mode, threshold=args.threshold, exit_code=0,
                 meta={"arm": "present-replicate"},
             )
+            # An arm report, not a run: it has no exit status of its own, and a 0 here
+            # read as "the replicate passed" even when every trial errored (P20 r6 A).
+            replicate_report["exit_code"] = None
         comparison = ablation_mod.compare(
             report, absent_report,
             non_pass=sorted(NON_PASS_ERRORS),

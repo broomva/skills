@@ -622,7 +622,7 @@ def test_the_band_computes_no_number_across_the_arms():
 def test_the_report_describes_and_does_not_test():
     """No p-value, threshold, NOTE, gap or verdict language comes from the band."""
     text = A.format_comparison(band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(2, 3)] * 10))
-    assert re.search(r"(?m)^  replicate\s+30\s+0\.67\s+1\.00$", text), text
+    assert re.search(r"(?m)^  replicate\s+30\s+30\s+0\.67\s+1\.00$", text), text
     assert "Not tested (BRO-4140)" in text
     for word in ("p=", "NOTE", "confirmed", "drifted", "noisy", "gap", "minus"):
         assert word not in text, word
@@ -669,7 +669,8 @@ BASE_ARGS = ["--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "
              "--cli", "/bin/true", "--no-version-check", "--ablate", "--json", "--trials", "4"]
 
 
-def stubbed_main(tmp_path, *args, write_during=None, actions=None):
+def stubbed_main(tmp_path, *args, write_during=None, actions=None, outcome=None,
+                 baseline_outcome=None):
     """Run R.main with every trial stubbed; record each arm's config. A real
     RealStateWatch watches one file that `write_during` (an arm number) touches."""
     watched = tmp_path / "state"
@@ -678,15 +679,17 @@ def stubbed_main(tmp_path, *args, write_during=None, actions=None):
     real_run_suite, real_watch = R.run_suite, R.jail_mod.RealStateWatch
 
     def case_runner(runner, case, cfg):
-        trials = [R.TrialResult(case.id, t, R.PASS, triggered=cfg.visibility.expects_visible,
-                                checks=[{"check_id": "x", "passed": True}])
+        o = (baseline_outcome if not cfg.visibility.expects_visible and baseline_outcome
+             else outcome) or R.PASS
+        trials = [R.TrialResult(case.id, t, o, triggered=cfg.visibility.expects_visible,
+                                checks=[{"check_id": "x", "passed": o == R.PASS}])
                   for t in range(1, cfg.trials + 1)]
         return R.CaseResult(case.id, case.should_trigger, case.origin, trials=trials)
 
     def suite(runner, prompts, cfg):
         arms.append({"visibility": cfg.visibility.id, "cases": [c.id for c in prompts.cases],
                      "positives_only": all(c.should_trigger for c in prompts.cases),
-                     "jobs": cfg.jobs})
+                     "jobs": cfg.jobs, "keep_workspaces": cfg.keep_workspaces})
         if write_during == len(arms):
             watched.write_text(f"written during arm {len(arms)}")
         if actions and len(arms) in actions:
@@ -788,7 +791,7 @@ def test_a_trigger_only_replicate_row_uses_the_same_denominator_as_present():
 def test_the_replicate_row_and_its_errors_are_printed():
     cmp = band_compare([(3, 3)] * 4, [(1, 3)] * 4, [(3, 3)] * 4, replicate_errors=(0, 1, 2))
     text = A.format_comparison(cmp)
-    assert re.search(r"(?m)^  replicate\s+3\s+1\.00\s+1\.00$", text), text
+    assert re.search(r"(?m)^  replicate\s+3\s+3\s+1\.00\s+1\.00$", text), text
     assert "  replicate    9 of 12 attempts produced no signal" in text
     assert (cmp["noise"]["replicate_attempts"], cmp["noise"]["replicate_errors"]) == (12, 9)
 
@@ -843,3 +846,67 @@ def test_replicate_attempts_count_positive_cases_like_the_graded_trials():
     rep["cases"].append({"case_id": "n0", "should_trigger": False, "results": _outcome(0, 3)})
     band = A.noise_band(rep, NON_PASS)
     assert (band["replicate_attempts"], band["replicate_errors"]) == (3, 0)
+
+
+def test_a_row_with_no_outcome_evidence_prints_na_not_zero():
+    """P20 #336 r6 stratum B: equal trial counts from different prompts made a replicate
+    that ran no outcome check read 0.00 beside a present arm's 1.00."""
+    present = _cases(_outcome(12, 12), [{"outcome": "ERROR"}] * 12)
+    replicate = _cases([{"outcome": "ERROR"}] * 12, _trigger_only(12))
+    cmp = A.compare(present, _cases(_outcome(6, 12), _outcome(6, 12)), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=replicate)
+    assert cmp["noise"]["replicate"]["outcome_checked_trials"] == 0
+    assert cmp["present"]["outcome_checked_trials"] == 12
+    text = A.format_comparison(cmp)
+    assert re.search(r"(?m)^  present\s+12\s+12\s+1\.00\s+1\.00$", text), text
+    assert re.search(r"(?m)^  replicate\s+12\s+0\s+n/a\s+1\.00$", text), text
+    assert "compare its trials and checked columns" in text
+
+
+def test_the_checked_count_never_changes_a_verdict_field():
+    present = _cases(_trigger_only(6), _outcome(6, 6))
+    absent = _cases(_outcome(3, 6), _outcome(3, 6))
+    plain = A.compare(present, absent, non_pass=NON_PASS, min_trials=10)
+    assert plain["present"]["outcome_checked_trials"] == 6
+    assert plain["present"]["outcome_pass_rate"] == 0.5  # the verdict's rate is unchanged
+
+
+def test_the_replicate_keeps_workspaces_like_the_other_arms(tmp_path):
+    _, _, arms = stubbed_main(tmp_path, "--noise-band", "--keep-workspaces")
+    assert [a["keep_workspaces"] for a in arms] == [True, True, True]
+
+
+def test_the_replicate_arm_report_has_no_exit_status(tmp_path):
+    _, rep, _ = stubbed_main(tmp_path, "--noise-band")
+    assert rep["ablation_replicate_arm"]["exit_code"] is None
+
+
+@pytest.mark.parametrize("trials", ["0", "-1"])
+def test_trials_must_be_at_least_one(trials):
+    with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+        R.build_parser().parse_args(["--skill", "x", "--trials", trials])
+
+
+@pytest.mark.parametrize("margin", ["0", "1", "0.08"])
+def test_a_margin_at_or_inside_the_unit_interval_is_accepted(margin):
+    args = R.build_parser().parse_args(["--skill", "x", "--ablation-margin", margin])
+    assert args.ablation_margin == float(margin)
+
+
+@pytest.mark.parametrize("arm", [1, 2, 3])
+def test_a_state_change_does_not_override_an_earlier_failure(tmp_path, arm):
+    """Exit precedence (P20 r6 C, mutant M08): a threshold failure stays exit 1 without a
+    state cause; the state rule only replaces an exit 0, in the primary arm or after it."""
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=arm, outcome=R.FAIL)
+    assert rc == R.EXIT_BELOW_THRESHOLD
+    assert "exit_cause" not in rep
+
+
+def test_an_unusable_baseline_does_not_override_a_state_exit(tmp_path):
+    """Exit precedence (mutant M09): a state exit 1 is kept, with its cause, when the
+    baseline is also unusable (exit 4 only replaces an exit 0)."""
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=3, baseline_outcome="ERROR")
+    assert rc == R.EXIT_BELOW_THRESHOLD
+    assert rep.get("exit_cause") == "real_state_change"
