@@ -1,0 +1,12 @@
+{
+  "checkable": 1,
+  "problem": "Deploy the change.",
+  "performers": ["model:anthropic"],
+  "claims": [
+    {"id": "review", "text": "The change is good.", "rung": "judgment",
+     "verifier": {"origin": "model:anthropic", "rubric": "looks fine"}}
+  ],
+  "actions": [
+    {"id": "deploy", "text": "Deploy to production", "reversibility": "irreversible", "reach": "every user"}
+  ]
+}

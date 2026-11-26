@@ -1,8 +1,8 @@
 # Skills Inventory
 
-> 119 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 120 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
-## Governance & control — `skills/governance/` (12)
+## Governance & control — `skills/governance/` (13)
 
 | Skill | What it does |
 |---|---|
@@ -18,6 +18,7 @@
 | `legal-readiness` | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 | `spec-contract` | The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked… |
 | `autoreview` | Unattended multi-lens review of a plan, launch plan, spec, strategy doc, ADR or proposal. The autonomous counterpart to grill-with-docs: instead of interviewing the human, the agent asks the grilling… |
+| `checkable` | State a problem as claims, the check behind each, the actions allowed and what stays unverified; a checker refuses the statement when it breaks an invariant |
 
 ## Orchestration & autonomy — `skills/orchestration/` (14)
 
@@ -50,7 +51,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 119 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 120 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
 | `agent-native-apps` | Build an agent-native app — a small web app installed as its own macOS app (Dock icon, menu bar) through Electron app shims, with a T3 Code thread, Claude Code or Codex wired in as the app's agent behind a tiered, version-bound permission gate; ships a host kit, a scaffold, a validator and an end-to-end check |
 
@@ -240,7 +241,7 @@
 
 ## Aggregates
 
-- **Total skills**: 119
+- **Total skills**: 120
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science

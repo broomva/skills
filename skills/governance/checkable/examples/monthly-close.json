@@ -1,0 +1,106 @@
+{
+  "checkable": 1,
+  "problem": "Close a household's books for one month and file that month's tax prepayment.",
+  "domain": [
+    "finance"
+  ],
+  "performers": [
+    "model:anthropic"
+  ],
+  "claims": [
+    {
+      "id": "books-balance",
+      "text": "Debits equal credits for the month.",
+      "rung": "proof",
+      "verifier": {
+        "origin": "code",
+        "check": "ledger balance --month 2026-10",
+        "rejects": "ledger balance --file fixtures/one-sided-entry.ledger"
+      }
+    },
+    {
+      "id": "matches-bank",
+      "text": "Every statement line has a ledger entry and every ledger entry has a statement line.",
+      "rung": "measurement",
+      "verifier": {
+        "origin": "sensor:bank-statement",
+        "sensor": "the bank's own statement export for the month",
+        "positive_control": "a transaction known to be on the statement is found in the ledger",
+        "falsification_criterion": "any statement line without a ledger entry, or any ledger entry without a statement line"
+      }
+    },
+    {
+      "id": "categories",
+      "text": "Each transaction is in the right tax category.",
+      "rung": "judgment",
+      "verifier": {
+        "origin": "human:accountant",
+        "rubric": "the category rules of the jurisdiction",
+        "pass_rule": "the accountant signs the category sheet with no open query"
+      }
+    },
+    {
+      "id": "forecast",
+      "text": "The cash balance stays above the stated floor next month.",
+      "rung": "track-record",
+      "verifier": {
+        "origin": "code",
+        "prediction_recorded": "2026-11-01",
+        "scored_by": "next month's closing balance compared with the forecast band"
+      }
+    },
+    {
+      "id": "treatment",
+      "text": "The chosen tax treatment is the best one available.",
+      "rung": "none"
+    }
+  ],
+  "actions": [
+    {
+      "id": "post-entries",
+      "text": "Add the month's entries to the ledger",
+      "reversibility": "reversible",
+      "reach": "the ledger file",
+      "undo": "revert the commit that added them",
+      "requires": [
+        "matches-bank"
+      ]
+    },
+    {
+      "id": "file-prepayment",
+      "text": "File and pay the month's tax prepayment",
+      "reversibility": "irreversible",
+      "reach": "the tax authority's record and the bank account",
+      "gate": "human:owner",
+      "requires": [
+        "books-balance",
+        "matches-bank",
+        "categories"
+      ]
+    }
+  ],
+  "flow": {
+    "steps": [
+      "matches-bank",
+      "post-entries",
+      "books-balance",
+      "categories",
+      "forecast",
+      "file-prepayment"
+    ]
+  },
+  "feeds": [
+    {
+      "from": "this month's closing balance",
+      "to": "next month's opening balance",
+      "check": "books-balance"
+    }
+  ],
+  "learning": {
+    "on_correction": "a misfiled transaction becomes a rule in the classifier, with that transaction as its test case"
+  },
+  "unverified": [
+    "treatment: whether the chosen tax treatment is the best one available",
+    "whether the bank's statement export is itself complete"
+  ]
+}

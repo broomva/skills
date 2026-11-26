@@ -1,0 +1,88 @@
+name: test-checkable
+
+# Test gate for the `checkable` skill (skills/governance/checkable/).
+# Path-filtered: it runs when that skill changes. The index test compares the
+# skill's catalog index with every skill on disk, so it also runs when a skill
+# is added or removed anywhere under skills/.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/governance/checkable/**'
+      - 'skills/*/*/SKILL.md'
+      - '.github/workflows/test-checkable.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/governance/checkable/**'
+      - 'skills/*/*/SKILL.md'
+      - '.github/workflows/test-checkable.yml'
+  workflow_dispatch:
+
+# Least privilege: this workflow only reads the checkout.
+permissions:
+  contents: read
+
+concurrency:
+  group: test-checkable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    env:
+      # A skipped comparison must not read as a pass in CI.
+      CHECKABLE_REQUIRE_ROSTER: "1"
+      # PyYAML is a test dependency only: three tests read the flow definition.
+      CHECKABLE_REQUIRE_YAML: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install pytest pyyaml
+      - name: Unit tests
+        run: python -m pytest skills/governance/checkable/tests -v
+      # One Python version is enough here: the mutants change the checker, not
+      # the interpreter, and the run is the slow part of this job.
+      - name: Mutation check, every mutant of the checker must fail a test
+        if: matrix.python == '3.12'
+        run: python skills/governance/checkable/tests/mutate.py
+
+      # The exit code is the contract, so CI asserts each one directly. A run
+      # that only ever saw non-zero could not tell a working gate from a
+      # script that crashes on startup.
+      - name: Exit 0, a statement that breaks no invariant
+        run: python skills/governance/checkable/scripts/checkable.py check skills/governance/checkable/examples/monthly-close.json
+      - name: Exit 1, a statement that breaks several
+        run: |
+          set +e
+          python skills/governance/checkable/scripts/checkable.py check skills/governance/checkable/tests/fixtures/broken.json
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "::error::a broken statement must exit 1, got $code"; exit 1; }
+      - name: Exit 2, input that cannot be read
+        run: |
+          set +e
+          python skills/governance/checkable/scripts/checkable.py check /nonexistent/statement.json
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "::error::unreadable input must exit 2, got $code"; exit 1; }
+      - name: Index, every skill on disk is indexed or set aside
+        run: python skills/governance/checkable/scripts/checkable.py index --require-roster
+      - name: Index, an index missing a skill is refused
+        run: |
+          set +e
+          python skills/governance/checkable/scripts/checkable.py index \
+            --index skills/governance/checkable/tests/fixtures/index-missing-a-skill.json --require-roster
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "::error::an index missing a skill must exit 1, got $code"; exit 1; }
