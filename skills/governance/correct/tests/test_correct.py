@@ -346,10 +346,6 @@ class Init(CorrectCase):
         (self.repo / "scripts" / "governance_paths.py").write_bytes((SKILL / "scripts" / "governance_paths.py").read_bytes())
         proc = self.init()
         self.assertIn("keep   scripts/governance_paths.py (already this version)", proc.stdout)
-        # SKILL.md's back-out steps go by these two labels: `write` for what the run adds, `keep` for
-        # what was there. A kept file is not also listed as written.
-        self.assertIn("  write  scripts/branch-first-hook.py\n", proc.stdout)
-        self.assertNotIn("write  scripts/governance_paths.py", proc.stdout)
 
     def test_a_scripts_directory_that_is_a_symlink_is_refused(self) -> None:
         outside = self.tmp / "outside"
@@ -435,6 +431,38 @@ class Init(CorrectCase):
         self.assertIn("this copy of the skill replays version 1", str(caught.exception))
         self.assertEqual(registry.read_bytes(), theirs)
 
+    def test_a_name_taken_by_something_that_is_not_a_file_is_refused_by_that_name(self) -> None:
+        """A folder, or a link to nothing, at the registry's name is not a registry. The loser
+        says what it found, at the name it found it, starts no replay and gives no advice."""
+        for layout, folder in (("plain", ".control"), ("new", ".broomva")):
+            for kind in ("folder", "dangling link"):
+                with self.subTest(layout=layout, kind=kind):
+                    repo = self.tmp / f"{layout}-{kind.replace(' ', '-')}"
+                    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True, capture_output=True)
+                    if layout == "new":
+                        (repo / ".broomva").mkdir()
+                    registry = repo / folder / "rules.yaml"
+                    real = correct.write_file
+
+                    def late(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
+                        if path == registry:
+                            registry.mkdir() if kind == "folder" else registry.symlink_to(repo / "nowhere")
+                        return real(path, content, executable, new=new)
+
+                    out = io.StringIO()
+                    with unittest.mock.patch.object(correct, "write_file", late), contextlib.redirect_stdout(out), \
+                            unittest.mock.patch.object(correct, "run_tool", side_effect=AssertionError("replayed")), \
+                            self.assertRaises(correct.Refused) as caught:
+                        correct.init(repo, [])
+                    self.assertEqual(str(caught.exception),
+                                     f"the name {folder}/rules.yaml was taken while this run was writing its files, "
+                                     "by something that is not a file. This run wrote no registry, and there is "
+                                     "none at that name.")
+                    self.assertNotIn("replay", out.getvalue())
+                    self.assertNotIn("was taken", out.getvalue())  # said once, in the refusal
+                    self.assertTrue(registry.is_dir() if kind == "folder" else registry.is_symlink())
+                    self.assertEqual([p.name for p in registry.parent.iterdir() if p.name.startswith(".rules")], [])
+
     def test_a_loser_that_cannot_remove_its_temporary_file_still_replays_the_registry_that_is_there(self) -> None:
         """The name is taken, and then the loser's temporary file cannot be removed. That is
         still a name that was taken: the loser says what it left and exits with the replay of
@@ -516,7 +544,7 @@ class Init(CorrectCase):
 
     def test_where_the_filesystem_cannot_link_no_registry_is_written(self) -> None:
         """No fallback to replacing: a registry init cannot create safely is not created. The
-        refusal is the one any failed write gets, with the error the link gave."""
+        refusal says the link failed, with its error, what was written before, and what is in place."""
         def no_links(_src: str, _dst: object) -> None:
             raise OSError(errno.EOPNOTSUPP, "Operation not supported")
 
@@ -529,8 +557,8 @@ class Init(CorrectCase):
                       "([Errno", said)
         self.assertIn("Operation not supported", said)
         self.assertIn("This run wrote no registry. Written before it: scripts/branch-first-hook.py", said)
-        self.assertIn("The starter hook and its settings entry are in place", said)
-        self.assertIn("says how to back out", said)
+        self.assertTrue(said.endswith(" The starter hook and its settings entry are in place, and there is "
+                                      "no registry."), said)  # what happened and what is in place; no steps
         self.assertTrue((self.repo / "scripts" / correct.ENFORCER).is_file())
         self.assertIn(correct.ENFORCER, (self.repo / ".claude" / "settings.json").read_text())
         self.assertEqual([p.name for p in (self.repo / ".control").iterdir() if "rules" in p.name], [])
@@ -1061,12 +1089,6 @@ class Shipped(unittest.TestCase):
         recorded = set(json.loads(vendored.MANIFEST.read_text())["files"])
         self.assertEqual(recorded, {"rules_check.py", "rules_canary.py", *correct.SCRIPT_FILES})
         self.assertEqual(len(correct.SCRIPT_FILES), 4)
-        # The back-out steps in SKILL.md count no files: they go by the `write` and `keep` lines of
-        # init's own output, so a file that was there before the run is not on the list to delete.
-        text = (SKILL / "SKILL.md").read_text()
-        self.assertIn("each file its output listed as `write` that was not there\n  before the run", text)
-        self.assertIn("A file listed as `keep` was\n  there before the run and is not `init`'s to delete.", text)
-        self.assertNotIn("the four files under", text)
 
     def test_the_starter_row_and_the_hook_entry_agree(self) -> None:
         data = yaml.safe_load((SKILL / "assets" / "templates" / "rules.yaml").read_text())

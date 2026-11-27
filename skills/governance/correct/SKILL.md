@@ -59,17 +59,12 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   still sets up. It is created, never replaced: `init` links a finished file to
   the registry's name, which the filesystem refuses when the name is taken. Of
   two `init` runs at once, one writes the registry; the other finds it there,
-  or finds its name taken when it comes to write, and either way writes none
-  and replays the one that is there. A temporary file `init` cannot remove,
-  whether it wrote the registry or found the name taken, is named on stderr,
-  and the run goes on. On a filesystem that cannot link, `init` exits 2 at that
-  write and says the link failed: the files before it are in place, the hook
-  among them, and there is no registry; back out as follows. To back out, remove only what `init` added:
-  the registry; each file its output listed as `write` that was not there
-  before the run; and the `PreToolUse` entry that runs
-  `scripts/branch-first-hook.py`, taken out of `.claude/settings.json`. Restore
-  from version control any file `--force` replaced. A file listed as `keep` was
-  there before the run and is not `init`'s to delete.
+  or finds its name taken when it comes to write, and either way writes none: a
+  registry that is there is checked and replayed like any existing registry,
+  and anything else at that name is refused. A temporary file `init` cannot
+  remove is named on stderr. On a filesystem that cannot link, `init` exits 2 at
+  that write and says the link failed: the files before it are in place, the
+  hook among them, and there is no registry (BRO-4210).
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
@@ -102,6 +97,7 @@ lists each one that no row accounts for. That list is the work: a row for each, 
   (BRO-4127), as is a gate that runs from the skill's install path in any
   harness (BRO-4047).
 - An installed copy of this skill can be older than the repository's rows.
+- `init` has no undo: no command reverses what it wrote or replaced (BRO-4212).
 
 Assume every contributor is an agent that sees only the files it opened, copies
 the nearest example, and takes the shortest path that compiles. The codebase is

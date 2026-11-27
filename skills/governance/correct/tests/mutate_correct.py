@@ -43,6 +43,8 @@ MUTANTS: list[tuple[str, str, str]] = [
      "        except Taken as taken:\n", "        except ZeroDivisionError as taken:\n"),
     ("any file whose write finds a name taken is called another init's registry",
      "        except Taken as taken:\n", "        except (Taken, FileExistsError) as taken:\n"),
+    ("a name taken by a folder or a dangling link is handed to the existing-registry path",
+     "            if not target.is_file():\n", "            if False:\n"),
     ("an init that loses the race replays a registry of a version this copy does not replay",
      "            return on_registry(root)\n        except NotLinked as refused:\n",
      "            return replay(root, wrote=False)\n        except NotLinked as refused:\n"),

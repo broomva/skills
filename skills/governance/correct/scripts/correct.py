@@ -384,8 +384,7 @@ def replay(root: Path, wrote: bool) -> int:
               "      check --ci --base origin/main\n"
               "  - The starter row is replayed, not yet certified on the real harness: replace its\n"
               "    `canary: {none, ticket}` ticket with one of yours, or write canary cases and run\n"
-              "    `correct.py canary run`.\n"
-              "  - To back out: `init` in this skill's SKILL.md says what to remove and what to leave.")
+              "    `correct.py canary run`.")
     elif status != 0 and wrote:
         print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
               "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
@@ -457,18 +456,20 @@ def init(root: Path, args: list[str]) -> int:
             # if another init has published one since, that one stands, whatever is in it.
             left = write_file(path, content, executable, new=path == target)
         except Taken as taken:
+            say_left(target.parent.relative_to(root), taken.left)
+            if not target.is_file():
+                raise Refused(f"the name {target.relative_to(root)} was taken while this run was writing its "
+                              "files, by something that is not a file. This run wrote no registry, and "
+                              "there is none at that name.") from taken
             print(f"correct init: the name {target.relative_to(root)} was taken while this run was writing "
                   "its files (another init, most likely). This run wrote no registry.", flush=True)
-            say_left(target.parent.relative_to(root), taken.left)
             return on_registry(root)
         except NotLinked as refused:
             say_left(target.parent.relative_to(root), refused.left)
             raise Refused(f"could not create {target.relative_to(root)}: linking the finished file to that "
                           f"name failed ({refused}). This run wrote no registry. Written before it: "
                           f"{', '.join(done) or 'nothing'}. The starter hook and its settings entry are in "
-                          "place, so an edit on main or master is refused where the harness runs the hook, "
-                          "and there is no registry. `init` in this skill's SKILL.md says how to back out."
-                          ) from refused
+                          "place, and there is no registry.") from refused
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
