@@ -241,8 +241,6 @@ MUTANTS: list[tuple[str, str, str]] = [
      "    return replay(root, wrote=True)\n", "    return 0 if packs else replay(root, wrote=True)\n"),
     ("a registry that holds no list of rows is a traceback",
      "    if not isinstance(rules, list):\n", "    if False:\n"),
-    ("a polite stop is ignored, so nothing unwinds",
-     "    raise SystemExit(143)\n", "    return None\n"),
     ("a pack row the runner cannot read is written, and stops the replay with a traceback",
      "        problem = row_shape(row)\n", "        problem = None\n"),
     ("a pack row whose enforcer is not a mapping passes",

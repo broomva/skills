@@ -16,7 +16,6 @@ import hashlib
 import io
 import json
 import os
-import signal
 import shutil
 import site
 import subprocess
@@ -695,21 +694,6 @@ class Packs(CorrectCase):
         registry = correct.governance_file(self.repo, "rules.yaml")
         registry.write_text("version: 1\nrules: 42\n")
         self.refused("does not read as a registry", "--pack", str(self.pack()))
-
-    def test_a_polite_stop_while_a_file_is_written_leaves_no_temporary_file(self) -> None:
-        """A caller's time limit arrives as SIGTERM. The handler raises, write_file unwinds and
-        removes what it was writing."""
-        target = self.tmp / "out" / "file.txt"
-        real_replace = os.replace
-        def stopped(_src: str, _dst: object) -> None:
-            correct.stop_on_sigterm(signal.SIGTERM, None)
-        self.addCleanup(setattr, os, "replace", real_replace)
-        os.replace = stopped
-        with self.assertRaises(SystemExit) as caught:
-            correct.write_file(target, b"x", False)
-        os.replace = real_replace
-        self.assertEqual(caught.exception.code, 143)
-        self.assertEqual(list(target.parent.iterdir()), [])
 
     def refused(self, needle: str, *args: str) -> None:
         before = tree(self.repo)

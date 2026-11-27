@@ -42,7 +42,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import signal
 import site
 import subprocess
 import sys
@@ -612,14 +611,7 @@ def init(root: Path, args: list[str]) -> int:
     return replay(root, wrote=True)
 
 
-def stop_on_sigterm(_signum: int, _frame: object) -> None:
-    """A caller's time limit arrives as SIGTERM. Raising unwinds through write_file, which
-    removes the temporary file it was writing; the default action would leave it behind."""
-    raise SystemExit(143)
-
-
 def main(argv: list[str]) -> int:
-    signal.signal(signal.SIGTERM, stop_on_sigterm)
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(__doc__)
         return 0 if argv else 2
