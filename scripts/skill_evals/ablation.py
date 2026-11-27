@@ -37,6 +37,22 @@ harness can remove:
   guessing. At the default 3 trials the interval is roughly ±0.28 wide, so most
   honest verdicts will be ``indeterminate``.
 
+THE NOISE BAND (``--noise-band``, BRO-4110) — a description, not a test
+-----------------------------------------------------------------------
+``--noise-band`` runs the with-skill arm a second time on the positive cases (the
+replicate) and reports it as a third row beside the present and absent arms, computed
+by the same arm_stats() as they are, plus how many of its attempts produced no signal.
+Two with-skill rows that land far apart say either that run-to-run noise is large next
+to the lift, or that the arms graded different prompts: an error drops a trial from its
+arm, so equal "trials" counts (each row's outcome denominator) can cover different
+prompts. The rows do not say which. It computes no cross-arm number, applies no test and
+changes no verdict. Six P20
+rounds showed every number built across the arms (intervals, sign-flip gates, an A/A
+gap) could be fooled by inputs this harness produces: arms that run one after another,
+unequal trials per prompt, prompts with trigger checks only, a prompt that errors in
+one arm. Inference waits for interleaved arms (BRO-4140). The idea of an A/A band is
+Uber's (2026-11-23 post on skill evals).
+
 A missing or unusable measurement serialises ``skill_lift: null``, never ``0.0``.
 A defaulted zero reads as perfect absorption, which is the single most dangerous
 vacuity available here.
@@ -142,11 +158,20 @@ class ArmStats:
     #: if no check ever failed in either arm, a lift of zero is a tautology rather
     #: than evidence of absorption.
     check_failures: int = 0
+    #: Graded trials that ran at least one outcome check. A trigger-only trial runs
+    #: none, so it counts as an outcome non-pass; this says how much of the outcome
+    #: rate is evidence. A row with none prints n/a, and the verdict refuses to decide
+    #: on it (P20 #336 r6). None when the caller built the stats without counting.
+    outcome_checked_trials: int | None = None
 
     @property
     def outcome_pass_rate(self) -> float | None:
+        """None when nothing was graded, or when no graded trial ran an outcome check:
+        zero observations is not a rate of 0.0. One rule, so text and JSON agree."""
         n = self.graded_positive_trials
-        return (self.outcome_passes / n) if n else None
+        if not n or self.outcome_checked_trials == 0:
+            return None
+        return self.outcome_passes / n
 
     @property
     def trigger_rate(self) -> float | None:
@@ -160,6 +185,7 @@ class ArmStats:
             "outcome_pass_rate": self.outcome_pass_rate,
             "trigger_rate": self.trigger_rate,
             "check_failures": self.check_failures,
+            "outcome_checked_trials": self.outcome_checked_trials,
         }
 
 
@@ -172,6 +198,9 @@ def arm_stats(report: dict[str, Any], non_pass: Sequence[str]) -> ArmStats:
         check_failures=sum(
             1 for t in trials for c in (t.get("checks") or [])
             if _check_passed(c) is False
+        ),
+        outcome_checked_trials=sum(
+            1 for t in trials if any(_check_passed(c) is not None for c in t.get("checks") or [])
         ),
     )
 
@@ -282,6 +311,18 @@ def decide_verdict(
     # The main report path already carries this floor — runner.py's "ZERO POSITIVE
     # PASSES ... no --threshold lowers this floor". The verdict that recommends
     # DELETING a skill had no equivalent, which is the wrong way round.
+    # Zero observations is not a rate: an arm whose trials ran no outcome check has an
+    # outcome "rate" of 0.0 by construction, and a lift computed from it would read as
+    # load-bearing or retire-candidate on no evidence (continuation review before r7).
+    unchecked = [name for name, arm in (("present", present), ("absent", absent))
+                 if arm.outcome_checked_trials == 0]
+    if unchecked:
+        return undecided(
+            VERDICT_WEAK_CHECKS,
+            f"no {' or '.join(unchecked)}-arm trial ran an outcome check (only trigger "
+            "checks, which are excluded from both arms), so there is no outcome rate to "
+            "compare. Add outcome checks to the prompt set's expected_checks",
+        )
     total_passes = present.outcome_passes + absent.outcome_passes
     total_failures = present.check_failures + absent.check_failures
     if not total_failures:
@@ -323,6 +364,27 @@ def decide_verdict(
     return result
 
 
+# ---------------------------------------------------------------------------
+# the noise band — a description, not a test (BRO-4110)
+# ---------------------------------------------------------------------------
+
+
+def noise_band(replicate_report: dict[str, Any], non_pass: Sequence[str]) -> dict[str, Any]:
+    """The replicate arm and its attempts. No cross-arm number, no test, no verdict.
+
+    An A/A gap (present minus replicate) was subtracted after P20 round 5 and its
+    continuation review (arc decision D11's reversal): over unaligned trials it was on
+    a different scale from the lift and was moved by a prompt that errored in one arm."""
+    replicate = arm_stats(replicate_report, non_pass)
+    attempts = sum(len(c.get("results") or [])
+                   for c in replicate_report.get("cases") or [] if c.get("should_trigger"))
+    return {
+        "replicate": replicate.to_dict(),
+        "replicate_attempts": attempts,
+        "replicate_errors": attempts - replicate.graded_positive_trials,
+    }
+
+
 def compare(
     present_report: dict[str, Any],
     absent_report: dict[str, Any],
@@ -331,8 +393,13 @@ def compare(
     builtin_names: Iterable[str] = (),
     min_trials: int = ABLATION_MIN_TRIALS,
     margin: float = ABLATION_MARGIN,
+    replicate_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The full two-arm comparison, as it lands in the JSON report."""
+    """The full two-arm comparison, as it lands in the JSON report.
+
+    With ``replicate_report`` (``--noise-band``) the comparison also carries
+    ``noise``: the replicate arm and its attempts. It never changes the verdict.
+    """
     skill = str(present_report.get("skill") or "")
     present = arm_stats(present_report, non_pass)
     absent = arm_stats(absent_report, non_pass)
@@ -362,6 +429,8 @@ def compare(
         "present": present.to_dict(),
         "absent": absent.to_dict(),
         "leaked_baseline_trials": leaked,
+        "noise": (None if replicate_report is None
+                  else noise_band(replicate_report, non_pass)),
         **verdict,
     }
 
@@ -372,17 +441,25 @@ def format_comparison(cmp: dict[str, Any]) -> str:
     def rate(v: float | None) -> str:
         return "  n/a" if v is None else f"{v:5.2f}"
 
+    def row(name: str, arm: dict[str, Any], trigger: bool = True) -> str:
+        # An arm whose trials ran no outcome check has no outcome rate: n/a, not 0.00.
+        checked = arm.get("outcome_checked_trials")  # None: built without counting
+        shown = "n/a" if checked is None else checked
+        return (f"  {name:10}{arm['graded_positive_trials']:>8}{shown:>9}"
+                f"{rate(arm['outcome_pass_rate']):>9}{rate(arm['trigger_rate']) if trigger else '  n/a':>9}")
+
     lines = [
         "",
         f"ABLATION  {cmp['skill']}",
         "-" * 68,
-        f"  {'arm':10}{'trials':>8}{'outcome':>9}{'trigger':>9}",
-        f"  {'present':10}{p['graded_positive_trials']:>8}"
-        f"{rate(p['outcome_pass_rate']):>9}{rate(p['trigger_rate']):>9}",
-        f"  {'absent':10}{a['graded_positive_trials']:>8}"
-        f"{rate(a['outcome_pass_rate']):>9}{'  n/a':>9}",
-        "-" * 68,
+        f"  {'arm':10}{'trials':>8}{'checked':>9}{'outcome':>9}{'trigger':>9}",
+        row("present", p),
+        row("absent", a, trigger=False),
     ]
+    noise = cmp.get("noise")
+    if noise:
+        lines.append(row("replicate", noise["replicate"]))
+    lines.append("-" * 68)
     if cmp.get("skill_lift") is None:
         lines.append(f"  skill lift   NOT MEASURED — {cmp['verdict']}")
     else:
@@ -390,6 +467,15 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         lines.append(f"  skill lift   {cmp['skill_lift']:+.2f}  95% CI [{lo:+.2f}, {hi:+.2f}]")
         if cmp.get("end_to_end_lift") is not None:
             lines.append(f"  end-to-end   {cmp['end_to_end_lift']:+.2f}  (trigger-inclusive)")
+    if noise:
+        if noise.get("replicate_errors"):
+            lines.append(f"  replicate    {noise['replicate_errors']} of "
+                         f"{noise['replicate_attempts']} attempts produced no signal")
+        lines.append("  replicate    the with-skill arm again, positive cases. trials is each row's "
+                     "outcome denominator; equal counts can cover different prompts. Not tested "
+                     "(BRO-4140)")
+    else:
+        lines.append("  replicate    not run (--noise-band adds it)")
     lines.append(f"  VERDICT      {cmp['verdict']}")
     lines.append(f"               {cmp['why']}")
     lines.append("")
@@ -405,6 +491,7 @@ __all__ = [
     "decide_verdict",
     "format_comparison",
     "newcombe_difference",
+    "noise_band",
     "outcome_passed",
     "wilson_interval",
 ]

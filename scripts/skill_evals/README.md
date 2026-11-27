@@ -342,7 +342,7 @@ which is in `NON_PASS_ERRORS` and so drops out of `graded_trials` for free.
 | `indeterminate` | the interval straddles the margin — more trials needed |
 | `inconclusive-underpowered` | fewer than 10 graded positive trials in an arm |
 | `inconclusive-no-trigger` | present-arm trigger rate < 0.5 — cannot separate absorption from a trigger failure |
-| `inconclusive-weak-checks` | the graded checks are CONSTANT — none failed in either arm, or none passed. Lift is 0.0 by construction either way, so the checks cannot tell the arms apart. (A check that *raises* is recorded as failed, so one buggy predicate would otherwise read as 'retire everything'.) |
+| `inconclusive-weak-checks` | the present or absent arm ran no outcome check at all (only trigger checks), so it has no outcome rate; or the graded checks are CONSTANT — none failed in either arm, or none passed. Lift is 0.0 by construction either way, so the checks cannot tell the arms apart. (A check that *raises* is recorded as failed, so one buggy predicate would otherwise read as 'retire everything'.) |
 | `inconclusive-name-collision` | the name is a CLI built-in, so there is no absent arm |
 
 Every inconclusive verdict serialises `"skill_lift": null` — **never `0.0`**, because a
@@ -364,6 +364,31 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
   of zero. At the default 3 trials the interval is roughly ±0.28 wide, so most honest
   verdicts are `indeterminate`; a real retirement decision needs ~30 positive trials
   per arm (≈60 live CLI runs per skill).
+
+**The noise band (`--noise-band`, BRO-4110): a description, not a test.**
+`--ablate --noise-band` runs the with-skill arm a second time on the POSITIVE cases (the
+ones the lift is computed on), with the same trials per case, and shows it as a third row
+beside the present and absent arms, computed exactly as they are, with a count of the
+replicate attempts that produced no signal. Two with-skill rows that land far apart say
+either that run-to-run noise is large next to the lift, or that the arms graded different
+prompts: an error drops a trial from its arm, so equal `trials` counts (each row's outcome
+denominator) can cover different prompts. The rows do not say which. `checked` counts the
+trials that ran an outcome check. An arm with none has no outcome rate (`n/a` in text,
+`null` in JSON), and when the present or absent arm has none the verdict is
+`inconclusive-weak-checks`, with or without the band, unless an earlier gate (a name collision, a leaked baseline, too few graded trials, or a skill that does not trigger) has already decided it. No number is computed across the arms:
+an A/A gap was tried and subtracted, because over unaligned trials it sat on a different
+scale from the lift and moved when one prompt errored in one arm. It applies no test and changes no verdict: six P20 rounds
+showed every inference built on it could be fooled by inputs this harness produces
+(arms that run in sequence, unequal trials per prompt, prompts with trigger checks
+only). Inference waits for interleaved arms (BRO-4140). Separately,
+`--fail-on-real-state-change` now also watches the ablation arms, read after each arm
+so a later arm cannot undo an earlier arm's change unseen; before, a write during the
+baseline arm passed. When it sets exit 1, the threshold line keeps the arm's own verdict
+and names the state change as the cause.
+
+```bash
+python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --noise-band
+```
 
 `--ablate` is **report-only** and can never soften the existing gate. An unusable
 baseline gets its own exit code (`4`), because nothing is wrong with the skill — the
