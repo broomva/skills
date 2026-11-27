@@ -383,6 +383,11 @@ def row_shape(row: dict) -> str | None:
     return None
 
 
+def hook_name(script: str) -> str:
+    """One hook command, however it is spaced: the runner splits a hook's command on whitespace."""
+    return " ".join(script.split())
+
+
 def packs_agree(packs: list[tuple[Path, dict]]) -> None:
     """Refused when the packs given cannot all go into one registry: a row id that is in two of
     them, or twice in one, or a hook two of them give different reasons. Asked before init
@@ -397,7 +402,7 @@ def packs_agree(packs: list[tuple[Path, dict]]) -> None:
                 raise Refused(f"{path}: the row id `{row['id']}` is {where}; a row id is in one pack, once")
             seen[row["id"]] = path
         for script, why in (pack.get("hooks_not_rules") or {}).items():
-            name = " ".join(script.split())  # the runner splits a hook's command on whitespace
+            name = hook_name(script)
             if reasons.get(name, why) != why:
                 raise Refused(f"{path}: `hooks_not_rules` gives {script} a reason another pack gives differently")
             reasons[name] = why
@@ -462,11 +467,12 @@ def pack_report(registry: Path, packs: list[tuple[Path, dict]]) -> tuple[list[st
                       "nothing written and nothing replayed")
     rows = {r.get("id"): r for r in rules if isinstance(r, dict) and isinstance(r.get("id"), str)}
     held = data.get("hooks_not_rules") if isinstance(data.get("hooks_not_rules"), dict) else {}
+    held = {hook_name(s): why for s, why in held.items() if isinstance(s, str)}
     lines, whole = [], True
     for path, pack in packs:
         missing = [r["id"] for r in pack["rules"] if r["id"] not in rows]
         differ = [r["id"] for r in pack["rules"] if r["id"] in rows and not same(rows[r["id"]], r)]
-        hooks = [s for s, why in (pack.get("hooks_not_rules") or {}).items() if held.get(s) != why]
+        hooks = [s for s, why in (pack.get("hooks_not_rules") or {}).items() if held.get(hook_name(s)) != why]
         if not (missing or differ or hooks):
             lines.append(f"  pack   {pack['pack']}: all {len(pack['rules'])} row(s) are in this registry")
             continue

@@ -1214,6 +1214,27 @@ class Packs(CorrectCase):
             self.assertIn("pack   demo: all 1 row(s) are in this registry", proc.stdout)
             self.assertNotIn("NOT all", proc.stdout)
 
+    def test_a_hook_command_spaced_another_way_is_the_hook_the_registry_holds(self) -> None:
+        """A later copy of a pack respaces a hook's command. The registry holds that hook with
+        that reason, so nothing of the pack is absent, whichever of the two has the extra
+        spaces. A review got exit 3 here: packs were compared with each other on the command's
+        words, and with a registry on its text."""
+        reason = PACK["hooks_not_rules"]["notify.sh"]
+        settings = self.repo / ".claude" / "settings.json"
+        settings.write_text(settings.read_text().replace("/scripts/notify.sh", "/scripts/notify.sh --quiet"))
+        first = dict(PACK, hooks_not_rules={"notify.sh  --quiet": reason})  # two spaces, in the registry
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack(first))).returncode, 0)
+        for spelling in ("notify.sh --quiet", "notify.sh   --quiet"):  # fewer than the registry's, and more
+            with self.subTest(spelling=spelling):
+                again = dict(PACK, hooks_not_rules={spelling: reason})
+                proc = self.run_correct("init", "--pack", str(self.pack(again, "respaced.yaml")))
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn("pack   demo: all 1 row(s) are in this registry", proc.stdout)
+        other = dict(PACK, hooks_not_rules={"notify.sh --quiet": "another reason"})
+        proc = self.run_correct("init", "--pack", str(self.pack(other, "other.yaml")))
+        self.assertEqual(proc.returncode, correct.PACK_NOT_WHOLE, proc.stdout + proc.stderr)
+        self.assertIn("hooks_not_rules missing or with another reason: notify.sh --quiet", proc.stdout)
+
     def test_a_registry_whose_row_differs_from_the_pack_is_reported(self) -> None:
         self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
         row = PACK["rules"][0]

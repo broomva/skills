@@ -99,7 +99,8 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   registration. `--registry FILE` names another registry, read relative to the
   current directory. It also fails when a hard gate or a blocking hook has no row,
   and with `--base REF` when a row was lowered without a recorded reason. Exit 0
-  means every row held; 1 means one did not; 2 means the command could not run
+  means every row held; 1 means the replay did not pass (a row did not hold, or the
+  registry has no rules); 2 means the command could not run
   (no repository, no registry yet, git or PyYAML missing, or a registry whose
   `version:` this copy of the skill does not replay: it replays version 1, and
   refuses a later one instead of passing rows it would only half read).
