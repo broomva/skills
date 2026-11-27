@@ -299,9 +299,14 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
     return sorted(set(out))
 
 
-def write_file(path: Path, content: bytes, executable: bool) -> None:
+def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
     """Whole or not at all: the content goes to a temporary file beside the target, which then
-    replaces it, so an interrupted run never leaves a half-written settings file."""
+    replaces it, so an interrupted run never leaves a half-written settings file.
+
+    With `new`, the target must not exist, and is never replaced: the finished temporary file
+    is linked to the target's name, which the filesystem does in one step and refuses when
+    the name is taken (FileExistsError). There is no other way in: a filesystem that cannot
+    link raises its own error, and the caller writes nothing."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
@@ -314,7 +319,11 @@ def write_file(path: Path, content: bytes, executable: bool) -> None:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
         os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)
-        os.replace(tmp, path)
+        if new:
+            os.link(tmp, path)
+            os.unlink(tmp)
+        else:
+            os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -350,6 +359,12 @@ def replay(root: Path, wrote: bool) -> int:
     return status
 
 
+def on_registry(root: Path) -> int:
+    """init on a registry that is there: replay it, write nothing. The status is the replay's."""
+    need_registry(root, [])
+    return replay(root, wrote=False)
+
+
 def init(root: Path, args: list[str]) -> int:
     unknown = [a for a in args if a not in ("--dry-run", "--force")]
     if unknown:
@@ -367,8 +382,7 @@ def init(root: Path, args: list[str]) -> int:
         # nothing to write, the dry run and the real run are the same run.
         print(f"correct init: {registry.relative_to(root)} exists, so this repository already has a "
               "registry. Nothing written.")
-        need_registry(root, [])
-        return replay(root, wrote=False)
+        return on_registry(root)
 
     try:
         writes, kept, conflicts = plan(root)
@@ -393,8 +407,20 @@ def init(root: Path, args: list[str]) -> int:
     done: list[str] = []
     for path, content, executable in writes:
         try:
-            write_file(path, content, executable)
+            # The registry is created, never replaced. It was not there when this run looked;
+            # if another init has published one since, that one stands, whatever is in it.
+            write_file(path, content, executable, new=path == registry)
+        except FileExistsError:
+            print(f"correct init: another init wrote {registry.relative_to(root)} while this one ran. "
+                  "This run wrote no registry; the one that is there is replayed.", flush=True)
+            return on_registry(root)
         except OSError as exc:
+            if path == registry:
+                raise Refused(f"could not create {path.relative_to(root)} ({exc}). init creates the registry "
+                              "by linking a finished file to its name, so that it never replaces one "
+                              "another init has written, and this filesystem did not allow the link. "
+                              f"No registry was written. Written before it: {', '.join(done) or 'nothing'}."
+                              ) from exc
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
                           "written, so the repository is not set up; fix the cause and run init again."

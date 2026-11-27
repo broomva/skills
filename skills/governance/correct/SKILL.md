@@ -54,7 +54,11 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   `.claude/settings.json` with two-space indentation, keeping every key. The
   registry is the
   last file written, so a run that stops early leaves a repository the next run
-  still sets up. To back out, delete the registry, the four files under
+  still sets up. It is created, never replaced: `init` links a finished file to
+  the registry's name, which the filesystem refuses when the name is taken. Of
+  two `init` runs at once, one writes the registry; the other says that another
+  `init` wrote it, writes none, and replays the one that is there. On a
+  filesystem that cannot link, `init` exits 2 and writes no registry. To back out, delete the registry, the four files under
   `scripts/`, the `PreToolUse` entry that runs `scripts/branch-first-hook.py`,
   and the policy file if `init` wrote it (its output lists the file when it did).
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and

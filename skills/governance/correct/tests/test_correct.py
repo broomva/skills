@@ -12,6 +12,7 @@ would pass all of the others too.
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import io
 import json
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -363,14 +365,61 @@ class Init(CorrectCase):
         writes, _kept, _conflicts = correct.plan(self.repo)
         self.assertEqual(writes[-1][0], self.repo / ".control" / "rules.yaml")
 
+    def test_a_file_written_as_new_is_created_and_never_replaced(self) -> None:
+        """write_file with `new`: a name that is taken is refused, what is there is kept, and no
+        temporary file is left beside it."""
+        target = self.tmp / "out" / "rules.yaml"
+        correct.write_file(target, b"first\n", False, new=True)
+        with self.assertRaises(FileExistsError):
+            correct.write_file(target, b"second\n", False, new=True)
+        self.assertEqual(target.read_bytes(), b"first\n")
+        self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
+
+    def test_an_init_that_loses_the_race_for_the_registry_keeps_the_one_that_is_there(self) -> None:
+        """Two inits at once. Each looked and saw no registry. One publishes it first. The other,
+        when it comes to write, finds the name taken: it writes no registry, says so, and
+        replays the one that is there. Before, it replaced it and both reported success."""
+        real = correct.write_file
+        registry = correct.governance_file(self.repo, "rules.yaml")
+        theirs = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes() + b"# written by the other init\n"
+
+        def lose_the_race(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
+            if path == registry:  # the other init gets there first
+                real(path, theirs, False, new=True)
+            real(path, content, executable, new=new)
+
+        self.addCleanup(setattr, correct, "write_file", real)
+        correct.write_file = lose_the_race
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), unittest.mock.patch.dict(os.environ, self.env):
+            status = correct.init(self.repo, [])
+        self.assertEqual(status, 0, out.getvalue())
+        self.assertIn("another init wrote .control/rules.yaml while this one ran", out.getvalue())
+        self.assertEqual(registry.read_bytes(), theirs)
+        self.assertEqual(sorted(p.name for p in registry.parent.iterdir() if p.name.startswith(".rules")), [])
+
+    def test_where_the_filesystem_cannot_link_no_registry_is_written(self) -> None:
+        """No fallback to replacing: a registry init cannot create safely is not created."""
+        def no_links(_src: str, _dst: object) -> None:
+            raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+
+        self.addCleanup(setattr, correct.os, "link", os.link)
+        correct.os.link = no_links
+        with self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        self.assertIn("could not create .control/rules.yaml", str(caught.exception))
+        self.assertIn("this filesystem did not allow the link", str(caught.exception))
+        self.assertIn("No registry was written", str(caught.exception))
+        self.assertEqual([p.name for p in (self.repo / ".control").iterdir() if "rules" in p.name], [])
+
     def test_a_write_that_fails_midway_leaves_the_repository_not_set_up(self) -> None:
         real, calls = correct.write_file, []
 
-        def failing(path: Path, content: bytes, executable: bool) -> None:
+        def failing(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
             calls.append(path)
             if len(calls) == 3:
                 raise OSError("disk full")
-            real(path, content, executable)
+            real(path, content, executable, new=new)
 
         correct.write_file = failing
         self.addCleanup(setattr, correct, "write_file", real)
