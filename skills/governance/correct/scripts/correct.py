@@ -315,11 +315,24 @@ class NotLinked(NotCreated):
     """The filesystem refused the link that creates the file. The message is its error."""
 
 
-def same_file(a: str, b: Path) -> bool:
+class Unread(NotCreated):
+    """The link answered with an error, and the disk would not say whether it was made. The
+    message is the link's error."""
+
+
+def link_made(tmp: str, path: Path) -> bool | None:
+    """After a link that answered with an error: is `path` the temporary file? Links are not
+    followed. None when the disk does not say."""
     try:
-        return os.path.samefile(a, b)
-    except OSError:
+        there = os.lstat(path)
+    except FileNotFoundError:
         return False
+    except OSError:
+        return None
+    try:
+        return os.path.samestat(os.lstat(tmp), there)
+    except OSError:
+        return None
 
 
 def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
@@ -330,9 +343,9 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
     is linked to the target's name, which the filesystem does in one step and refuses when
     the name is taken (Taken). There is no other way in: a link the filesystem refuses for
     any other reason is NotLinked. The link's own answer can be wrong (link(2), BUGS: an NFS
-    server that made the link and could not say so), so after an error the disk decides: if
-    the target is the temporary file, the link was made. Any error raised here means this
-    call did not write the target.
+    server that made the link and could not say so), so after an error the disk is asked: if
+    the target is the temporary file, the link was made; if it is not, the error stands; if
+    the disk does not say, that is Unread, and nobody claims to know.
 
     A new file's outcome (written, taken, not linked) is settled before its temporary file is
     removed, and a removal that fails does not change it: the name that is left is returned
@@ -354,7 +367,10 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
             try:
                 os.link(tmp, path)
             except OSError as exc:
-                if not same_file(tmp, path):
+                made = link_made(tmp, path)
+                if made is None:
+                    failed = Unread(str(exc))
+                elif not made:
                     failed = Taken(str(path)) if isinstance(exc, FileExistsError) else NotLinked(str(exc))
         else:
             os.replace(tmp, path)
@@ -463,21 +479,22 @@ def init(root: Path, args: list[str]) -> int:
             # The registry is created, never replaced. It was not there when this run looked;
             # if another init has published one since, that one stands, whatever is in it.
             left = write_file(path, content, executable, new=path == target)
-        except Taken as taken:
-            say_left(target.parent.relative_to(root), taken.left)
+        except NotCreated as why:
+            say_left(target.parent.relative_to(root), why.left)
+            name, before = target.relative_to(root), f"Written before it: {', '.join(done) or 'nothing'}."
+            if isinstance(why, Unread):
+                raise Refused(f"the link that creates {name} answered with an error ({why}), and the name "
+                              "could not be read afterwards. Whether this run wrote the registry is not "
+                              f"known. {before} The starter hook and its settings entry are in place.") from why
+            if isinstance(why, NotLinked):
+                raise Refused(f"linking the finished registry to the name {name} failed ({why}). {before} "
+                              "The starter hook and its settings entry are in place.") from why
             if not target.is_file():
-                raise Refused(f"the name {target.relative_to(root)} was taken while this run was writing its "
-                              "files, by something that is not a file. This run wrote no registry."
-                              ) from taken
-            print(f"correct init: the name {target.relative_to(root)} was taken while this run was writing "
-                  "its files (another init, most likely). This run wrote no registry.", flush=True)
+                raise Refused(f"the name {name} was taken while this run was writing its files, by "
+                              f"something that is not a file. {before}") from why
+            print(f"correct init: the name {name} was taken while this run was writing its files (another "
+                  f"init, most likely). What is there is kept. {before}", flush=True)
             return on_registry(root)
-        except NotLinked as refused:
-            say_left(target.parent.relative_to(root), refused.left)
-            raise Refused(f"could not create {target.relative_to(root)}: linking the finished file to that "
-                          f"name failed ({refused}). This run wrote no registry. Written before it: "
-                          f"{', '.join(done) or 'nothing'}. The starter hook and its settings entry are in "
-                          "place.") from refused
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
