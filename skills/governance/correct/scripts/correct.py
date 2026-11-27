@@ -171,7 +171,7 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
     yaml = yaml_module()
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+    except (OSError, ValueError, yaml.YAMLError) as exc:  # ValueError: a date that is no date
         raise Refused(f"{registry} is not readable YAML ({exc})") from exc
     version = data.get("version") if isinstance(data, dict) else None
     if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true
@@ -182,12 +182,20 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
 
 CRASHED = 70
 # A tool is started through these lines so that an error it does not handle can be told from
-# its own exit 1 ("a row did not hold"): a Python traceback ends with 1 as well. A reader that
-# closed the pipe (`check --json | head`) is not such an error, and ends the tool as it did.
+# its own exit 1 ("a row did not hold"): a Python traceback ends with 1 as well, and so does a
+# tool that stops with a message before it replays anything (`raise SystemExit("...")`, as
+# the runner does for a registry it refuses). Both are "could not run". A reader that closed
+# the pipe (`check --json | head`) is not such an error, and ends the tool as it did.
+REFUSED = 71
 RUN_TOOL = f"""import runpy, sys, traceback
 sys.argv = sys.argv[1:]
 try:
     runpy.run_path(sys.argv[0], run_name="__main__")
+except SystemExit as stop:
+    if not isinstance(stop.code, str):
+        raise
+    print(stop.code, file=sys.stderr)
+    sys.exit({REFUSED})
 except BrokenPipeError:
     raise
 except Exception:
@@ -202,6 +210,8 @@ def run_tool(script: str, root: Path, args: list[str]) -> int:
     sys.stderr.flush()
     status = subprocess.run([sys.executable, "-I", "-c", RUN_TOOL, str(HERE / script), *args],
                             env=env, check=False).returncode
+    if status == REFUSED:  # the tool said why, and replayed nothing
+        return 2
     if status == CRASHED:
         # The runner has no schema for a row: a value of the wrong kind stops it where it is read.
         print(f"\ncorrect: {script} stopped on an error it does not handle; the traceback is above. The "
@@ -378,9 +388,10 @@ def packs_agree(packs: list[tuple[Path, dict]]) -> None:
                 raise Refused(f"{path}: the row id `{row['id']}` is {where}; a row id is in one pack, once")
             seen[row["id"]] = path
         for script, why in (pack.get("hooks_not_rules") or {}).items():
-            if reasons.get(script, why) != why:
+            name = " ".join(script.split())  # the runner splits a hook's command on whitespace
+            if reasons.get(name, why) != why:
                 raise Refused(f"{path}: `hooks_not_rules` gives {script} a reason another pack gives differently")
-            reasons[script] = why
+            reasons[name] = why
 
 
 def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
@@ -590,9 +601,13 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
     return sorted(set(out))
 
 
-def write_file(path: Path, content: bytes, executable: bool) -> None:
+def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
     """Whole or not at all: the content goes to a temporary file beside the target, which then
-    replaces it, so an interrupted run never leaves a half-written settings file."""
+    replaces it, so an interrupted run never leaves a half-written settings file.
+
+    With `new`, the target must not exist: the temporary file is linked to its name, which the
+    filesystem does in one step and refuses when the name is taken (FileExistsError). A
+    filesystem that cannot link falls back to replacing, without that guarantee."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
@@ -605,7 +620,17 @@ def write_file(path: Path, content: bytes, executable: bool) -> None:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
         os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)
-        os.replace(tmp, path)
+        if new:
+            try:
+                os.link(tmp, path)
+            except FileExistsError:
+                raise
+            except OSError:
+                os.replace(tmp, path)
+            else:
+                os.unlink(tmp)
+        else:
+            os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -639,6 +664,18 @@ def replay(root: Path, wrote: bool) -> int:
     return status
 
 
+def on_registry(root: Path, registry: Path, packs: list[tuple[Path, dict]]) -> int:
+    """init on a registry that is there: compare it with the packs, replay it, write nothing."""
+    need_registry(root, [])  # first: a registry this skill does not read is compared with no pack
+    whole = True
+    if packs:
+        lines, whole = pack_report(registry, packs)
+        print("\n".join(lines))
+    status = replay(root, wrote=False)
+    # A replay that passes with a pack row absent is not the state the caller asked for.
+    return PACK_NOT_WHOLE if status == 0 and not whole else status
+
+
 def init(root: Path, args: list[str]) -> int:
     pack_files, args = take_packs(args)
     unknown = [a for a in args if a not in ("--dry-run", "--force")]
@@ -662,14 +699,7 @@ def init(root: Path, args: list[str]) -> int:
               "registry. Nothing written."
               + (" A pack is added only to a registry init writes, so --pack changes nothing here."
                  if packs else ""))
-        need_registry(root, [])  # first: a registry this skill does not read is compared with no pack
-        whole = True
-        if packs:
-            lines, whole = pack_report(registry, packs)
-            print("\n".join(lines))
-        status = replay(root, wrote=False)
-        # A replay that passes with a pack row absent is not the state the caller asked for.
-        return PACK_NOT_WHOLE if status == 0 and not whole else status
+        return on_registry(root, registry, packs)
 
     try:
         writes, kept, conflicts = plan(root, packs)
@@ -696,7 +726,14 @@ def init(root: Path, args: list[str]) -> int:
     done: list[str] = []
     for path, content, executable in writes:
         try:
-            write_file(path, content, executable)
+            # The registry is created, never replaced: it was not there when this run looked,
+            # and if another init has written one since, that one stands.
+            write_file(path, content, executable, new=path == registry)
+        except FileExistsError:
+            print(f"correct init: another init wrote {registry.relative_to(root)} while this one ran. "
+                  "This run wrote no registry; the one that is there is compared with the packs "
+                  "given here and replayed.", flush=True)
+            return on_registry(root, registry, packs)
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "

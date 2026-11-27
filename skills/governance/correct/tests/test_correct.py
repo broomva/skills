@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -367,11 +368,11 @@ class Init(CorrectCase):
     def test_a_write_that_fails_midway_leaves_the_repository_not_set_up(self) -> None:
         real, calls = correct.write_file, []
 
-        def failing(path: Path, content: bytes, executable: bool) -> None:
+        def failing(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
             calls.append(path)
             if len(calls) == 3:
                 raise OSError("disk full")
-            real(path, content, executable)
+            real(path, content, executable, new=new)
 
         correct.write_file = failing
         self.addCleanup(setattr, correct, "write_file", real)
@@ -708,8 +709,9 @@ class Packs(CorrectCase):
                      str(self.pack(pack, "target.yaml")))
 
     def test_a_row_the_runner_stops_on_is_reported_as_could_not_run(self) -> None:
-        """init looks at the top level of a row only. Deeper, the runner stops on a value of the
-        wrong kind. That is exit 2 and what to do about it, not exit 1 and a bare traceback."""
+        """init checks a stated list of a row's fields and no others. On a wrong kind of value
+        in any other the runner stops. That is exit 2 and a diagnostic, not exit 1 and a bare
+        traceback, and no repair is prescribed."""
         row = copy.deepcopy(PACK["rules"][0])
         row["proofs"][0]["event"] = "not a mapping"
         proc = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[row]), "deep.yaml")))
@@ -725,13 +727,14 @@ class Packs(CorrectCase):
         self.assertEqual(existing.returncode, 2, existing.stdout + existing.stderr)
         self.assertIn("this is not a failed row", existing.stderr)
         self.assertNotIn("delete the registry", existing.stderr)
-        self.assertNotIn("the FAIL names", existing.stderr)
+        self.assertNotIn("Each FAIL row names", existing.stderr)
         self.assertNotIn("delete the registry", proc.stderr)
 
     def test_only_an_error_the_tool_does_not_handle_is_reported_as_a_stopped_runner(self) -> None:
         """The lines a tool is started through: an unhandled error gets a status of its own; the
         tool's own exit and a reader that closed the pipe end as they did without them."""
         for body, status in (("raise ValueError('a row of the wrong kind')", correct.CRASHED),
+                             ("raise SystemExit('the tool refuses this registry')", correct.REFUSED),
                              ("raise BrokenPipeError()", 1), ("raise SystemExit(3)", 3), ("pass", 0)):
             tool = self.tmp / "tool.py"
             tool.write_text(body + "\n")
@@ -848,6 +851,59 @@ class Packs(CorrectCase):
         other_reason = dict(LATER, hooks_not_rules={"notify.sh": "something else"})
         self.refused("a reason another pack gives differently", "--pack", first,
                      "--pack", str(self.pack(other_reason, "later.yaml")))
+
+    def test_a_registry_the_runner_refuses_is_could_not_run_not_a_failed_row(self) -> None:
+        """The runner stops with a message before it replays anything (a `class_threshold` that is
+        no number). That is exit 2, and init's paragraph about failed rows does not follow it."""
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        registry = correct.governance_file(self.repo, "rules.yaml")
+        registry.write_text(registry.read_text().replace("class_threshold: 2", "class_threshold: high", 1))
+        for command in (("check",), ("init", "--pack", str(self.pack()))):
+            proc = self.run_correct(*command)
+            self.assertEqual(proc.returncode, 2, (command, proc.stdout + proc.stderr))
+            self.assertIn("class_threshold must be a positive integer", proc.stderr)
+            self.assertNotIn("Each FAIL row", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_a_registry_is_created_and_never_replaced(self) -> None:
+        """write_file with `new`: a name that is taken is refused, and what is there is kept."""
+        target = self.tmp / "out" / "rules.yaml"
+        correct.write_file(target, b"first\n", False, new=True)
+        with self.assertRaises(FileExistsError):
+            correct.write_file(target, b"second\n", False, new=True)
+        self.assertEqual(target.read_bytes(), b"first\n")
+        self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
+
+    def test_an_init_that_loses_the_race_for_the_registry_reports_what_it_lacks(self) -> None:
+        """Two inits at once, each with its own pack: one writes the registry. The other finds
+        it there when it comes to write, writes none, and exits 3 with its pack's rows listed
+        as missing. Before, both wrote, both exited 0, and one pack's rows were gone."""
+        first, later = self.pack(), self.pack(LATER, "later.yaml")
+        real = correct.write_file
+        registry = correct.governance_file(self.repo, "rules.yaml")
+
+        def lose_the_race(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
+            if path == registry:  # the other init gets there first, with the other pack
+                real(path, correct.registry_with_packs([(first, correct.load_pack(first))]), False, new=True)
+            real(path, content, executable, new=new)
+
+        self.addCleanup(setattr, correct, "write_file", real)
+        correct.write_file = lose_the_race
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), unittest.mock.patch.dict(os.environ, self.env):
+            status = correct.init(self.repo, ["--pack", str(later)])
+        self.assertEqual(status, correct.PACK_NOT_WHOLE, out.getvalue())
+        self.assertIn("another init wrote", out.getvalue())
+        self.assertIn("row(s) missing: later-gap", out.getvalue())
+        held = [r["id"] for r in yaml.safe_load(registry.read_text())["rules"]]
+        self.assertIn("no-bad", held)
+        self.assertNotIn("later-gap", held)
+
+    def test_two_spellings_of_one_hook_command_are_one_hook(self) -> None:
+        first = dict(PACK, hooks_not_rules={"notify.sh --quiet": "one reason"})
+        other = dict(LATER, hooks_not_rules={"notify.sh  --quiet": "another reason"})
+        self.refused("a reason another pack gives differently", "--pack", str(self.pack(first)),
+                     "--pack", str(self.pack(other, "later.yaml")))
 
     def test_a_row_id_twice_in_one_pack_is_said_as_that(self) -> None:
         twice = dict(LATER, rules=[LATER["rules"][0], dict(LATER["rules"][0], rule="Another.")])

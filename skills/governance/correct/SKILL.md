@@ -65,9 +65,9 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   checks the shape of these fields of each row, and no others: `level`, `enforcer`
   and its `registered`, `target`, `proofs`, `controls`, `known_misses`,
   `covers_hooks`, `hosts`, `occurrences` (a field written and left empty counts as
-  wrong). A wrong kind of value anywhere else in a row is found by the runner
-  stopping on it, after the registry is written: `correct.py` then exits 2 and says
-  that the runner stopped. It prescribes no repair. `init` never rewrites a
+  wrong). A wrong kind of value anywhere else in a row is not looked for. It
+  can stop the runner, or a later command such as `check --markdown`, after the
+  registry is written: `correct.py` then exits 2 and says that the tool stopped. It prescribes no repair. `init` never rewrites a
   registry that exists, so such a row stays in the registry until it is corrected
   there; a registry may hold rows of your own, which deleting it would lose. bstack ships one for the hooks `bstack bootstrap` installs,
   and bootstrap passes it. `init` installs nothing for a pack: it records the rows
