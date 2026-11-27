@@ -51,6 +51,7 @@ passthrough is the one deliberate hole in the wall, it is listed in
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import subprocess
 import sys
@@ -133,6 +134,26 @@ AUTH_PASSTHROUGH: dict[str, tuple[str, ...]] = {
 #: warning. Containment there is proven by :func:`verify_jail`'s ``kg_workspace``
 #: probe, which has no concurrent-writer confound, rather than by this watch.
 DEFAULT_WATCHED_PATHS: tuple[str, ...] = ("~/.config/broomva",)
+
+#: Paths inside the watched stores that a live fleet host writes on its own schedule,
+#: whatever any eval does (BRO-4219). On such a host every run moved them, so
+#: ``--fail-on-real-state-change`` failed every run and could not be used. A change
+#: under one of these globs is reported as background and never counts as a leak.
+#: The list was taken on the Mac on 2026-11-27 by running this watch through an idle
+#: window with no eval running: every path that moved matched one of these globs.
+#:
+#: The cost is a blind spot. A jailed case that escaped into exactly these files would
+#: go uncounted here. That is acceptable because :func:`verify_jail` is the
+#: deterministic containment proof, and the skill stores a leak lands in (``p9``,
+#: ``kg``) stay watched. Add a glob only for a writer that runs outside any eval, and
+#: name that writer.
+BACKGROUND_WRITERS: tuple[tuple[str, str], ...] = (
+    ("~/.config/broomva/fleet/meta/*",
+     "fleet meta loop: census, governor, dispatch gate, loop health, outcomes"),
+    ("~/.config/broomva/role/events.jsonl", "role-x prompt hooks in every agent session"),
+    ("~/.config/broomva/token-ledger/*.json", "per-session token ledger hooks"),
+    ("~/.config/broomva/worktree-reaper/*.log", "worktree reaper launchd job"),
+)
 
 
 def jail_home(workspace: Path) -> Path:
@@ -400,7 +421,14 @@ class RealStateWatch:
     """
 
     paths: tuple[str, ...] = DEFAULT_WATCHED_PATHS
+    #: globs (``fnmatch``: ``*`` also crosses ``/``) whose changes are background
+    background: tuple[str, ...] = tuple(g for g, _ in BACKGROUND_WRITERS)
     before: dict[str, tuple[int, int]] = field(default_factory=dict, init=False)
+    #: every background change any changes() call has seen, as "<kind>: <path>"
+    background_seen: list[str] = field(default_factory=list, init=False)
+
+    def is_background(self, path: str) -> bool:
+        return any(fnmatch.fnmatchcase(path, os.path.expanduser(g)) for g in self.background)
 
     def _expand(self) -> list[Path]:
         return [Path(os.path.expanduser(p)) for p in self.paths]
@@ -420,11 +448,16 @@ class RealStateWatch:
             if was == now:
                 continue
             if was is None:
-                out.append(f"created: {path}")
+                line = f"created: {path}"
             elif now is None:
-                out.append(f"deleted: {path}")
+                line = f"deleted: {path}"
             else:
-                out.append(f"modified: {path}")
+                line = f"modified: {path}"
+            if self.is_background(path):
+                if line not in self.background_seen:
+                    self.background_seen.append(line)
+            else:
+                out.append(line)
         return out
 
 
@@ -437,6 +470,7 @@ def describe_jail(workspace: Path) -> str:
 
 __all__ = [
     "AUTH_PASSTHROUGH",
+    "BACKGROUND_WRITERS",
     "DEFAULT_WATCHED_PATHS",
     "JAIL_DIRNAME",
     "JailVerdict",

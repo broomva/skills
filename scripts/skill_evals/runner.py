@@ -802,6 +802,19 @@ def build_workspace(root: Path, skill_dir: Path, skill_name: str, visibility: Vi
 # ---------------------------------------------------------------------------
 
 
+def note_background(watch: "jail_mod.RealStateWatch | None", meta: dict) -> None:
+    """Record the watched paths that declared host writers moved (BRO-4219): kept in
+    the report as ``real_state_background`` and named in one line, but never counted
+    as a real-state change, so ``--fail-on-real-state-change`` works on a live host."""
+    seen = list(watch.background_seen) if watch is not None else []
+    if not seen or meta.get("real_state_background") == seen:
+        return
+    meta["real_state_background"] = seen
+    print(f"[skill-evals] {len(seen)} watched path(s) moved under declared background "
+          "writers (jail.BACKGROUND_WRITERS: fleet loop, hooks); not counted as a leak.",
+          file=sys.stderr)
+
+
 class Runner(Protocol):
     """The single seam between grading and the outside world."""
 
@@ -2241,6 +2254,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for line in real_state_changes[:8]:
             print(f"[skill-evals]   - {line}", file=sys.stderr)
+    note_background(watch, meta)
 
     # A suite that ERRORs on "Not logged in" is a jail-setup failure wearing the
     # costume of a total trigger failure. Name it, or the next reader concludes the
@@ -2389,6 +2403,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.fail_on_real_state_change and exit_code == EXIT_OK:
                     exit_code = EXIT_BELOW_THRESHOLD
                     state_exit = True
+            note_background(watch, report["meta"])
         if not args.json:
             print(ablation_mod.format_comparison(comparison))
 

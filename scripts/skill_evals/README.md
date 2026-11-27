@@ -273,6 +273,19 @@ indistinguishable from a leak by mtime alone, and a check that fails for unrelat
 reasons gets muted. `--verify-jail` is the deterministic guarantee; the watch is
 there because the ticket's other complaint was that a leak was *invisible*.
 
+On a live fleet host, the fleet loop, the dispatch gate and session hooks write under
+`~/.config/broomva` around the clock. Before BRO-4219, every run on such a host
+reported those writes, so the flag failed every run there. The watch now takes a
+declared list of those writers, `jail.BACKGROUND_WRITERS`: each entry is a glob plus
+the writer it belongs to.
+- A change under one of those globs goes into the report as `real_state_background`,
+  with a one-line note, and is never counted as a leak.
+- Everything else, including the skill stores `p9` and `kg`, still counts.
+
+The list has one blind spot: a case that escaped into exactly those files would not be
+counted. `--verify-jail` covers that, so add a glob only for a writer that runs outside
+any eval, and name the writer.
+
 ### The description hash must be the loader's description
 
 That binding is only as good as the parser behind it. **PyYAML is the reference
