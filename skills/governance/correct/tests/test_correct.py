@@ -794,6 +794,9 @@ class Packs(CorrectCase):
                 ("the key `1` is not a string", "pack: demo\nregistry_version: 1\nrules: [{id: a, 1: x}]\n"),
                 ("`proofs` is not a list of cases", dict(PACK, rules=[dict(row, proofs=None)])),
                 ("`target` is not a mapping", dict(PACK, rules=[dict(row, target=None)])),
+                ("the row `no-bad` cannot be replayed: `occurrences` is not a list", dict(PACK, rules=[dict(row, occurrences=2)])),
+                ("the row `no-bad` cannot be replayed: `hosts` is not a list of host group names",
+                 dict(PACK, rules=[dict(row, hosts="mac")])),
                 ("it is not a mapping", "[]"),
                 ("key(s) a pack does not carry: hosts", dict(PACK, hosts={"mac": ["x"]})),
                 # YAML keys of two types: found as a traceback by a review, not by a test.
@@ -806,6 +809,9 @@ class Packs(CorrectCase):
                 ("`registry_version: 1.0`", dict(PACK, registry_version=1.0)),
                 ("`registry_version: None`", {k: v for k, v in PACK.items() if k != "registry_version"}),
                 ("`rules` is not a list of rows", dict(PACK, rules=[])),
+                ("`rules` is not a list of rows", dict(PACK, rules=[dict(row, id="   ")])),
+                ("`level` is not a word", dict(PACK, rules=[dict(row, level="")])),
+                ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"notify.sh": "   "})),
                 ("`rules` is not a list of rows", dict(PACK, rules={"no-bad": row})),
                 ("`rules` is not a list of rows", dict(PACK, rules=[{k: v for k, v in row.items() if k != "id"}])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules=["notify.sh"])),
@@ -842,6 +848,19 @@ class Packs(CorrectCase):
         other_reason = dict(LATER, hooks_not_rules={"notify.sh": "something else"})
         self.refused("a reason another pack gives differently", "--pack", first,
                      "--pack", str(self.pack(other_reason, "later.yaml")))
+
+    def test_a_row_id_twice_in_one_pack_is_said_as_that(self) -> None:
+        twice = dict(LATER, rules=[LATER["rules"][0], dict(LATER["rules"][0], rule="Another.")])
+        self.refused("the row id `later-gap` is twice in this pack", "--pack", str(self.pack(twice, "twice.yaml")))
+
+    def test_a_registry_of_another_version_is_refused_before_a_pack_is_compared_with_it(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        registry = correct.governance_file(self.repo, "rules.yaml")
+        registry.write_text(registry.read_text().replace("version: 1", "version: 2", 1))
+        proc = self.run_correct("init", "--pack", str(self.pack(LATER, "later.yaml")))
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("this copy of the skill replays version 1", proc.stderr)
+        self.assertNotIn("pack   later", proc.stdout)
 
     def test_two_packs_that_disagree_are_refused_on_a_registry_that_exists_too(self) -> None:
         """There they would be listed as rows that differ, to copy by hand, and copying either
@@ -1087,6 +1106,8 @@ class Wrapper(CorrectCase):
         self.assertIn("not registered", proc.stdout)
         self.assertIn("it repairs nothing either", proc.stderr)
         self.assertNotIn("a `gap` row", proc.stderr)
+        # A registry can hold rows of the workspace's own: nothing here says to delete it.
+        self.assertNotIn("delete the registry", proc.stderr)
 
     def test_canary_runs_the_canary_not_the_runner(self) -> None:
         self.init()

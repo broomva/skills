@@ -319,7 +319,7 @@ def load_pack(path: Path) -> dict:
                       f"registry version {' or '.join(map(str, REGISTRY_VERSIONS))}")
     rules = data.get("rules")
     if not isinstance(rules, list) or not rules or not all(
-            isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"] for r in rules):
+            isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"].strip() for r in rules):
         raise Refused(f"{path}: `rules` is not a list of rows that each have an `id`")
     for row in rules:
         problem = row_shape(row)
@@ -327,18 +327,20 @@ def load_pack(path: Path) -> dict:
             raise Refused(f"{path}: the row `{row['id']}` cannot be replayed: {problem}")
     not_rules = data.get("hooks_not_rules", {})
     if not isinstance(not_rules, dict) or not all(
-            isinstance(k, str) and k.strip() and isinstance(v, str) and v for k, v in not_rules.items()):
+            isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip() for k, v in not_rules.items()):
         raise Refused(f"{path}: `hooks_not_rules` is not a mapping of hook script to the reason it enforces no rule")
     return data
 
 
 def row_shape(row: dict) -> str | None:
-    """What is wrong with the shape of a pack row at its top level, or None: the containers a
-    row is made of. With one of these wrong a row does not fail its replay, it stops the
-    runner, and by then init has written the registry. This is not a schema of the registry
-    and it does not look inside a case: a wrong kind of value deeper in a row still stops the
-    runner, and run_tool then says so. Whether a well-shaped row holds is the replay's to say."""
-    if not isinstance(row.get("level"), str):
+    """What is wrong with the shape of a pack row, or None. The fields checked are the ones
+    below and no others: `level`, `enforcer` and its `registered`, `proofs`, `controls`,
+    `known_misses`, `covers_hooks`, `target`, `hosts`, `occurrences`. With one of these wrong
+    a row does not fail its replay, it stops the runner, and by then init has written the
+    registry. This is not a schema of the registry: a wrong kind of value in any other field,
+    or inside a case, still stops the runner, and run_tool then says so. Whether a
+    well-shaped row holds is the replay's to say."""
+    if not (isinstance(row.get("level"), str) and row["level"].strip()):
         return "`level` is not a word (hook, test, gap ...)"
     # A field that is written and left empty (`proofs:` with nothing after it) is there, and
     # is null: not the mapping or the list it should be. Only a field that is absent passes.
@@ -355,6 +357,10 @@ def row_shape(row: dict) -> str | None:
         return "`covers_hooks` is not a list of hook names"
     if "target" in row and not isinstance(row["target"], dict):
         return "`target` is not a mapping (`level:` and `mechanism:`)"
+    if "hosts" in row and not (isinstance(row["hosts"], list) and all(isinstance(h, str) for h in row["hosts"])):
+        return "`hosts` is not a list of host group names"
+    if "occurrences" in row and not isinstance(row["occurrences"], list):
+        return "`occurrences` is not a list"
     return None
 
 
@@ -368,8 +374,8 @@ def packs_agree(packs: list[tuple[Path, dict]]) -> None:
     for path, pack in packs:
         for row in pack["rules"]:
             if row["id"] in seen:
-                raise Refused(f"{path}: the row id `{row['id']}` is in two packs (the other is {seen[row['id']]}), "
-                              "or twice in one; a row id is in one pack, once. Rename it in one of them")
+                where = "twice in this pack" if seen[row["id"]] == path else f"in two packs (the other is {seen[row['id']]})"
+                raise Refused(f"{path}: the row id `{row['id']}` is {where}; a row id is in one pack, once")
             seen[row["id"]] = path
         for script, why in (pack.get("hooks_not_rules") or {}).items():
             if reasons.get(script, why) != why:
@@ -625,14 +631,11 @@ def replay(root: Path, wrote: bool) -> int:
         print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
               "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
               "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
-              "run `correct.py check` again. Output with no rows means the runner itself stopped.",
-              file=sys.stderr)
+              "run `correct.py check` again.", file=sys.stderr)
     elif status == 1:
         print(f"\ncorrect init: the replay exits {status}; its output is above. init changes nothing in a "
-              "repository that has a registry, so it repairs nothing either. If a row says `not registered` "
-              "or its script is missing, something init installed was removed: restore it from version "
-              "control, or delete the registry and run init again to write the starter files anew. "
-              "Otherwise fix the row or the enforcer the FAIL names.", file=sys.stderr)
+              "repository that has a registry, so it repairs nothing either. Each FAIL row names the rule and "
+              "what did not hold.", file=sys.stderr)
     return status
 
 
@@ -659,11 +662,11 @@ def init(root: Path, args: list[str]) -> int:
               "registry. Nothing written."
               + (" A pack is added only to a registry init writes, so --pack changes nothing here."
                  if packs else ""))
+        need_registry(root, [])  # first: a registry this skill does not read is compared with no pack
         whole = True
         if packs:
             lines, whole = pack_report(registry, packs)
             print("\n".join(lines))
-        need_registry(root, [])
         status = replay(root, wrote=False)
         # A replay that passes with a pack row absent is not the state the caller asked for.
         return PACK_NOT_WHOLE if status == 0 and not whole else status
