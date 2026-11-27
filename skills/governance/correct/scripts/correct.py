@@ -27,7 +27,7 @@ registry of a version this copy does not replay, an unreadable settings file,
 a file init would have to overwrite, a path that leaves the repository). On 2,
 init has written nothing unless it says which files it wrote. A dry run on a
 repository without a registry lists what would be written and is refused
-wherever the real run is refused before it writes; it tries no write, so it
+wherever the real run is refused before it tries a write; it tries none, so it
 cannot say that one will fail, nor whether the replay will pass afterwards. On
 a repository with a registry it is the same run as the real one.
 """
@@ -158,7 +158,7 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
     import yaml  # noqa: PLC0415  (need_yaml ran first)
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+    except (OSError, ValueError, yaml.YAMLError) as exc:  # ValueError: undecodable bytes, or a date that is none
         raise Refused(f"{registry} is not readable YAML ({exc})") from exc
     version = data.get("version") if isinstance(data, dict) else None
     if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true
@@ -315,6 +315,13 @@ class NotLinked(NotCreated):
     """The filesystem refused the link that creates the file. The message is its error."""
 
 
+def same_file(a: str, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
     """Whole or not at all: the content goes to a temporary file beside the target, which then
     replaces it, so an interrupted run never leaves a half-written settings file.
@@ -322,8 +329,10 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
     With `new`, the target must not exist, and is never replaced: the finished temporary file
     is linked to the target's name, which the filesystem does in one step and refuses when
     the name is taken (Taken). There is no other way in: a link the filesystem refuses for
-    any other reason is NotLinked. Any error raised here means this call did not write the
-    target.
+    any other reason is NotLinked. The link's own answer can be wrong (link(2), BUGS: an NFS
+    server that made the link and could not say so), so after an error the disk decides: if
+    the target is the temporary file, the link was made. Any error raised here means this
+    call did not write the target.
 
     A new file's outcome (written, taken, not linked) is settled before its temporary file is
     removed, and a removal that fails does not change it: the name that is left is returned
@@ -344,10 +353,9 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
         if new:
             try:
                 os.link(tmp, path)
-            except FileExistsError:
-                failed = Taken(str(path))
             except OSError as exc:
-                failed = NotLinked(str(exc))
+                if not same_file(tmp, path):
+                    failed = Taken(str(path)) if isinstance(exc, FileExistsError) else NotLinked(str(exc))
         else:
             os.replace(tmp, path)
             return None
@@ -459,8 +467,8 @@ def init(root: Path, args: list[str]) -> int:
             say_left(target.parent.relative_to(root), taken.left)
             if not target.is_file():
                 raise Refused(f"the name {target.relative_to(root)} was taken while this run was writing its "
-                              "files, by something that is not a file. This run wrote no registry, and "
-                              "there is none at that name.") from taken
+                              "files, by something that is not a file. This run wrote no registry."
+                              ) from taken
             print(f"correct init: the name {target.relative_to(root)} was taken while this run was writing "
                   "its files (another init, most likely). This run wrote no registry.", flush=True)
             return on_registry(root)
@@ -469,7 +477,7 @@ def init(root: Path, args: list[str]) -> int:
             raise Refused(f"could not create {target.relative_to(root)}: linking the finished file to that "
                           f"name failed ({refused}). This run wrote no registry. Written before it: "
                           f"{', '.join(done) or 'nothing'}. The starter hook and its settings entry are in "
-                          "place, and there is no registry.") from refused
+                          "place.") from refused
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "

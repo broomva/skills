@@ -383,6 +383,40 @@ class Init(CorrectCase):
         self.assertEqual(target.read_bytes(), b"first\n")
         self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
 
+    @staticmethod
+    def link_then_answer(error: OSError) -> object:
+        """os.link, for a filesystem that makes the link and then answers with an error."""
+        real = os.link
+
+        def link(src: object, dst: object) -> None:
+            real(src, dst)
+            raise error
+        return link
+
+    def test_a_link_that_was_made_counts_as_made_whatever_answer_came_back(self) -> None:
+        """link(2) can report an error for a link it made (an NFS server that could not say so;
+        a retried request that finds its own first attempt). The file is there, and is this
+        call's: that is a file written, not a name taken and not a link refused."""
+        for answer in (OSError(errno.EIO, "Input/output error"), FileExistsError(errno.EEXIST, "File exists")):
+            with self.subTest(answer=type(answer).__name__):
+                target = self.tmp / type(answer).__name__ / "rules.yaml"
+                with unittest.mock.patch.object(correct.os, "link", self.link_then_answer(answer)):
+                    self.assertIsNone(correct.write_file(target, b"mine\n", False, new=True))
+                self.assertEqual(target.read_bytes(), b"mine\n")
+                self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
+
+    def test_a_registry_whose_link_was_made_but_answered_with_an_error_is_written_and_replayed(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.object(correct.os, "link", self.link_then_answer(OSError(errno.EIO, "Input/output error"))), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                unittest.mock.patch.dict(os.environ, self.env):
+            status = correct.init(self.repo, [])
+        self.assertEqual(status, 0, out.getvalue() + err.getvalue())
+        registry = self.repo / ".control" / "rules.yaml"
+        self.assertEqual(registry.read_bytes(), (SKILL / "assets" / "templates" / "rules.yaml").read_bytes())
+        self.assertIn("correct init: done.", out.getvalue())
+        self.assertEqual([p.name for p in registry.parent.iterdir() if p.name.startswith(".rules")], [])
+
     def lose_the_race(self, registry: Path, theirs: bytes, unlink: object = None) -> tuple[int, str, str]:
         """Run init in a repository where another init writes `theirs` at `registry` after this
         one has looked and before it writes its own. `unlink` stands in for os.unlink while
@@ -456,8 +490,7 @@ class Init(CorrectCase):
                         correct.init(repo, [])
                     self.assertEqual(str(caught.exception),
                                      f"the name {folder}/rules.yaml was taken while this run was writing its files, "
-                                     "by something that is not a file. This run wrote no registry, and there is "
-                                     "none at that name.")
+                                     "by something that is not a file. This run wrote no registry.")
                     self.assertNotIn("replay", out.getvalue())
                     self.assertNotIn("was taken", out.getvalue())  # said once, in the refusal
                     self.assertTrue(registry.is_dir() if kind == "folder" else registry.is_symlink())
@@ -557,8 +590,8 @@ class Init(CorrectCase):
                       "([Errno", said)
         self.assertIn("Operation not supported", said)
         self.assertIn("This run wrote no registry. Written before it: scripts/branch-first-hook.py", said)
-        self.assertTrue(said.endswith(" The starter hook and its settings entry are in place, and there is "
-                                      "no registry."), said)  # what happened and what is in place; no steps
+        # What this run did and what is in place; no steps, and no word on what the repository holds.
+        self.assertTrue(said.endswith(" The starter hook and its settings entry are in place."), said)
         self.assertTrue((self.repo / "scripts" / correct.ENFORCER).is_file())
         self.assertIn(correct.ENFORCER, (self.repo / ".claude" / "settings.json").read_text())
         self.assertEqual([p.name for p in (self.repo / ".control").iterdir() if "rules" in p.name], [])
@@ -579,6 +612,25 @@ class Init(CorrectCase):
         self.assertTrue(left[0].startswith(".rules.yaml."))
         self.assertIn(f"correct init: this run could not remove its temporary file .control/{left[0]}.",
                       err.getvalue())
+
+    def test_a_refused_link_says_nothing_about_a_registry_another_init_wrote_meanwhile(self) -> None:
+        """This run's link is refused, and by then another init has written the registry. The
+        refusal is about this run: it does not say the repository has no registry."""
+        registry = self.repo / ".control" / "rules.yaml"
+        theirs = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes() + b"# written by the other init\n"
+
+        def refused(_src: object, _dst: object) -> None:
+            registry.write_bytes(theirs)  # the other init, on a mount that links
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+
+        with unittest.mock.patch.object(correct.os, "link", refused), \
+                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        said = str(caught.exception)
+        self.assertIn("linking the finished file to that name failed ([Errno", said)
+        self.assertIn("This run wrote no registry.", said)
+        self.assertNotIn("there is no registry", said)
+        self.assertEqual(registry.read_bytes(), theirs)
 
     def test_a_registry_write_that_fails_before_the_link_is_an_ordinary_failed_write(self) -> None:
         """A full disk while the registry's temporary file is made is not a refused link, and is
@@ -953,12 +1005,15 @@ class Wrapper(CorrectCase):
 
     def test_a_registry_that_is_not_yaml_is_refused(self) -> None:
         self.init()
-        (self.repo / ".control" / "rules.yaml").write_text("version: 1\nrules: [unclosed\n")
-        for command in ("check", "init"):
-            proc = self.run_correct(command)
-            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
-            self.assertIn("is not readable YAML", proc.stderr)
-            self.assertNotIn("Traceback", proc.stderr)
+        # The second is YAML to the eye, and PyYAML raises ValueError on it (a date that is none), not
+        # its own error. Its message varies with the Python, so only its start is looked for.
+        for text in ("version: 1\nrules: [unclosed\n", "version: 1\nupdated: 2026-02-31\n"):
+            (self.repo / ".control" / "rules.yaml").write_text(text)
+            for command in ("check", "init"):
+                proc = self.run_correct(command)
+                self.assertEqual(proc.returncode, 2, (text, command, proc.stdout + proc.stderr))
+                self.assertIn("is not readable YAML (", proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
 
     def test_a_shortened_registry_option_names_the_registry_that_is_checked(self) -> None:
         self.init()

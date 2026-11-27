@@ -40,7 +40,7 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   refusal names the fix (a branch); `BSTACK_ALLOW_MAIN_EDIT=<reason>` in the
   session's environment is the hook's documented exception. `--dry-run` lists
   what would be written and is refused wherever the real run is refused before
-  it writes; it tries no write, so it cannot say that one will fail (the
+  it tries a write; it tries none, so it cannot say that one will fail (the
   registry, on a filesystem that cannot link), nor whether the replay will pass
   afterwards. It
   never replaces an existing registry: a repository that has one gets nothing
@@ -64,7 +64,7 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   and anything else at that name is refused. A temporary file `init` cannot
   remove is named on stderr. On a filesystem that cannot link, `init` exits 2 at
   that write and says the link failed: the files before it are in place, the
-  hook among them, and there is no registry (BRO-4210).
+  hook among them, and that run wrote no registry (BRO-4210).
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
