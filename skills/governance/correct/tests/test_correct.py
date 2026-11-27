@@ -519,7 +519,7 @@ class Init(CorrectCase):
 
     def test_a_registry_of_another_version_that_takes_the_name_is_kept_and_not_replayed(self) -> None:
         """The loser treats what took the name as any existing registry: one this copy of the
-        skill does not replay is refused (exit 2), byte for byte as it was, and the runner is
+        skill does not replay, by its version, is refused (exit 2), byte for byte as it was, and the runner is
         never started on it."""
         registry = self.repo / ".control" / "rules.yaml"
         starter = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes()
@@ -555,7 +555,7 @@ class Init(CorrectCase):
                             unittest.mock.patch.object(correct, "run_tool", side_effect=AssertionError("replayed")), \
                             self.assertRaises(correct.Refused) as caught:
                         correct.init(repo, [])
-                    self.assertEqual(str(caught.exception), f"what is at {folder}/rules.yaml is not a file.")
+                    self.assertEqual(str(caught.exception), f"there is no file at {folder}/rules.yaml.")
                     self.assertIn(f"correct init: the link that creates {folder}/rules.yaml answered that the name "
                                   "is taken. What is there is kept. Written before it: scripts/branch-first-hook.py, ",
                                   out.getvalue())
@@ -631,16 +631,52 @@ class Init(CorrectCase):
                       err.getvalue())
 
     def test_a_temporary_file_that_is_already_gone_is_not_called_left(self) -> None:
-        target = self.tmp / "out" / "rules.yaml"
-        real = os.unlink
+        """Whatever the link answered: written, taken, or refused."""
+        real_unlink, real_link = os.unlink, os.link
 
         def gone_first(name: object, *args: object, **kwargs: object) -> None:
-            real(name, *args, **kwargs)
-            real(name, *args, **kwargs)  # FileNotFoundError: something else removed it first
+            real_unlink(name, *args, **kwargs)
+            real_unlink(name, *args, **kwargs)  # FileNotFoundError: something else removed it first
 
-        with unittest.mock.patch.object(correct.os, "unlink", gone_first):
-            self.assertIsNone(correct.write_file(target, b"first\n", False, new=True))
-        self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
+        for answer in ("written", "taken", "not linked"):
+            with self.subTest(answer=answer):
+                target = self.tmp / f"gone-{answer.replace(' ', '-')}" / "rules.yaml"
+                target.parent.mkdir()
+                if answer == "taken":
+                    target.write_bytes(b"theirs\n")
+
+                def link(src: object, dst: object) -> None:
+                    if answer == "not linked":
+                        raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+                    real_link(src, dst)
+
+                with unittest.mock.patch.object(correct.os, "unlink", gone_first), \
+                        unittest.mock.patch.object(correct.os, "link", link):
+                    try:
+                        left = correct.write_file(target, b"first\n", False, new=True)
+                    except correct.NotCreated as why:
+                        left = why.left
+                self.assertIsNone(left)
+                self.assertEqual([p.name for p in target.parent.iterdir() if p.name.startswith(".rules")], [])
+
+    def test_the_registry_is_whole_at_the_instant_it_is_linked(self) -> None:
+        """The reason for the link: no reader ever finds the registry short. At the moment the
+        name appears, the file already holds every byte and its final mode. A review found the
+        suite passing with the write moved after the link, when a second init read nothing."""
+        target = self.tmp / "out" / "rules.yaml"
+        content = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes()
+        real, seen = os.link, []
+
+        def link(src: object, dst: object) -> None:
+            real(src, dst)
+            seen.append((Path(dst).read_bytes(), os.stat(dst).st_mode & 0o777))
+
+        umask = os.umask(0o022)
+        self.addCleanup(os.umask, umask)
+        with unittest.mock.patch.object(correct.os, "link", link):
+            self.assertIsNone(correct.write_file(target, content, False, new=True))
+        self.assertEqual(seen, [(content, 0o644)])
+        self.assertEqual((target.read_bytes(), target.stat().st_mode & 0o777), (content, 0o644))
 
     def test_where_the_filesystem_cannot_link_no_registry_is_written(self) -> None:
         """No fallback to replacing: a registry init cannot create safely is not created. The

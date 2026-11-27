@@ -230,6 +230,17 @@ MUTANTS: list[tuple[str, str, str]] = [
      "        except OSError as exc:\n            raise Refused(f\"could not write", "        except ZeroDivisionError as exc:\n            raise Refused(f\"could not write"),
     ("a failed write leaves its temporary file",
      "        if os.path.exists(tmp):\n            os.unlink(tmp)\n        raise\n", "        raise\n"),
+    # The file is finished before its name appears. Linked first and written after, every test
+    # that looks once the call has returned still finds it whole.
+    ("a new file is linked before it is written",
+     "        with os.fdopen(fd, \"wb\") as handle:\n            handle.write(content)\n"
+     "        os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n"
+     "        if new:\n            try:\n                os.link(tmp, path)\n",
+     "        if not new:\n            with os.fdopen(fd, \"wb\") as handle:\n                handle.write(content)\n"
+     "            os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n"
+     "        if new:\n            try:\n                os.link(tmp, path)\n"
+     "                with os.fdopen(fd, \"wb\") as handle:\n                    handle.write(content)\n"
+     "                os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n"),
     # A real in-place write: same content, same mode, no temporary file left. Only a test that
     # looks at WHICH file was written (a second name for the old one) can tell it from a replace.
     ("a file is written in place, not replaced whole",

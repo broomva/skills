@@ -58,10 +58,10 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   last file written, so a run that stops early leaves a repository the next run
   still sets up. It is created, never replaced: `init` links a finished file to
   the registry's name, which the filesystem refuses when the name is taken. Of
-  two `init` runs at once, one writes the registry; the other finds it there,
-  or finds its name taken when it comes to write, and either way keeps the registry
-  that is there: it is checked and replayed like any existing registry, and
-  anything else at that name is refused. A temporary file whose
+  two `init` runs at once that plan the same registry, one writes it; the other
+  finds it there, or finds its name taken when it comes to write, and either way
+  keeps the registry that is there: it is checked and replayed like any existing
+  registry, and a name with no file at it is refused. A temporary file whose
   removal answers with an error is named on stderr (one that is already gone is
   not). On a filesystem that cannot link, `init` exits 2 at
   that write with the link's error: the files before it are in place, the

@@ -337,7 +337,8 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
 
     The answer is settled before the temporary file is removed, and a removal that answers
     with an error does not change it: the temporary name is returned (written) or carried by
-    the exception, for the caller to say. Otherwise the return is None."""
+    the exception, for the caller to say. Otherwise, and when the name is already gone, the
+    return is None."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
@@ -387,8 +388,9 @@ def say_left(folder: Path, left: str | None) -> None:
 def replay(root: Path, wrote: bool, registry: Path | None = None) -> int:
     """Run the runner and say what its status means. With `registry`, the runner is told which
     file to replay; without, it finds the repository's registry itself."""
-    print("\ncorrect init: replaying the registry (correct.py check)\n")
-    status = run_tool("rules_check.py", root, ["--registry", str(registry)] if registry else [])
+    named = ["--registry", str(registry)] if registry else []
+    print(f"\ncorrect init: replaying the registry (correct.py {' '.join(['check', *named])})\n")
+    status = run_tool("rules_check.py", root, named)
     if status == 0 and wrote:
         print("\ncorrect init: done. The starter rule is installed and its proofs and controls replay.\n"
               "  - From now on an edit on main or master in this repository is refused; work on a branch.\n"
@@ -483,9 +485,9 @@ def init(root: Path, args: list[str]) -> int:
             except OSError as unreadable:
                 raise Refused(f"what is at {name} could not be read ({unreadable}).") from why
             if not a_file:
-                raise Refused(f"what is at {name} is not a file.") from why
-            # This file, at this name, from here on: read here and replayed by name, with no second
-            # search for where a registry might be (another governance folder may hold one).
+                raise Refused(f"there is no file at {name}.") from why
+            # This file, at this name, from here on: read here, and the runner is told its name
+            # (another governance folder may hold a registry too).
             replayable(target)
             return replay(root, wrote=False, registry=target)
         except OSError as exc:
