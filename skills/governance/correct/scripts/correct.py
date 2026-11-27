@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import site
+import stat
 import subprocess
 import sys
 import tempfile
@@ -301,38 +302,18 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
 
 
 class NotCreated(Exception):
-    """write_file was asked for a new file and did not create it. `left` is the temporary
-    file's name if it could not be removed, else None."""
+    """write_file was asked for a new file and the link that creates it did not answer yes.
+    `left` is the temporary file's name if it could not be removed, else None."""
 
     left: str | None = None
 
 
 class Taken(NotCreated):
-    """The name is taken. What is there is kept."""
+    """The link answered that the name is taken. What is there is kept."""
 
 
 class NotLinked(NotCreated):
-    """The filesystem refused the link that creates the file. The message is its error."""
-
-
-class Unread(NotCreated):
-    """The link answered with an error, and the disk would not say whether it was made. The
-    message is the link's error."""
-
-
-def link_made(tmp: str, path: Path) -> bool | None:
-    """After a link that answered with an error: is `path` the temporary file? Links are not
-    followed. None when the disk does not say."""
-    try:
-        there = os.lstat(path)
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return None
-    try:
-        return os.path.samestat(os.lstat(tmp), there)
-    except OSError:
-        return None
+    """The link answered with any other error. The message is that error."""
 
 
 def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
@@ -341,15 +322,14 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
 
     With `new`, the target must not exist, and is never replaced: the finished temporary file
     is linked to the target's name, which the filesystem does in one step and refuses when
-    the name is taken (Taken). There is no other way in: a link the filesystem refuses for
-    any other reason is NotLinked. The link's own answer can be wrong (link(2), BUGS: an NFS
-    server that made the link and could not say so), so after an error the disk is asked: if
-    the target is the temporary file, the link was made; if it is not, the error stands; if
-    the disk does not say, that is Unread, and nobody claims to know.
+    the name is taken (Taken). There is no other way in: any other error from the link is
+    NotLinked. The link's answer is taken as given and nothing looks again. link(2) can answer
+    with an error for a link it made (its BUGS section), so NotLinked does not mean the file
+    is not there, and no caller says it does.
 
-    A new file's outcome (written, taken, not linked) is settled before its temporary file is
-    removed, and a removal that fails does not change it: the name that is left is returned
-    (written) or carried by the exception, for the caller to say. Otherwise the return is None."""
+    The answer is settled before the temporary file is removed, and a removal that fails does
+    not change it: the name that is left is returned (written) or carried by the exception,
+    for the caller to say. Otherwise the return is None."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
@@ -366,12 +346,10 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
         if new:
             try:
                 os.link(tmp, path)
+            except FileExistsError:
+                failed = Taken(str(path))
             except OSError as exc:
-                made = link_made(tmp, path)
-                if made is None:
-                    failed = Unread(str(exc))
-                elif not made:
-                    failed = Taken(str(path)) if isinstance(exc, FileExistsError) else NotLinked(str(exc))
+                failed = NotLinked(str(exc))
         else:
             os.replace(tmp, path)
             return None
@@ -482,19 +460,23 @@ def init(root: Path, args: list[str]) -> int:
         except NotCreated as why:
             say_left(target.parent.relative_to(root), why.left)
             name, before = target.relative_to(root), f"Written before it: {', '.join(done) or 'nothing'}."
-            if isinstance(why, Unread):
-                raise Refused(f"the link that creates {name} answered with an error ({why}), and the name "
-                              "could not be read afterwards. Whether this run wrote the registry is not "
-                              f"known. {before} The starter hook and its settings entry are in place.") from why
             if isinstance(why, NotLinked):
-                raise Refused(f"linking the finished registry to the name {name} failed ({why}). {before} "
-                              "The starter hook and its settings entry are in place.") from why
-            if not target.is_file():
-                raise Refused(f"the name {name} was taken while this run was writing its files, by "
-                              f"something that is not a file. {before}") from why
+                raise Refused(f"the link that creates {name} answered with an error ({why}). {before} The "
+                              "starter hook and its settings entry are in place.") from why
             print(f"correct init: the name {name} was taken while this run was writing its files (another "
                   f"init, most likely). What is there is kept. {before}", flush=True)
-            return on_registry(root)
+            try:  # what is there, and whether this copy replays it: one question, and any error is one answer
+                try:
+                    a_file = stat.S_ISREG(os.stat(target).st_mode)
+                except FileNotFoundError:  # a link to nothing
+                    a_file = False
+                if a_file:
+                    need_registry(root, [])
+            except OSError as unreadable:
+                raise Refused(f"what is at {name} could not be read ({unreadable}).") from why
+            if not a_file:
+                raise Refused(f"what is at {name} is not a file.") from why
+            return replay(root, wrote=False)
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
