@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           python3 -I tests/test_correct.py > /tmp/correct.out 2>&1 || { cat /tmp/correct.out; exit 1; }
           grep -E '^(Ran |OK|FAILED)' /tmp/correct.out || true
-          grep -q '^Ran 88 tests' /tmp/correct.out || { echo "expected: Ran 88 tests"; exit 1; }
+          grep -q '^Ran 111 tests' /tmp/correct.out || { echo "expected: Ran 111 tests"; exit 1; }
           grep -q '^OK$' /tmp/correct.out || { echo "expected a bare OK (no skips)"; exit 1; }
 
       - name: Tests — the branch-first hook
@@ -95,4 +95,4 @@ jobs:
           set -euo pipefail
           python3 -I tests/mutate_correct.py > /tmp/mutate.out 2>&1 || { cat /tmp/mutate.out; exit 1; }
           cat /tmp/mutate.out
-          grep -q '^77 killed, 0 survived$' /tmp/mutate.out
+          grep -q '^100 killed, 0 survived$' /tmp/mutate.out

@@ -39,8 +39,10 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   then on an edit on `main` or `master` in that repository is refused, and the
   refusal names the fix (a branch); `BSTACK_ALLOW_MAIN_EDIT=<reason>` in the
   session's environment is the hook's documented exception. `--dry-run` lists
-  what would be written and is refused whenever the real run would be; it
-  cannot say whether the replay will pass afterwards. It
+  what would be written and is refused wherever the real run is refused before
+  it tries a write; it tries none, so it cannot say that one will fail (the
+  registry, on a filesystem that cannot link), nor whether the replay will pass
+  afterwards. It
   never replaces an existing registry: a repository that has one gets nothing
   written and is replayed, with or without `--dry-run`, so an existing registry
   that does not hold still exits 1. It writes nothing when PyYAML is missing; when a file it would write
@@ -54,9 +56,21 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   `.claude/settings.json` with two-space indentation, keeping every key. The
   registry is the
   last file written, so a run that stops early leaves a repository the next run
-  still sets up. To back out, delete the registry, the four files under
-  `scripts/`, the `PreToolUse` entry that runs `scripts/branch-first-hook.py`,
-  and the policy file if `init` wrote it (its output lists the file when it did).
+  still sets up. It is created, never replaced: `init` links a finished file to
+  the registry's name, which the filesystem refuses when the name is taken. Of
+  two `init` runs at once that plan the same registry, one writes it; the other
+  finds it there, or finds its name taken when it comes to write, and either way
+  keeps the registry that is there. One whose name is found taken at the write
+  is checked and replayed like any existing registry, and a name with no
+  regular file at it is refused. A temporary file whose
+  removal answers with an error is named on stderr (one that is already gone is
+  not). On a filesystem that cannot link, `init` exits 2 at
+  that write with the link's error: the files before it are in place, the
+  hook among them (BRO-4210). `init` takes the link's answer as given. A link
+  can answer with an error after it was made. If the answer is that the name is
+  taken, `init` treats its own registry as one that was there, and replays it.
+  For any other error it exits 2 with a complete registry on disk; it does not
+  say whether the registry was written, and the next `init` finds what is there.
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
@@ -89,6 +103,7 @@ lists each one that no row accounts for. That list is the work: a row for each, 
   (BRO-4127), as is a gate that runs from the skill's install path in any
   harness (BRO-4047).
 - An installed copy of this skill can be older than the repository's rows.
+- `init` has no undo: no command reverses what it wrote or replaced (BRO-4212).
 
 Assume every contributor is an agent that sees only the files it opened, copies
 the nearest example, and takes the shortest path that compiles. The codebase is

@@ -12,6 +12,7 @@ would pass all of the others too.
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import io
 import json
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -72,6 +74,13 @@ class CorrectCase(unittest.TestCase):
         proc = self.run_correct("init")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return proc
+
+
+def keep_temporary_names(name: object, *args: object, _real: object = os.unlink, **kwargs: object) -> None:
+    """os.unlink, for a folder where the registry's temporary file cannot be removed."""
+    if os.path.basename(os.fspath(name)).startswith(".rules.yaml."):
+        raise PermissionError(errno.EACCES, "Permission denied")
+    _real(name, *args, **kwargs)
 
 
 class Init(CorrectCase):
@@ -337,6 +346,9 @@ class Init(CorrectCase):
         (self.repo / "scripts" / "governance_paths.py").write_bytes((SKILL / "scripts" / "governance_paths.py").read_bytes())
         proc = self.init()
         self.assertIn("keep   scripts/governance_paths.py (already this version)", proc.stdout)
+        self.assertIn("correct init: done.", proc.stdout)
+        self.assertNotIn("back out", proc.stdout)  # the success text gives no undo steps (BRO-4212)
+        self.assertNotIn("delete the registry", proc.stdout)
 
     def test_a_scripts_directory_that_is_a_symlink_is_refused(self) -> None:
         outside = self.tmp / "outside"
@@ -363,14 +375,553 @@ class Init(CorrectCase):
         writes, _kept, _conflicts = correct.plan(self.repo)
         self.assertEqual(writes[-1][0], self.repo / ".control" / "rules.yaml")
 
+    def test_a_file_written_as_new_is_created_and_never_replaced(self) -> None:
+        """write_file with `new`: a name that is taken is refused, what is there is kept, and no
+        temporary file is left beside it."""
+        target = self.tmp / "out" / "rules.yaml"
+        self.assertIsNone(correct.write_file(target, b"first\n", False, new=True))
+        with self.assertRaises(correct.Taken) as caught:
+            correct.write_file(target, b"second\n", False, new=True)
+        self.assertIsNone(caught.exception.left)
+        self.assertEqual(target.read_bytes(), b"first\n")
+        self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
+
+    def test_a_new_files_name_is_not_looked_at_before_the_link_or_after_it(self) -> None:
+        """Written, taken, or the link refused: write_file asks the filesystem nothing about a
+        new file's name but the link itself. Every stat of that name is counted here, so the
+        test does not depend on which errors a Python's pathlib lets through."""
+        real_stat, real_lstat, real_link = os.stat, os.lstat, os.link
+        for outcome in ("written", "taken", "not linked"):
+            with self.subTest(outcome=outcome):
+                target = self.tmp / outcome.replace(" ", "-") / "rules.yaml"
+                target.parent.mkdir()
+                if outcome == "taken":
+                    target.write_bytes(b"theirs\n")
+                looks: list[str] = []
+
+                def counted(real: object, name: str) -> object:
+                    def look(path: object, *args: object, **kwargs: object) -> os.stat_result:
+                        if isinstance(path, (str, os.PathLike)) and os.fspath(path) == os.fspath(target):
+                            looks.append(name)
+                        return real(path, *args, **kwargs)
+                    return look
+
+                def link(src: object, dst: object) -> None:
+                    if outcome == "not linked":
+                        raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+                    real_link(src, dst)
+
+                with unittest.mock.patch.object(correct.os, "stat", counted(real_stat, "stat")), \
+                        unittest.mock.patch.object(correct.os, "lstat", counted(real_lstat, "lstat")), \
+                        unittest.mock.patch.object(correct.os, "link", link):
+                    try:
+                        correct.write_file(target, b"mine\n", False, new=True)
+                        answer = "written"
+                    except correct.Taken:
+                        answer = "taken"
+                    except correct.NotLinked:
+                        answer = "not linked"
+                self.assertEqual(answer, outcome)
+                self.assertEqual(looks, [])
+
+    @staticmethod
+    def link_then_answer(error: OSError) -> object:
+        """os.link, for a filesystem that makes the link and then answers with an error."""
+        real = os.link
+
+        def link(src: object, dst: object) -> None:
+            real(src, dst)
+            raise error
+        return link
+
+    def test_a_link_that_was_made_and_answers_with_an_error_is_reported_as_that_error(self) -> None:
+        """link(2) can answer with an error for a link it made (its BUGS section: an NFS server
+        that could not say so). write_file takes the answer as given and does not look again:
+        the file is there, the call reports the error, and the temporary file is removed."""
+        target = self.tmp / "out" / "rules.yaml"
+        with unittest.mock.patch.object(correct.os, "link", self.link_then_answer(OSError(errno.EIO, "reply lost"))), \
+                self.assertRaises(correct.NotLinked) as caught:
+            correct.write_file(target, b"mine\n", False, new=True)
+        self.assertIn("reply lost", str(caught.exception))
+        self.assertIsNone(caught.exception.left)
+        self.assertEqual(target.read_bytes(), b"mine\n")
+        self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
+
+    def test_a_registry_whose_link_answers_with_an_error_is_refused_and_nothing_is_said_of_what_was_written(self) -> None:
+        """init reports the link's error and the files it wrote before. It does not say whether
+        the registry was written. Here it was, complete, and the next init finds it."""
+        answered, registry = [], self.repo / ".control" / "rules.yaml"
+        made = self.link_then_answer(OSError(errno.EIO, "reply lost"))
+
+        def link(src: object, dst: object) -> None:
+            answered.append(dst)
+            made(src, dst)
+
+        def no_looking(real: object) -> object:
+            def look(path: object, *args: object, **kwargs: object) -> os.stat_result:
+                if answered and os.fspath(path) == os.fspath(registry):  # the outage that lost the reply goes on
+                    raise OSError(errno.EIO, "the name was looked at after the link answered")
+                return real(path, *args, **kwargs)
+            return look
+
+        with unittest.mock.patch.object(correct.os, "link", link), \
+                unittest.mock.patch.object(correct.os, "stat", no_looking(os.stat)), \
+                unittest.mock.patch.object(correct.os, "lstat", no_looking(os.lstat)), \
+                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        said = str(caught.exception)
+        self.assertIn("the link that creates .control/rules.yaml answered with an error ([Errno", said)
+        self.assertIn("reply lost). A registry may be at that name all the same: this run did not look. "
+                      "Written before it: scripts/branch-first-hook.py, ", said)
+        self.assertNotIn("looked at", said)  # the link's own error, and no look at the name after it
+        self.assertTrue(said.endswith(" The starter hook and its settings entry are in place."), said)
+        for claim in ("no registry", "not written", "wrote", "failed"):
+            self.assertNotIn(claim, said)
+        self.assertEqual(registry.read_bytes(), (SKILL / "assets" / "templates" / "rules.yaml").read_bytes())
+        again = self.run_correct("init")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertIn(".control/rules.yaml exists, so this repository already has a registry", again.stdout)
+
+    def lose_the_race(self, registry: Path, theirs: bytes, unlink: object = None) -> tuple[int, str, str]:
+        """Run init in a repository where another init writes `theirs` at `registry` after this
+        one has looked and before it writes its own. `unlink` stands in for os.unlink while
+        this run (not the other) writes the registry. Returns (status, stdout, stderr)."""
+        real = correct.write_file
+
+        def late(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
+            if path != registry:
+                return real(path, content, executable, new=new)
+            real(path, theirs, False, new=True)  # the other init gets there first
+            with unittest.mock.patch.object(correct.os, "unlink", unlink or os.unlink):
+                return real(path, content, executable, new=new)
+
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.object(correct, "write_file", late), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err), unittest.mock.patch.dict(os.environ, self.env):
+            status = correct.init(self.repo, [])
+        return status, out.getvalue(), err.getvalue()
+
+    def test_an_init_that_loses_the_race_keeps_the_other_registry_and_exits_with_its_replay(self) -> None:
+        """Two inits at once. Each looked and saw no registry. One writes it first. The other,
+        when it comes to write, finds the name taken: it replaces nothing, says so, and
+        replays the one that is there. Here that one does not hold (a gap row with no ticket),
+        so the loser exits 1: its status is the replay's, not a success of its own."""
+        registry = self.repo / ".control" / "rules.yaml"
+        theirs = b"version: 1\nrules:\n- {id: theirs, rule: Theirs., level: gap}\n"
+        status, out, err = self.lose_the_race(registry, theirs)
+        self.assertEqual(status, 1, out + err)
+        self.assertIn("correct init: the link that creates .control/rules.yaml answered that the name is taken. "
+                      "What is there is kept. Written before it: scripts/branch-first-hook.py, ", out)
+        self.assertNotIn("another init", out)  # what the link answered, and no guess at who took the name
+        self.assertEqual(registry.read_bytes(), theirs)
+        self.assertEqual([p.name for p in registry.parent.iterdir() if p.name.startswith(".rules")], [])
+        self.assertNotIn("temporary file", err)
+
+    def test_a_registry_of_another_version_that_takes_the_name_is_kept_and_not_replayed(self) -> None:
+        """The loser treats what took the name as any existing registry: one this copy of the
+        skill does not replay, by its version, is refused (exit 2), byte for byte as it was, and the runner is
+        never started on it."""
+        registry = self.repo / ".control" / "rules.yaml"
+        starter = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes()
+        theirs = starter.replace(b"\nversion: 1\n", b"\nversion: 99\n")
+        self.assertNotEqual(theirs, starter)
+        with unittest.mock.patch.object(correct, "run_tool", side_effect=AssertionError("the runner started")), \
+                self.assertRaises(correct.Refused) as caught:
+            self.lose_the_race(registry, theirs)
+        self.assertIn("this copy of the skill replays version 1", str(caught.exception))
+        self.assertEqual(registry.read_bytes(), theirs)
+
+    def test_a_name_taken_by_something_that_is_not_a_file_is_refused_by_that_name(self) -> None:
+        """A folder, or a link to nothing, at the registry's name is not a registry. The loser
+        says the name was taken and what it wrote, then says what it found, at the name it
+        found it. It starts no replay and gives no advice."""
+        for layout, folder in (("plain", ".control"), ("new", ".broomva")):
+            for kind in ("folder", "dangling link"):
+                with self.subTest(layout=layout, kind=kind):
+                    repo = self.tmp / f"{layout}-{kind.replace(' ', '-')}"
+                    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True, capture_output=True)
+                    if layout == "new":
+                        (repo / ".broomva").mkdir()
+                    registry = repo / folder / "rules.yaml"
+                    real = correct.write_file
+
+                    def late(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
+                        if path == registry:
+                            registry.mkdir() if kind == "folder" else registry.symlink_to(repo / "nowhere")
+                        return real(path, content, executable, new=new)
+
+                    out = io.StringIO()
+                    with unittest.mock.patch.object(correct, "write_file", late), contextlib.redirect_stdout(out), \
+                            unittest.mock.patch.object(correct, "run_tool", side_effect=AssertionError("replayed")), \
+                            self.assertRaises(correct.Refused) as caught:
+                        correct.init(repo, [])
+                    self.assertEqual(str(caught.exception), f"there is no regular file at {folder}/rules.yaml.")
+                    self.assertIn(f"correct init: the link that creates {folder}/rules.yaml answered that the name "
+                                  "is taken. What is there is kept. Written before it: scripts/branch-first-hook.py, ",
+                                  out.getvalue())
+                    self.assertNotIn("replay", out.getvalue())
+                    self.assertTrue(registry.is_dir() if kind == "folder" else registry.is_symlink())
+                    self.assertEqual([p.name for p in registry.parent.iterdir() if p.name.startswith(".rules")], [])
+
+    def test_a_loser_that_cannot_remove_its_temporary_file_still_replays_the_registry_that_is_there(self) -> None:
+        """The name is taken, and then the loser's temporary file cannot be removed. That is
+        still a name that was taken: the loser says what it left and exits with the replay of
+        the registry that is there. A review found the failed removal reported instead, as a
+        registry that was not written, with no replay."""
+        registry = self.repo / ".control" / "rules.yaml"
+        theirs = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes() + b"# written by the other init\n"
+        status, out, err = self.lose_the_race(registry, theirs, unlink=keep_temporary_names)
+        self.assertEqual(status, 0, out + err)
+        self.assertIn("correct init: the link that creates .control/rules.yaml answered that the name is taken", out)
+        self.assertIn("replaying the registry", out)
+        self.assertEqual(registry.read_bytes(), theirs)
+        left = [p.name for p in registry.parent.iterdir() if p.name.startswith(".rules.yaml.")]
+        self.assertEqual(len(left), 1)
+        self.assertIn(f"correct init: removing this run's temporary file .control/{left[0]} answered with an error.", err)
+
+    def test_the_registry_init_creates_is_the_one_its_plan_writes(self) -> None:
+        """With an empty new-style governance folder, init looks for a registry in the old folder
+        (where one would be found) and writes it into the new one. The file created, and never
+        replaced, is the one written. A review found the looked-at path compared instead, and
+        a registry another init had written in the new folder replaced."""
+        (self.repo / ".broomva").mkdir()
+        registry = self.repo / ".broomva" / "rules.yaml"
+        self.assertEqual(correct.plan(self.repo)[0][-1][0], registry)
+        self.assertNotEqual(correct.governance_file(self.repo, "rules.yaml"), registry)
+        theirs = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes() + b"# written by the other init\n"
+        status, out, err = self.lose_the_race(registry, theirs)
+        self.assertEqual(status, 0, out + err)
+        self.assertIn("correct init: the link that creates .broomva/rules.yaml answered that the name is taken", out)
+        self.assertEqual(registry.read_bytes(), theirs)
+        self.assertFalse((self.repo / ".control" / "rules.yaml").exists())
+
+    def test_a_name_taken_anywhere_but_the_registry_is_an_ordinary_failed_write(self) -> None:
+        """Only the registry is created as new. Any other write that stops on "File exists" (a
+        file put where `scripts/` should be, after init planned its writes) is a write that
+        failed, and is not called another init's registry."""
+        real = correct.write_file
+
+        def in_the_way(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
+            if path.name == correct.ENFORCER:
+                raise FileExistsError(errno.EEXIST, "File exists", str(path.parent))
+            return real(path, content, executable, new=new)
+
+        out = io.StringIO()
+        with unittest.mock.patch.object(correct, "write_file", in_the_way), contextlib.redirect_stdout(out), \
+                self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        self.assertIn("could not write scripts/" + correct.ENFORCER, str(caught.exception))
+        self.assertIn("Written before it: nothing", str(caught.exception))
+        self.assertNotIn("answered that the name is taken", out.getvalue())
+
+    def test_a_registry_whose_temporary_name_cannot_be_removed_is_written_and_said(self) -> None:
+        """Once the link is made the registry is there. If the temporary name cannot then be
+        removed, init says the registry is written and names what is left; it does not report
+        a registry that was not written. A review found the opposite message."""
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.object(correct.os, "unlink", keep_temporary_names), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err), unittest.mock.patch.dict(os.environ, self.env):
+            status = correct.init(self.repo, [])
+        self.assertEqual(status, 0, out.getvalue() + err.getvalue())
+        registry = self.repo / ".control" / "rules.yaml"
+        self.assertEqual(registry.read_bytes(), (SKILL / "assets" / "templates" / "rules.yaml").read_bytes())
+        left = [p.name for p in registry.parent.iterdir() if p.name.startswith(".rules.yaml.")]
+        self.assertEqual(len(left), 1)
+        self.assertIn(f"correct init: removing this run's temporary file .control/{left[0]} answered with an error.",
+                      err.getvalue())
+
+    def test_a_temporary_file_that_is_already_gone_is_not_called_left(self) -> None:
+        """Whatever the link answered: written, taken, or refused."""
+        real_unlink, real_link = os.unlink, os.link
+
+        def gone_first(name: object, *args: object, **kwargs: object) -> None:
+            real_unlink(name, *args, **kwargs)
+            real_unlink(name, *args, **kwargs)  # FileNotFoundError: something else removed it first
+
+        for answer in ("written", "taken", "not linked"):
+            with self.subTest(answer=answer):
+                target = self.tmp / f"gone-{answer.replace(' ', '-')}" / "rules.yaml"
+                target.parent.mkdir()
+                if answer == "taken":
+                    target.write_bytes(b"theirs\n")
+
+                def link(src: object, dst: object) -> None:
+                    if answer == "not linked":
+                        raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+                    real_link(src, dst)
+
+                with unittest.mock.patch.object(correct.os, "unlink", gone_first), \
+                        unittest.mock.patch.object(correct.os, "link", link):
+                    try:
+                        left = correct.write_file(target, b"first\n", False, new=True)
+                    except correct.NotCreated as why:
+                        left = why.left
+                self.assertIsNone(left)
+                self.assertEqual([p.name for p in target.parent.iterdir() if p.name.startswith(".rules")], [])
+
+    def test_the_registry_is_whole_at_the_instant_it_is_linked(self) -> None:
+        """The reason for the link: no reader ever finds the registry short. At the moment the
+        name appears, the file already holds every byte and its final mode. A review found the
+        suite passing with the write moved after the link, when a second init read nothing.
+        The template is larger than a write buffer and goes to the file at once; the short
+        content stays in the buffer until the file is closed."""
+        real, seen = os.link, []
+
+        def link(src: object, dst: object) -> None:
+            real(src, dst)
+            seen.append((Path(dst).read_bytes(), os.stat(dst).st_mode & 0o777))
+
+        umask = os.umask(0o022)
+        self.addCleanup(os.umask, umask)
+        for folder, content in (("template", (SKILL / "assets" / "templates" / "rules.yaml").read_bytes()),
+                                ("short", b"version: 1\nrules: []\n")):
+            with self.subTest(content=folder):
+                target = self.tmp / folder / "rules.yaml"
+                seen.clear()
+                with unittest.mock.patch.object(correct.os, "link", link):
+                    self.assertIsNone(correct.write_file(target, content, False, new=True))
+                self.assertEqual(seen, [(content, 0o644)])
+                self.assertEqual((target.read_bytes(), target.stat().st_mode & 0o777), (content, 0o644))
+
+    def test_where_the_filesystem_cannot_link_no_registry_is_written(self) -> None:
+        """No fallback to replacing: a registry init cannot create safely is not created. The
+        refusal carries the link's error, what was written before, and what is in place."""
+        def no_links(_src: str, _dst: object) -> None:
+            raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+
+        self.addCleanup(setattr, correct.os, "link", os.link)
+        correct.os.link = no_links
+        with self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        said = str(caught.exception)
+        self.assertIn("the link that creates .control/rules.yaml answered with an error ([Errno", said)
+        self.assertIn("Operation not supported", said)
+        self.assertIn("this run did not look. Written before it: scripts/branch-first-hook.py", said)
+        # What this run did and what is in place; no steps, and no word on what the repository holds.
+        self.assertTrue(said.endswith(" The starter hook and its settings entry are in place."), said)
+        self.assertTrue((self.repo / "scripts" / correct.ENFORCER).is_file())
+        self.assertIn(correct.ENFORCER, (self.repo / ".claude" / "settings.json").read_text())
+        self.assertEqual([p.name for p in (self.repo / ".control").iterdir() if "rules" in p.name], [])
+
+    def test_a_refused_link_whose_temporary_file_cannot_be_removed_says_both(self) -> None:
+        def no_links(_src: str, _dst: object) -> None:
+            raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+
+        err = io.StringIO()
+        with unittest.mock.patch.object(correct.os, "link", no_links), \
+                unittest.mock.patch.object(correct.os, "unlink", keep_temporary_names), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
+                self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        self.assertIn("the link that creates .control/rules.yaml answered with an error", str(caught.exception))
+        left = [p.name for p in (self.repo / ".control").iterdir() if "rules" in p.name]
+        self.assertEqual(len(left), 1)
+        self.assertTrue(left[0].startswith(".rules.yaml."))
+        self.assertIn(f"correct init: removing this run's temporary file .control/{left[0]} answered with an error.",
+                      err.getvalue())
+
+    def test_a_refused_link_says_nothing_about_a_registry_another_init_wrote_meanwhile(self) -> None:
+        """This run's link is refused, and by then another init has written the registry. The
+        refusal is about this run: it does not say the repository has no registry."""
+        registry = self.repo / ".control" / "rules.yaml"
+        theirs = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes() + b"# written by the other init\n"
+
+        def refused(_src: object, _dst: object) -> None:
+            registry.write_bytes(theirs)  # the other init, on a mount that links
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+
+        with unittest.mock.patch.object(correct.os, "link", refused), \
+                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        said = str(caught.exception)
+        self.assertIn("the link that creates .control/rules.yaml answered with an error ([Errno", said)
+        self.assertNotIn("no registry", said)
+        self.assertEqual(registry.read_bytes(), theirs)
+
+    @unittest.skipIf(os.geteuid() == 0, "a folder with no permissions stops nobody who is root")
+    def test_a_name_taken_by_something_that_cannot_be_read_is_a_refusal_not_a_traceback(self) -> None:
+        """What took the name is a link into a folder this user may not enter, put there while the
+        other files were being written, or at the instant of the link. Either way the link
+        answers that the name is taken; asking what is there then raises, and that is a refusal
+        that carries the error, after the line that lists what was written. One review found a
+        traceback; the next found the first case told as a write that failed, because the name
+        was looked at before the link."""
+        for when in ("before the registry's write begins", "at the link"):
+            with self.subTest(planted=when):
+                tag = when.split()[0]
+                repo, private = self.tmp / f"repo-{tag}", self.tmp / f"private-{tag}"
+                subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True, capture_output=True)
+                private.mkdir()
+                (private / "rules.yaml").write_text("version: 1\nrules: []\n")
+                registry = repo / ".control" / "rules.yaml"
+                real_link, real_write = os.link, correct.write_file
+
+                def plant() -> None:
+                    registry.parent.mkdir(parents=True, exist_ok=True)
+                    os.symlink(private / "rules.yaml", registry)
+                    private.chmod(0)
+
+                def link(src: object, dst: object) -> None:
+                    if when == "at the link":
+                        plant()
+                    real_link(src, dst)  # FileExistsError: the name is the symbolic link's
+
+                def write(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
+                    if when != "at the link" and path == registry:
+                        plant()
+                    return real_write(path, content, executable, new=new)
+
+                self.addCleanup(private.chmod, 0o700)
+                out = io.StringIO()
+                with unittest.mock.patch.object(correct.os, "link", link), \
+                        unittest.mock.patch.object(correct, "write_file", write), contextlib.redirect_stdout(out), \
+                        unittest.mock.patch.object(correct, "run_tool", side_effect=AssertionError("replayed")), \
+                        self.assertRaises(correct.Refused) as caught:
+                    correct.init(repo, [])
+                self.assertIn("what is at .control/rules.yaml could not be read ([Errno", str(caught.exception))
+                self.assertIn("answered that the name is taken. What is there is kept. Written before it: "
+                              "scripts/branch-first-hook.py, ", out.getvalue())
+                self.assertTrue(registry.is_symlink())
+
+    def test_a_registry_that_takes_the_name_and_cannot_then_be_read_is_refused_with_the_error(self) -> None:
+        """The registry another init wrote is a file, and reading it then fails (a stale handle on
+        a network mount). The refusal carries that error, names that file, and no replay starts.
+        The file read is the one at the plan's name: there is no second search for a registry,
+        which on some Pythons answers "there is none" when a lookup fails. A review found that."""
+        for layout, folder in (("plain", ".control"), ("new", ".broomva")):
+            with self.subTest(layout=layout):
+                self.repo = self.tmp / f"stale-{layout}"
+                subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True, capture_output=True)
+                if layout == "new":
+                    (self.repo / ".broomva").mkdir()
+                registry = self.repo / folder / "rules.yaml"
+                theirs = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes() + b"# written by the other init\n"
+                real = Path.read_text
+
+                def stale(path: Path, *args: object, **kwargs: object) -> str:
+                    if path == registry:
+                        raise OSError(errno.ESTALE, "Stale file handle")
+                    return real(path, *args, **kwargs)
+
+                with unittest.mock.patch.object(Path, "read_text", stale), \
+                        unittest.mock.patch.object(correct, "run_tool", side_effect=AssertionError("replayed")), \
+                        self.assertRaises(correct.Refused) as caught:
+                    self.lose_the_race(registry, theirs)
+                said = str(caught.exception)
+                self.assertIn(f"{registry} is not readable YAML ([Errno", said)
+                self.assertIn("Stale file handle", said)
+                self.assertNotIn("there is no registry", said)
+                self.assertEqual(registry.read_bytes(), theirs)
+
+    def test_after_a_collision_the_file_at_the_plans_name_is_the_one_read(self) -> None:
+        """A second search for the registry can answer "there is none" when a lookup fails (some
+        Pythons turn the error into False). init does not search again: it reads the file at the
+        name its link found taken. Here every such search would say the file is not there."""
+        (self.repo / ".broomva").mkdir()
+        registry = self.repo / ".broomva" / "rules.yaml"
+        theirs = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes() + b"# written by the other init\n"
+        exists, is_file = Path.exists, Path.is_file
+
+        def no_such(real: object) -> object:
+            return lambda path, *args, **kwargs: False if path == registry else real(path, *args, **kwargs)
+
+        with unittest.mock.patch.object(Path, "exists", no_such(exists)), \
+                unittest.mock.patch.object(Path, "is_file", no_such(is_file)):
+            status, out, err = self.lose_the_race(registry, theirs)
+        self.assertEqual(status, 0, out + err)
+        self.assertIn("the link that creates .broomva/rules.yaml answered that the name is taken", out)
+        self.assertIn("replaying the registry", out)
+        self.assertEqual(registry.read_bytes(), theirs)
+
+    def test_after_a_collision_the_registry_replayed_is_the_one_at_the_plans_name(self) -> None:
+        """The policy file is in the old folder, so the plan writes the registry there. By the
+        time of the link a registry is at that name, and another is in the new folder (a
+        checkout restoring both). The runner, left to search, would take the new folder's. init
+        tells it which file: the one whose name the link found taken. That one does not hold
+        here and the other does, so the status says which was replayed. A review found the
+        other one replayed, and exit 0."""
+        (self.repo / ".control").mkdir()
+        (self.repo / ".control" / "policy.yaml").write_text(correct.POLICY)
+        registry, other = self.repo / ".control" / "rules.yaml", self.repo / ".broomva" / "rules.yaml"
+        self.assertEqual(correct.plan(self.repo)[0][-1][0], registry)
+        theirs = b"version: 1\nrules:\n- {id: theirs, rule: Theirs., level: gap}\n"
+        real = correct.write_file
+
+        def late(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
+            if path == registry:
+                registry.write_bytes(theirs)
+                other.parent.mkdir()
+                other.write_bytes((SKILL / "assets" / "templates" / "rules.yaml").read_bytes())
+            return real(path, content, executable, new=new)
+
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.object(correct, "write_file", late), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err), unittest.mock.patch.dict(os.environ, self.env):
+            status = correct.init(self.repo, [])
+        self.assertEqual(status, 1, out.getvalue() + err.getvalue())
+        self.assertIn("the link that creates .control/rules.yaml answered that the name is taken", out.getvalue())
+        self.assertIn(f"\ncorrect init: replaying the registry at {registry}\n", out.getvalue())
+        self.assertEqual(registry.read_bytes(), theirs)
+        self.assertEqual(self.run_correct("check", "--registry", str(registry)).returncode, 1)
+        self.assertEqual(self.run_correct("check", "--registry", str(other)).returncode, 0)
+
+    def test_a_link_that_was_made_and_answers_that_the_name_is_taken_is_replayed_as_a_registry_that_was_there(self) -> None:
+        """A retried link request can find its own first attempt and answer "name taken". init
+        takes the answer as given: it says the name was taken, keeps what is there (its own
+        registry), replays it, and exits with the replay's status. SKILL.md says so."""
+        out = io.StringIO()
+        with unittest.mock.patch.object(correct.os, "link", self.link_then_answer(FileExistsError(errno.EEXIST, "File exists"))), \
+                contextlib.redirect_stdout(out), unittest.mock.patch.dict(os.environ, self.env):
+            status = correct.init(self.repo, [])
+        self.assertEqual(status, 0, out.getvalue())
+        self.assertIn("the link that creates .control/rules.yaml answered that the name is taken", out.getvalue())
+        self.assertIn("replaying the registry", out.getvalue())
+        registry = self.repo / ".control" / "rules.yaml"
+        self.assertEqual(registry.read_bytes(), (SKILL / "assets" / "templates" / "rules.yaml").read_bytes())
+        self.assertEqual([p.name for p in registry.parent.iterdir() if p.name.startswith(".rules")], [])
+
+    def test_a_link_at_the_registrys_name_to_the_temporary_file_is_a_name_taken(self) -> None:
+        """A symbolic link at the registry's name takes the name, whatever it points at: here, at
+        this run's own temporary file. The link answers that the name is taken, and it is kept."""
+        target = self.tmp / "out" / "rules.yaml"
+        real = os.link
+
+        def planted(src: object, dst: object) -> None:
+            os.symlink(src, dst)
+            real(src, dst)  # FileExistsError: the name is the symbolic link's
+
+        with unittest.mock.patch.object(correct.os, "link", planted), self.assertRaises(correct.Taken):
+            correct.write_file(target, b"mine\n", False, new=True)
+        self.assertTrue(target.is_symlink())
+
+    def test_a_registry_write_that_fails_before_the_link_is_an_ordinary_failed_write(self) -> None:
+        """A full disk while the registry's temporary file is made is not a refused link, and is
+        not called one: it gets the message any failed write gets."""
+        real = tempfile.mkstemp
+
+        def full(*args: object, **kwargs: object) -> tuple[int, str]:
+            if str(kwargs.get("prefix", "")).startswith(".rules.yaml."):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real(*args, **kwargs)
+
+        with unittest.mock.patch.object(correct.tempfile, "mkstemp", full), \
+                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        said = str(caught.exception)
+        self.assertIn("could not write .control/rules.yaml ([Errno", said)
+        self.assertIn("No space left on device", said)
+        self.assertIn("The registry is written last and was not written", said)
+        self.assertNotIn("the link that creates", said)
+        self.assertEqual([p.name for p in (self.repo / ".control").iterdir() if "rules" in p.name], [])
+
     def test_a_write_that_fails_midway_leaves_the_repository_not_set_up(self) -> None:
         real, calls = correct.write_file, []
 
-        def failing(path: Path, content: bytes, executable: bool) -> None:
+        def failing(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
             calls.append(path)
             if len(calls) == 3:
                 raise OSError("disk full")
-            real(path, content, executable)
+            real(path, content, executable, new=new)
 
         correct.write_file = failing
         self.addCleanup(setattr, correct, "write_file", real)
@@ -764,7 +1315,7 @@ class Wrapper(CorrectCase):
         proc = self.run_correct("init")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("not registered", proc.stdout)
-        self.assertIn("it repairs nothing either", proc.stderr)
+        self.assertIn("so it does not repair one either", proc.stderr)
         self.assertNotIn("a `gap` row", proc.stderr)
 
     def test_canary_runs_the_canary_not_the_runner(self) -> None:
@@ -851,10 +1402,7 @@ class Shipped(unittest.TestCase):
     def test_the_manifest_covers_every_runner_file_init_or_check_uses(self) -> None:
         recorded = set(json.loads(vendored.MANIFEST.read_text())["files"])
         self.assertEqual(recorded, {"rules_check.py", "rules_canary.py", *correct.SCRIPT_FILES})
-        self.assertEqual(len(correct.SCRIPT_FILES), 4)  # SKILL.md says "the four files under scripts/"
-        text = (SKILL / "SKILL.md").read_text()
-        self.assertIn("the four files under\n  `scripts/`", text)
-        self.assertIn("and the policy file if `init` wrote it", text)  # init writes a fifth file when there is none
+        self.assertEqual(len(correct.SCRIPT_FILES), 4)
 
     def test_the_starter_row_and_the_hook_entry_agree(self) -> None:
         data = yaml.safe_load((SKILL / "assets" / "templates" / "rules.yaml").read_text())
