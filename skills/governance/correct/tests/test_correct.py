@@ -1715,10 +1715,28 @@ class Wrapper(CorrectCase):
         proc = self.run_correct("init")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("not registered", proc.stdout)
-        self.assertIn("so it does not repair one either", proc.stderr)
-        self.assertNotIn("a `gap` row", proc.stderr)
-        # A registry can hold rows of the workspace's own: nothing here says to delete it.
-        self.assertNotIn("delete the registry", proc.stderr)
+        # The whole of what init adds, and no more: it names no repair (a registry can hold rows
+        # of the workspace's own, and an earlier text said to delete it) and says nothing of
+        # FAIL rows, of which a replay that exits 1 need not have any.
+        self.assertTrue(proc.stderr.endswith(self.KEPT_AND_FAILED), proc.stderr)
+
+    KEPT_AND_FAILED = ("\ncorrect init: the replay exits 1; its output is above. init does not change a registry "
+                       "that is there, so it does not repair one either.\n")
+
+    def test_a_registry_with_no_rules_exits_1_which_is_the_runners_own_status(self) -> None:
+        """The runner refuses to report a pass over nothing and returns 1, as on main. correct.py
+        passes on a status the runner returns itself (it turns only an unhandled error and a
+        SystemExit with a message into 2), and what init adds is true with no FAIL row."""
+        self.init()
+        registry = correct.governance_file(self.repo, "rules.yaml")
+        registry.write_text("version: 1\nrules: []\n")
+        for command in ("check", "init"):
+            with self.subTest(command=command):
+                proc = self.run_correct(command)
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertIn("the registry has no rules; refusing to report a pass over nothing", proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+        self.assertTrue(proc.stderr.endswith(self.KEPT_AND_FAILED), proc.stderr)
 
     def test_canary_runs_the_canary_not_the_runner(self) -> None:
         self.init()
