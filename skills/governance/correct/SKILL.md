@@ -62,7 +62,8 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   or finds its name taken when it comes to write, and either way keeps the registry
   that is there: it is checked and replayed like any existing registry, and
   anything else at that name is refused. A temporary file whose
-  removal answers with an error is named on stderr. On a filesystem that cannot link, `init` exits 2 at
+  removal answers with an error is named on stderr (one that is already gone is
+  not). On a filesystem that cannot link, `init` exits 2 at
   that write with the link's error: the files before it are in place, the
   hook among them (BRO-4210). `init` takes the link's answer as given. A link
   can answer with an error after it was made. If the answer is that the name is

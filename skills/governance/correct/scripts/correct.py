@@ -166,7 +166,7 @@ def replayable(registry: Path) -> None:
     import yaml  # noqa: PLC0415  (need_yaml ran first)
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError) as exc:  # ValueError: undecodable bytes, or a date that is none
+    except Exception as exc:  # reading, decoding, parsing, and what a constructor raises on a value: all one answer
         raise Refused(f"{registry} is not readable YAML ({exc})") from exc
     version = data.get("version") if isinstance(data, dict) else None
     if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true
@@ -310,7 +310,7 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
 
 class NotCreated(Exception):
     """write_file was asked for a new file and the link that creates it did not answer yes.
-    `left` is the temporary file's name if it could not be removed, else None."""
+    `left` is the temporary file's name if removing it answered with an error, else None."""
 
     left: str | None = None
 

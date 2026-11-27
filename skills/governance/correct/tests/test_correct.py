@@ -386,6 +386,44 @@ class Init(CorrectCase):
         self.assertEqual(target.read_bytes(), b"first\n")
         self.assertEqual([p.name for p in target.parent.iterdir()], ["rules.yaml"])
 
+    def test_a_new_files_name_is_not_looked_at_before_the_link_or_after_it(self) -> None:
+        """Written, taken, or the link refused: write_file asks the filesystem nothing about a
+        new file's name but the link itself. Every stat of that name is counted here, so the
+        test does not depend on which errors a Python's pathlib lets through."""
+        real_stat, real_lstat, real_link = os.stat, os.lstat, os.link
+        for outcome in ("written", "taken", "not linked"):
+            with self.subTest(outcome=outcome):
+                target = self.tmp / outcome.replace(" ", "-") / "rules.yaml"
+                target.parent.mkdir()
+                if outcome == "taken":
+                    target.write_bytes(b"theirs\n")
+                looks: list[str] = []
+
+                def counted(real: object, name: str) -> object:
+                    def look(path: object, *args: object, **kwargs: object) -> os.stat_result:
+                        if isinstance(path, (str, os.PathLike)) and os.fspath(path) == os.fspath(target):
+                            looks.append(name)
+                        return real(path, *args, **kwargs)
+                    return look
+
+                def link(src: object, dst: object) -> None:
+                    if outcome == "not linked":
+                        raise OSError(errno.EOPNOTSUPP, "Operation not supported")
+                    real_link(src, dst)
+
+                with unittest.mock.patch.object(correct.os, "stat", counted(real_stat, "stat")), \
+                        unittest.mock.patch.object(correct.os, "lstat", counted(real_lstat, "lstat")), \
+                        unittest.mock.patch.object(correct.os, "link", link):
+                    try:
+                        correct.write_file(target, b"mine\n", False, new=True)
+                        answer = "written"
+                    except correct.Taken:
+                        answer = "taken"
+                    except correct.NotLinked:
+                        answer = "not linked"
+                self.assertEqual(answer, outcome)
+                self.assertEqual(looks, [])
+
     @staticmethod
     def link_then_answer(error: OSError) -> object:
         """os.link, for a filesystem that makes the link and then answers with an error."""
@@ -1156,9 +1194,10 @@ class Wrapper(CorrectCase):
 
     def test_a_registry_that_is_not_yaml_is_refused(self) -> None:
         self.init()
-        # The second is YAML to the eye, and PyYAML raises ValueError on it (a date that is none), not
-        # its own error. Its message varies with the Python, so only its start is looked for.
-        for text in ("version: 1\nrules: [unclosed\n", "version: 1\nupdated: 2026-02-31\n"):
+        # The second and third are YAML to the eye, and PyYAML raises something other than its own
+        # error on them: ValueError for a date that is none, IndexError for a typed value with
+        # nothing in it. The messages vary with the Python, so only their start is looked for.
+        for text in ("version: 1\nrules: [unclosed\n", "version: 1\nupdated: 2026-02-31\n", "version: !!int\n"):
             (self.repo / ".control" / "rules.yaml").write_text(text)
             for command in ("check", "init"):
                 proc = self.run_correct(command)
