@@ -60,9 +60,10 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
 - **`init --pack FILE`** also adds a pack's rows to the registry it writes. A pack
   is the rows that prove hooks some other tool installed, shipped by that tool
   (`pack`, `registry_version`, `rules`, and `hooks_not_rules` for its hooks that
-  enforce nothing). A row whose top level has the wrong shape (an `enforcer` or a
-  `target` that is not a mapping, cases that are not a list) is refused before
-  anything is written, and so is a key given twice. A wrong kind of value deeper in
+  enforce nothing). A pack is plain data: every key is a string, given once, and
+  written out (a merge key, `<<`, is refused). A row whose top level has the wrong
+  shape (an `enforcer` or a `target` that is not a mapping, cases that are not a
+  list; a field left empty counts) is refused before anything is written. A wrong kind of value deeper in
   a row is not looked for: the runner stops on it, and `correct.py` then exits 2 and
   says that the runner stopped. It prescribes no repair. `init` never rewrites a
   registry that exists, so such a row stays in the registry until it is corrected

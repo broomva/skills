@@ -715,10 +715,29 @@ class Packs(CorrectCase):
         proc = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[row]), "deep.yaml")))
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertIn("rules_check.py stopped on an error it does not handle", proc.stderr)
-        self.assertIn("No row was judged", proc.stderr)
+        self.assertIn("The replay did not finish", proc.stderr)
         again = self.run_correct("check")
         self.assertEqual(again.returncode, 2, again.stdout + again.stderr)
         self.assertIn("this is not a failed row", again.stderr)
+        # init on the registry that now exists: the same report, and no advice about failed
+        # rows or about deleting the registry after it.
+        existing = self.run_correct("init", "--pack", str(self.pack()))
+        self.assertEqual(existing.returncode, 2, existing.stdout + existing.stderr)
+        self.assertIn("this is not a failed row", existing.stderr)
+        self.assertNotIn("delete the registry", existing.stderr)
+        self.assertNotIn("the FAIL names", existing.stderr)
+        self.assertNotIn("delete the registry", proc.stderr)
+
+    def test_only_an_error_the_tool_does_not_handle_is_reported_as_a_stopped_runner(self) -> None:
+        """The lines a tool is started through: an unhandled error gets a status of its own; the
+        tool's own exit and a reader that closed the pipe end as they did without them."""
+        for body, status in (("raise ValueError('a row of the wrong kind')", correct.CRASHED),
+                             ("raise BrokenPipeError()", 1), ("raise SystemExit(3)", 3), ("pass", 0)):
+            tool = self.tmp / "tool.py"
+            tool.write_text(body + "\n")
+            proc = subprocess.run([sys.executable, "-I", "-c", correct.RUN_TOOL, str(tool)],
+                                  capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, status, (body, proc.stderr))
 
     def test_a_row_that_differs_from_the_pack_only_in_the_kind_of_a_value_differs(self) -> None:
         """False and 0 are equal to Python, and are different YAML and different JSON."""
@@ -769,10 +788,16 @@ class Packs(CorrectCase):
         row = PACK["rules"][0]
         for needle, data in (
                 ("is not readable YAML", "rules: [unclosed"),
+                # A date that is no date: PyYAML raises ValueError building it (the words vary by Python).
+                ("pack.yaml is not readable YAML (day", "pack: demo\nregistry_version: 1\nrules: [{id: a, since: 2026-11-31}]\n"),
+                ("a pack does not use merge keys", "pack: demo\nregistry_version: 1\n<<: {rules: [{id: a}]}\n"),
+                ("the key `1` is not a string", "pack: demo\nregistry_version: 1\nrules: [{id: a, 1: x}]\n"),
+                ("`proofs` is not a list of cases", dict(PACK, rules=[dict(row, proofs=None)])),
+                ("`target` is not a mapping", dict(PACK, rules=[dict(row, target=None)])),
                 ("it is not a mapping", "[]"),
                 ("key(s) a pack does not carry: hosts", dict(PACK, hosts={"mac": ["x"]})),
                 # YAML keys of two types: found as a traceback by a review, not by a test.
-                ("key(s) a pack does not carry: 1, foo",
+                ("the key `1` is not a string",
                  "pack: demo\nregistry_version: 1\nrules: [{id: no-bad}]\n1: a\nfoo: b\n"),
                 ("does not name itself", {k: v for k, v in PACK.items() if k != "pack"}),
                 ("is not a plain name", dict(PACK, pack="demo\nhosts: {mac: [x]}")),
@@ -785,7 +810,7 @@ class Packs(CorrectCase):
                 ("`rules` is not a list of rows", dict(PACK, rules=[{k: v for k, v in row.items() if k != "id"}])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules=["notify.sh"])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"": "a reason for no script"})),
-                ("the key `False` is given twice", "pack: demo\nregistry_version: 1\nrules: []\nhooks_not_rules: {0: a, false: b}\n"),
+                ("the key `0` is not a string", "pack: demo\nregistry_version: 1\nrules: []\nhooks_not_rules: {0: a, false: b}\n"),
                 # Shapes the runner reads without looking: written, they stop it with a traceback
                 # and leave a registry that the next init keeps. Found by a review.
                 ("the row `no-bad` cannot be replayed: `enforcer` is not a mapping",

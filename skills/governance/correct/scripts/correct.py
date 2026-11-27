@@ -182,11 +182,14 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
 
 CRASHED = 70
 # A tool is started through these lines so that an error it does not handle can be told from
-# its own exit 1 ("a row did not hold"): a Python traceback ends with 1 as well.
+# its own exit 1 ("a row did not hold"): a Python traceback ends with 1 as well. A reader that
+# closed the pipe (`check --json | head`) is not such an error, and ends the tool as it did.
 RUN_TOOL = f"""import runpy, sys, traceback
 sys.argv = sys.argv[1:]
 try:
     runpy.run_path(sys.argv[0], run_name="__main__")
+except BrokenPipeError:
+    raise
 except Exception:
     traceback.print_exc()
     sys.exit({CRASHED})
@@ -201,8 +204,8 @@ def run_tool(script: str, root: Path, args: list[str]) -> int:
                             env=env, check=False).returncode
     if status == CRASHED:
         # The runner has no schema for a row: a value of the wrong kind stops it where it is read.
-        print(f"\ncorrect: {script} stopped on an error it does not handle; the traceback is above. No "
-              "row was judged: this is not a failed row, and the command could not run (exit 2). The "
+        print(f"\ncorrect: {script} stopped on an error it does not handle; the traceback is above. The "
+              "replay did not finish: this is not a failed row, and the command could not run (exit 2). The "
               "usual cause is a registry row with a value of the wrong kind, a word where a mapping or a "
               "list goes; the last lines of the traceback show the read that failed.", file=sys.stderr)
         return 2
@@ -236,23 +239,30 @@ def take_packs(args: list[str]) -> tuple[list[str], list[str]]:
 
 
 def pack_loader(yaml):  # noqa: ANN001, ANN201 - the lazily imported module, and a class made from it
-    """PyYAML's safe loader with one difference: a key given twice in one mapping is an error.
-    Left alone PyYAML keeps the last and drops the first without a word, and a pack with two
-    `rules:` blocks would lose a block of rows."""
-    class UniqueKeys(yaml.SafeLoader):
+    """PyYAML's safe loader, held to what a pack is: plain data. Every key of every mapping is
+    a string, is given once, and is written out. Left alone PyYAML merges what it is given
+    without a word: of a key given twice it keeps the last (a pack with two `rules:` blocks
+    would lose a block of rows), `0` and `false` are one key to it, and a merge key (`<<`)
+    is dropped where a key of the same name follows."""
+    class PlainKeys(yaml.SafeLoader):
         def construct_mapping(self, node, deep=False):  # noqa: ANN001, ANN202
-            seen: list = []
+            seen: set = set()
             for key_node, _value in (node.value if isinstance(node, yaml.MappingNode) else ()):
+                refuse = None
                 if key_node.tag == "tag:yaml.org,2002:merge":
-                    continue
-                key = self.construct_object(key_node, deep=True)
-                # Equal is the test Python's dict applies: `0` and `false` are one key to it too.
-                if any(key == k for k in seen):
-                    raise yaml.constructor.ConstructorError(
-                        None, None, f"the key `{key}` is given twice in one mapping", key_node.start_mark)
-                seen.append(key)
+                    refuse = "a pack does not use merge keys (`<<`); write the keys out"
+                else:
+                    key = self.construct_object(key_node, deep=True)
+                    if not isinstance(key, str):
+                        refuse = f"the key `{key}` is not a string (quote it if a word was meant)"
+                    elif key in seen:
+                        refuse = f"the key `{key}` is given twice in one mapping"
+                    else:
+                        seen.add(key)
+                if refuse:
+                    raise yaml.constructor.ConstructorError(None, None, refuse, key_node.start_mark)
             return super().construct_mapping(node, deep)
-    return UniqueKeys
+    return PlainKeys
 
 
 def same(a: object, b: object) -> bool:
@@ -288,12 +298,12 @@ def load_pack(path: Path) -> dict:
         raise Refused(f"there is no pack at {path}")
     try:
         data = yaml.load(path.read_text(encoding="utf-8"), Loader=pack_loader(yaml))  # noqa: S506 - a SafeLoader
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+    # ValueError: PyYAML builds a date from `2026-11-31` and Python refuses the day.
+    except (OSError, ValueError, yaml.YAMLError) as exc:
         raise Refused(f"{path} is not readable YAML ({exc})") from exc
     if not isinstance(data, dict):
         raise Refused(f"{path} is not a pack: it is not a mapping")
-    # YAML keys need not be strings (`1: a`), and Python will not order an int against a str.
-    unknown = sorted(str(k) for k in set(data) - PACK_KEYS)
+    unknown = sorted(set(data) - PACK_KEYS)  # every key is a string: the loader refused the rest
     if unknown:
         raise Refused(f"{path} has key(s) a pack does not carry: {', '.join(unknown)} "
                       f"(a pack has {', '.join(sorted(PACK_KEYS))})")
@@ -330,21 +340,20 @@ def row_shape(row: dict) -> str | None:
     runner, and run_tool then says so. Whether a well-shaped row holds is the replay's to say."""
     if not isinstance(row.get("level"), str):
         return "`level` is not a word (hook, test, gap ...)"
+    # A field that is written and left empty (`proofs:` with nothing after it) is there, and
+    # is null: not the mapping or the list it should be. Only a field that is absent passes.
     enforcer = row.get("enforcer")
-    if enforcer is not None and not isinstance(enforcer, dict):
+    if "enforcer" in row and not isinstance(enforcer, dict):
         return "`enforcer` is not a mapping (`path:` and `registered:`)"
-    if isinstance(enforcer, dict) and enforcer.get("registered") is not None \
-            and not isinstance(enforcer["registered"], dict):
+    if isinstance(enforcer, dict) and "registered" in enforcer and not isinstance(enforcer["registered"], dict):
         return "`enforcer.registered` is not a mapping (`event:`, `tools:`, `scope:`)"
     for key in ("proofs", "controls", "known_misses"):
-        cases = row.get(key)
-        if cases is not None and not (isinstance(cases, list) and all(isinstance(c, dict) for c in cases)):
+        if key in row and not (isinstance(row[key], list) and all(isinstance(c, dict) for c in row[key])):
             return f"`{key}` is not a list of cases"
-    hooks = row.get("covers_hooks")
-    if hooks is not None and not (isinstance(hooks, list) and all(isinstance(h, str) for h in hooks)):
+    if "covers_hooks" in row and not (isinstance(row["covers_hooks"], list)
+                                      and all(isinstance(h, str) for h in row["covers_hooks"])):
         return "`covers_hooks` is not a list of hook names"
-    target = row.get("target")
-    if target is not None and not isinstance(target, dict):
+    if "target" in row and not isinstance(row["target"], dict):
         return "`target` is not a mapping (`level:` and `mechanism:`)"
     return None
 
@@ -418,7 +427,7 @@ def pack_report(registry: Path, packs: list[tuple[Path, dict]]) -> tuple[list[st
     yaml = yaml_module()
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+    except (OSError, ValueError, yaml.YAMLError):
         data = None
     rules = data.get("rules") if isinstance(data, dict) else None
     if not isinstance(rules, list):
@@ -610,13 +619,15 @@ def replay(root: Path, wrote: bool) -> int:
               "  - To back out: delete the registry, the four files under scripts/, the PreToolUse entry\n"
               "    that runs scripts/branch-first-hook.py in .claude/settings.json, and the policy file\n"
               "    if init wrote it (it is listed above when it did).")
-    elif status != 0 and wrote:
+    # What follows is about a row that failed (exit 1). A runner that could not run (exit 2) has
+    # said why itself, and init adds nothing to it.
+    elif status == 1 and wrote:
         print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
               "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
               "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
               "run `correct.py check` again. Output with no rows means the runner itself stopped.",
               file=sys.stderr)
-    elif status != 0:
+    elif status == 1:
         print(f"\ncorrect init: the replay exits {status}; its output is above. init changes nothing in a "
               "repository that has a registry, so it repairs nothing either. If a row says `not registered` "
               "or its script is missing, something init installed was removed: restore it from version "
