@@ -299,14 +299,21 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
     return sorted(set(out))
 
 
-def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
+class Taken(Exception):
+    """write_file was asked for a new file and its name is taken. What is there is kept."""
+
+
+def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
     """Whole or not at all: the content goes to a temporary file beside the target, which then
     replaces it, so an interrupted run never leaves a half-written settings file.
 
     With `new`, the target must not exist, and is never replaced: the finished temporary file
     is linked to the target's name, which the filesystem does in one step and refuses when
-    the name is taken (FileExistsError). There is no other way in: a filesystem that cannot
-    link raises its own error, and the caller writes nothing."""
+    the name is taken (Taken). There is no other way in: a filesystem that cannot link
+    raises its own error. Any error raised here means this call did not write the target.
+
+    Returns None. The one exception: a new file that is written, whose temporary name could
+    not then be removed, returns that name. The file is there; the caller says what is left."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
@@ -320,14 +327,22 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
             handle.write(content)
         os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)
         if new:
-            os.link(tmp, path)
-            os.unlink(tmp)
+            try:
+                os.link(tmp, path)
+            except FileExistsError as exc:
+                raise Taken(str(path)) from exc
         else:
             os.replace(tmp, path)
+            return None
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+    try:  # the new file is written; the temporary file is now only a second name for it
+        os.unlink(tmp)
+    except OSError:
+        return tmp
+    return None
 
 
 def replay(root: Path, wrote: bool) -> int:
@@ -351,8 +366,8 @@ def replay(root: Path, wrote: bool) -> int:
               "run `correct.py check` again. Output with no rows means the runner itself stopped.",
               file=sys.stderr)
     elif status != 0:
-        print(f"\ncorrect init: the replay exits {status}; its output is above. init changes nothing in a "
-              "repository that has a registry, so it repairs nothing either. If a row says `not registered` "
+        print(f"\ncorrect init: the replay exits {status}; its output is above. init does not change a "
+              "registry that is there, so it repairs nothing either. If a row says `not registered` "
               "or its script is missing, something init installed was removed: restore it from version "
               "control, or delete the registry and run init again to write the starter files anew. "
               "Otherwise fix the row or the enforcer the FAIL names.", file=sys.stderr)
@@ -405,27 +420,29 @@ def init(root: Path, args: list[str]) -> int:
         print("correct init: dry run, nothing written.")
         return 0
     done: list[str] = []
+    # The registry this run writes is the plan's last write. Its path is the plan's, not the
+    # one looked at above: the look says where a registry would be FOUND, and with an empty
+    # new-style folder that is the old folder, while the plan writes into the new one.
+    target = writes[-1][0]
     for path, content, executable in writes:
         try:
             # The registry is created, never replaced. It was not there when this run looked;
             # if another init has published one since, that one stands, whatever is in it.
-            write_file(path, content, executable, new=path == registry)
-        except FileExistsError:
-            print(f"correct init: another init wrote {registry.relative_to(root)} while this one ran. "
-                  "This run wrote no registry; the one that is there is replayed.", flush=True)
+            left = write_file(path, content, executable, new=path == target)
+        except Taken:
+            print(f"correct init: {target.relative_to(root)} appeared while this run was writing its files "
+                  "(another init, most likely). This run wrote no registry; the one that is there is "
+                  "replayed.", flush=True)
             return on_registry(root)
         except OSError as exc:
-            if path == registry:
-                raise Refused(f"could not create {path.relative_to(root)} ({exc}). init creates the registry "
-                              "by linking a finished file to its name, so that it never replaces one "
-                              "another init has written, and this filesystem did not allow the link. "
-                              f"No registry was written. Written before it: {', '.join(done) or 'nothing'}."
-                              ) from exc
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
                           "written, so the repository is not set up; fix the cause and run init again."
                           ) from exc
         done.append(str(path.relative_to(root)))
+        if left:
+            print(f"correct init: {path.relative_to(root)} is written. Its temporary name, "
+                  f"{Path(left).name}, could not be removed and is still beside it.", file=sys.stderr, flush=True)
     return replay(root, wrote=True)
 
 

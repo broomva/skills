@@ -39,8 +39,10 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   then on an edit on `main` or `master` in that repository is refused, and the
   refusal names the fix (a branch); `BSTACK_ALLOW_MAIN_EDIT=<reason>` in the
   session's environment is the hook's documented exception. `--dry-run` lists
-  what would be written and is refused whenever the real run would be; it
-  cannot say whether the replay will pass afterwards. It
+  what would be written and is refused wherever the real run is refused before
+  it writes; it tries no write, so it cannot say that one will fail (the
+  registry, on a filesystem that cannot link), nor whether the replay will pass
+  afterwards. It
   never replaces an existing registry: a repository that has one gets nothing
   written and is replayed, with or without `--dry-run`, so an existing registry
   that does not hold still exits 1. It writes nothing when PyYAML is missing; when a file it would write
@@ -56,9 +58,12 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   last file written, so a run that stops early leaves a repository the next run
   still sets up. It is created, never replaced: `init` links a finished file to
   the registry's name, which the filesystem refuses when the name is taken. Of
-  two `init` runs at once, one writes the registry; the other says that another
-  `init` wrote it, writes none, and replays the one that is there. On a
-  filesystem that cannot link, `init` exits 2 and writes no registry. To back out, delete the registry, the four files under
+  two `init` runs at once, one writes the registry; the other says that the
+  registry appeared while it ran, writes none, and replays the one that is there. On a
+  filesystem that cannot link, `init` exits 2 at that write: the files before it
+  are in place, the hook among them, and there is no registry, so back out as
+  described below. A temporary name it cannot remove once
+  the registry is written is named on stderr, and the run goes on. To back out, delete the registry, the four files under
   `scripts/`, the `PreToolUse` entry that runs `scripts/branch-first-hook.py`,
   and the policy file if `init` wrote it (its output lists the file when it did).
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
