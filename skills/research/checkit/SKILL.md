@@ -160,14 +160,41 @@ note-taking tools in sequence; it does **not** reimplement them.
        claim `view_file` too.
        **It is not a second witness on acquisition** — `agy` fetches with yt-dlp exactly
        as we do, so it cross-checks frame *interpretation* only.
-     - **Thread / image post** (X/Twitter thread, IG photo post, FB) → text is only
-       half the artifact; **pull the pixels too** — a markdown extractor silently drops
-       the images (the modality gap). Browser-screenshot→Read + in-browser image fetch
-       (WebFetch 402s on x.com; agent-browser/Interceptor loads it, then fetch the
-       CDN-signed `og:image` in-session). Faster reads when you don't need the full
-       reply tree: twitterapi.io or FxTwitter (X, no login), Jina Reader
-       `x-with-generated-alt` (inline VLM image captions). Spec:
-       `research/entities/pattern/full-fidelity-content-ingest.md`.
+     - **Thread / image post / direct social lookup** (X/Twitter, Reddit, HN,
+       public LinkedIn, App Store, IG photo post, FB) → text is only half the
+       artifact; **pull the pixels too** — a markdown extractor silently drops
+       the images (the modality gap). When `rsrc` (`research-sources`) is on
+       PATH, use it as the **zero-login Tier-1 fast-path** before spinning up a
+       browser:
+       - **X:** `rsrc x read|replies <id|status-url|handle-article-url>` (never
+         `/i/article/<id>`, which exits `2`; syndication fallback on `x read`
+         only) and `rsrc x thread <id|status-url>` (bare ID or `/status/<id>`
+         only). Inspect **`raw.media`**, **`raw.article.images`**, and
+         **`raw.quoted.media`** — pass videos to `scripts/video_ingest.py` and
+         download images to `Read` so pixels enter vision. Fall back to
+         `agent-browser` / `interceptor` if FxTwitter leaves unresolved article
+         placeholders such as `[image]` in `text`, or when a signed-in session
+         or full-page visual capture is needed.
+       - **Reddit / HN / YouTube / LinkedIn / App Store:** `rsrc reddit read
+         --backend arctic-shift <url>` (fall back to `interceptor` /
+         `agent-browser` for live search or brand-new posts), `rsrc
+         hn|youtube|appstore search|read`, and `rsrc linkedin read <url>`
+         (read-only). Inspect `meta.sources` on mixed `rsrc check` runs
+         (all-fail exits non-zero), `meta.truncated` on commands with
+         `--max-requests` (`x search`, `x timeline`, `appstore read` — a capped
+         `appstore read` exits `0` with partial reviews and no `warning` when
+         ≥1 review is returned, or `1` with no reviews), and
+         `raw.transcript.status` on `rsrc youtube read` (exits `0` / `ok: true`
+         with `incomplete_metadata` on qualifying `yt-dlp` metadata-run
+         warnings, excluding unknown-codec and caption-fetch warnings; upgrade
+         `yt-dlp` or fall back to `scripts/video_ingest.py`).
+       - **Browser / non-`rsrc` fallback** (IG photo post, FB, logged-in X
+         search, visual layout): browser-screenshot→Read + in-browser image
+         fetch (WebFetch 402s on x.com; agent-browser/Interceptor loads it,
+         then fetch the CDN-signed `og:image` in-session). Alternate no-login
+         readers: twitterapi.io, FxTwitter, or Jina Reader
+         `x-with-generated-alt` (inline VLM image captions). Spec:
+         `research/entities/pattern/full-fidelity-content-ingest.md`.
    **Verify every external URL** — hallucinated links are a
    catastrophic failure. **Provenance honesty:** a `[HIGH]` tag names the
    artifact *actually read* verbatim; a landing-page/search summary is `[MED]` at
