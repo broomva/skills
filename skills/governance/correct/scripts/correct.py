@@ -205,9 +205,10 @@ def run_tool(script: str, root: Path, args: list[str]) -> int:
               "row was judged: this is not a failed row, and the command could not run (exit 2). The "
               "usual cause is a registry row with a value of the wrong kind, a word where a mapping or a "
               "list goes; the last lines of the traceback show the read that failed. Correct the row in "
-              "the registry file. If the row came from a pack, correct the pack too; init does not "
-              "rewrite a registry that exists, so to take the corrected pack delete the registry and run "
-              "init again.", file=sys.stderr)
+              "the registry file. If the row came from a pack, correct the pack too and copy the "
+              "corrected row into the registry by hand: init does not rewrite a registry that exists. "
+              "(Deleting the registry and running init again would also take the corrected pack, and "
+              "would lose every row and edit of your own in it.)", file=sys.stderr)
         return 2
     return status
 
@@ -249,7 +250,8 @@ def pack_loader(yaml):  # noqa: ANN001, ANN201 - the lazily imported module, and
                 if key_node.tag == "tag:yaml.org,2002:merge":
                     continue
                 key = self.construct_object(key_node, deep=True)
-                if any(type(key) is type(k) and key == k for k in seen):
+                # Equal is the test Python's dict applies: `0` and `false` are one key to it too.
+                if any(key == k for k in seen):
                     raise yaml.constructor.ConstructorError(
                         None, None, f"the key `{key}` is given twice in one mapping", key_node.start_mark)
                 seen.append(key)
@@ -319,7 +321,7 @@ def load_pack(path: Path) -> dict:
             raise Refused(f"{path}: the row `{row['id']}` cannot be replayed: {problem}")
     not_rules = data.get("hooks_not_rules", {})
     if not isinstance(not_rules, dict) or not all(
-            isinstance(k, str) and isinstance(v, str) and v for k, v in not_rules.items()):
+            isinstance(k, str) and k.strip() and isinstance(v, str) and v for k, v in not_rules.items()):
         raise Refused(f"{path}: `hooks_not_rules` is not a mapping of hook script to the reason it enforces no rule")
     return data
 
@@ -351,6 +353,25 @@ def row_shape(row: dict) -> str | None:
     return None
 
 
+def packs_agree(packs: list[tuple[Path, dict]]) -> None:
+    """Refused when the packs given cannot all go into one registry: a row id that is in two of
+    them, or twice in one, or a hook two of them give different reasons. Asked before init
+    looks for a registry. On a registry that exists the two rows would otherwise be listed as
+    rows that differ, to be copied by hand, and copying either would make the other differ."""
+    seen: dict[str, Path] = {}
+    reasons: dict[str, str] = {}
+    for path, pack in packs:
+        for row in pack["rules"]:
+            if row["id"] in seen:
+                raise Refused(f"{path}: the row id `{row['id']}` is in two packs (the other is {seen[row['id']]}), "
+                              "or twice in one; a row id is in one pack, once. Rename it in one of them")
+            seen[row["id"]] = path
+        for script, why in (pack.get("hooks_not_rules") or {}).items():
+            if reasons.get(script, why) != why:
+                raise Refused(f"{path}: `hooks_not_rules` gives {script} a reason another pack gives differently")
+            reasons[script] = why
+
+
 def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
     """The starter registry with each pack's rows after its own row. The starter is kept byte
     for byte (its header is the field reference a reader starts from); the packs' rows and
@@ -369,13 +390,9 @@ def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
     for path, pack in packs:
         for row in pack["rules"]:
             if row["id"] in ids:
-                raise Refused(f"{path}: the row id `{row['id']}` is already in the registry (the starter's "
-                              "row or another pack's); rename it in the pack")
-            ids.append(row["id"])
-        for script, why in (pack.get("hooks_not_rules") or {}).items():
-            if not_rules.get(script, why) != why:
-                raise Refused(f"{path}: `hooks_not_rules` gives {script} a reason another pack gives differently")
-            not_rules[script] = why
+                raise Refused(f"{path}: the row id `{row['id']}` is the id of a row of the starter registry; "
+                              "rename it in the pack")
+        not_rules.update(pack.get("hooks_not_rules") or {})
         text += (f"# Rows from the pack `{pack['pack']}` ({path.name}), added by `correct.py init --pack`.\n"
                  + written_out(yaml, pack["rules"]))
     if not_rules:
@@ -623,6 +640,7 @@ def init(root: Path, args: list[str]) -> int:
     need_yaml()  # also on a dry run: it reports what the real run would do, and that run would stop here
     # Read before anything else: a file that is not a pack is refused whether or not a registry exists.
     packs = [(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]
+    packs_agree(packs)
     registry = governance_file(root, "rules.yaml")
     if registry.exists() and not registry.is_file():
         raise Refused(f"{registry.relative_to(root)} exists and is not a regular file; nothing written")

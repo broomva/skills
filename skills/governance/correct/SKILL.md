@@ -64,7 +64,8 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   `target` that is not a mapping, cases that are not a list) is refused before
   anything is written, and so is a key given twice. A wrong kind of value deeper in
   a row is not looked for: the runner stops on it, and `correct.py` then exits 2 and
-  says how to recover. bstack ships one for the hooks `bstack bootstrap` installs,
+  says how to recover (correct the row in the registry; a registry is not deleted
+  lightly, it may hold rows of your own). bstack ships one for the hooks `bstack bootstrap` installs,
   and bootstrap passes it. `init` installs nothing for a pack: it records the rows
   after the starter's and replays them. A file that is not a pack, a row id
   already in the registry, or two packs that disagree are refused with nothing

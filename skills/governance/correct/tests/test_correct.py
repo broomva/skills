@@ -715,7 +715,8 @@ class Packs(CorrectCase):
         proc = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[row]), "deep.yaml")))
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertIn("rules_check.py stopped on an error it does not handle", proc.stderr)
-        self.assertIn("delete the registry and run init again", proc.stderr)
+        self.assertIn("copy the corrected row into the registry by hand", proc.stderr)
+        self.assertIn("would lose every row and edit of your own", proc.stderr)
         again = self.run_correct("check")
         self.assertEqual(again.returncode, 2, again.stdout + again.stderr)
         self.assertIn("this is not a failed row", again.stderr)
@@ -784,6 +785,8 @@ class Packs(CorrectCase):
                 ("`rules` is not a list of rows", dict(PACK, rules={"no-bad": row})),
                 ("`rules` is not a list of rows", dict(PACK, rules=[{k: v for k, v in row.items() if k != "id"}])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules=["notify.sh"])),
+                ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"": "a reason for no script"})),
+                ("the key `False` is given twice", "pack: demo\nregistry_version: 1\nrules: []\nhooks_not_rules: {0: a, false: b}\n"),
                 # Shapes the runner reads without looking: written, they stop it with a traceback
                 # and leave a registry that the next init keeps. Found by a review.
                 ("the row `no-bad` cannot be replayed: `enforcer` is not a mapping",
@@ -798,7 +801,7 @@ class Packs(CorrectCase):
                  dict(PACK, rules=[{k: v for k, v in row.items() if k != "level"}])),
                 ("the row `later-gap` cannot be replayed: `covers_hooks` is not a list of hook names",
                  dict(LATER, rules=[dict(LATER["rules"][0], covers_hooks="notify.sh")])),
-                ("the row id `branch-first` is already in the registry", dict(PACK, rules=[dict(row, id="branch-first")])),
+                ("the row id `branch-first` is the id of a row of the starter registry", dict(PACK, rules=[dict(row, id="branch-first")])),
         ):
             self.refused(needle, "--pack", str(self.pack(data)))
 
@@ -810,7 +813,19 @@ class Packs(CorrectCase):
     def test_two_packs_that_disagree_are_refused(self) -> None:
         first = str(self.pack())
         same_id = dict(LATER, rules=[dict(LATER["rules"][0], id="no-bad")])
-        self.refused("the row id `no-bad` is already in the registry", "--pack", first,
+        self.refused("the row id `no-bad` is in two packs", "--pack", first,
+                     "--pack", str(self.pack(same_id, "later.yaml")))
+        other_reason = dict(LATER, hooks_not_rules={"notify.sh": "something else"})
+        self.refused("a reason another pack gives differently", "--pack", first,
+                     "--pack", str(self.pack(other_reason, "later.yaml")))
+
+    def test_two_packs_that_disagree_are_refused_on_a_registry_that_exists_too(self) -> None:
+        """There they would be listed as rows that differ, to copy by hand, and copying either
+        would make the other differ."""
+        first = str(self.pack())
+        self.assertEqual(self.run_correct("init", "--pack", first).returncode, 0)
+        same_id = dict(LATER, rules=[dict(LATER["rules"][0], id="no-bad")])
+        self.refused("the row id `no-bad` is in two packs", "--pack", first,
                      "--pack", str(self.pack(same_id, "later.yaml")))
         other_reason = dict(LATER, hooks_not_rules={"notify.sh": "something else"})
         self.refused("a reason another pack gives differently", "--pack", first,
