@@ -2,24 +2,25 @@
 name: handoff
 category: orchestration
 description: |
-  Fresh-session handoff doc drafting. Produces a stable, single-file
-  human-readable narrative state for the NEXT agent context (fresh
-  session, after `/clear`, after persist iteration, after a tab close).
-  The artifact lives at `docs/handoffs/YYYY-MM-DD-<arc>.md` and follows
-  a stable shape: TL;DR + State-of-the-world (P15 snapshot) +
-  What-was-delivered (PR table with SHAs) + First action + Pickup state.
-  Distinct from P12 persist's `PROMPT.md` (machine-state for
-  cross-context loop) and the P1 Bridge session log (raw transcript) —
-  the handoff is the narrative bridge a human reads in ten seconds and
-  a fresh agent reads in thirty.
-  Use when: (1) ending a substantive session that another agent will
-  continue, (2) preparing a fresh-session pickup point mid-arc,
-  (3) needing to compress a multi-PR arc into a single resumable
-  document, (4) the user says "write a handoff" / "fresh-session
-  handoff" / "let me come back to this tomorrow".
-  Triggers on "handoff", "fresh-session", "fresh session", "pickup",
-  "where we are", "leave off", "for the next session", "resume tomorrow",
-  "stage continuation", "for the next agent".
+  Write a handoff file so a fresh session can pick the work up cold. Use when
+  the user is stopping or switching context and wants where things stand
+  written down for next time: closing the tab, logging off, parking it until
+  tomorrow or Monday, moving to a clean context because this one is long or
+  slow, or passing the arc to another agent or "whoever picks this up next".
+  Symptoms: "leave me a file I can open next time", "write down where we are
+  so I can continue in a new session", "something I can read cold and carry
+  on from", "/handoff". "Create a /handoff" or "do a /handoff" means run
+  this skill now, not design a /handoff command. Writes `docs/handoffs/YYYY-MM-DD-<arc>.md`: TL;DR,
+  state of the world (P15 snapshot), what was delivered (PRs with SHAs),
+  what is half done, the first action, and pickup state, readable in thirty
+  seconds. Distinct from P12 persist's `PROMPT.md` (machine state for a loop)
+  and the P1 Bridge session log (raw transcript).
+  NOT for: a status summary while the user stays in this session, a PR body,
+  a commit message, a weekly note for a manager, a code comment, or a
+  question about where code resumes after an error.
+  Triggers on "handoff", "fresh session", "clean context", "new session",
+  "pickup", "where we left off", "for the next session", "resume tomorrow",
+  "for the next agent", "open it cold".
 ---
 
 # handoff — Fresh-session handoff doc skill
@@ -125,7 +126,7 @@ or file path. NO ambiguity. NO "consider X or Y" — pick one.>
 - Prior handoff: `docs/handoffs/<earlier>.md`
 ```
 
-## The five anti-patterns this skill exists to prevent
+## The six anti-patterns this skill exists to prevent
 
 | Anti-pattern | Failure mode | Fix |
 |---|---|---|
@@ -134,6 +135,7 @@ or file path. NO ambiguity. NO "consider X or Y" — pick one.>
 | **PR table without SHAs** | Fresh agent can't reproduce the substrate state; doesn't know whether a PR landed or just opened. | Always cite the merge SHA next to each delivered PR. |
 | **Lessons buried in prose** | Lessons silently lost because no skim-reader will find them in paragraph 8. | Pull lessons into a labeled section OR link to a separate `<arc>-lessons.md`. |
 | **Aspirational scope** | "Next we should also do A, B, C, D, E …" with no priority. Fresh agent thrashes. | List ONLY the next 1–3 actions. Defer A, B, C, D, E to Linear backlog or a separate planning doc. |
+| **A question instead of a file** | The user is leaving. Asking "what should I put in it?" stalls the handoff until they come back, and the next context opens nothing. | Write the file now from what this session holds. Mark what you do not know as `unknown` in the state section, and make confirming it the first action. A thin handoff on disk beats a complete one that was never written. |
 
 ## File placement
 
