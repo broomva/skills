@@ -713,7 +713,7 @@ Used outside the PR flow — e.g., when investigating a class of issues across a
 | Primitive | Composition role |
 |---|---|
 | **P4** PR Pipeline | P20 fires *before* P4 auto-merge — verdict + reasoning are part of the PR artifact |
-| **P7** CI Watcher (`broomva/p9`) | After P20 passes + PR is pushed, P7 watches CI; the two gates are sequential (P20 quality → P7 CI green) |
+| **P9** Wait (`broomva/p9`) | After P20 passes + PR is pushed, P9 watches CI; the two gates are sequential (P20 quality → P9 CI green) |
 | **P11** Empirical Feedback | Different dimension: P11 is "does it run" (interaction); P20 is "is it well-built" (review). Both fire pre-merge; both are mandatory for substantive work |
 | **P17** Lens-Routed Articulation | P17 lenses become P20 evaluator stances (security lens → security audit, frontend lens → UI critique, etc.) |
 | **P18** Format-Follows-Audience | P20 verdict is *agent-readable* (machine-parseable rubric output) AND *human-readable* (the PR comment); markdown is correct |
