@@ -467,12 +467,15 @@ def pack_report(registry: Path, packs: list[tuple[Path, dict]]) -> tuple[list[st
                       "nothing written and nothing replayed")
     rows = {r.get("id"): r for r in rules if isinstance(r, dict) and isinstance(r.get("id"), str)}
     held = data.get("hooks_not_rules") if isinstance(data.get("hooks_not_rules"), dict) else {}
-    held = {hook_name(s): why for s, why in held.items() if isinstance(s, str)}
+    # Every (command, reason) the registry gives, the command by its words. A list of pairs, not
+    # a mapping: a registry edited by hand can hold one command under two spellings with two
+    # reasons, and a mapping would keep whichever came last.
+    held = [(hook_name(s), why) for s, why in held.items() if isinstance(s, str)]
     lines, whole = [], True
     for path, pack in packs:
         missing = [r["id"] for r in pack["rules"] if r["id"] not in rows]
         differ = [r["id"] for r in pack["rules"] if r["id"] in rows and not same(rows[r["id"]], r)]
-        hooks = [s for s, why in (pack.get("hooks_not_rules") or {}).items() if held.get(hook_name(s)) != why]
+        hooks = [s for s, why in (pack.get("hooks_not_rules") or {}).items() if (hook_name(s), why) not in held]
         if not (missing or differ or hooks):
             lines.append(f"  pack   {pack['pack']}: all {len(pack['rules'])} row(s) are in this registry")
             continue
