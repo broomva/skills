@@ -307,15 +307,24 @@ def written_out(yaml, data: object) -> str:  # noqa: ANN001
     return yaml.dump(data, Dumper=Plain, sort_keys=False, width=110, allow_unicode=True)
 
 
+def pack_path(given: str) -> Path:
+    """Where a --pack argument points. `~user` with no such user is not a path (RuntimeError)."""
+    try:
+        return Path(given).expanduser().absolute()
+    except (OSError, RuntimeError) as exc:
+        raise Refused(f"--pack {given} is not a path this run can read ({exc})") from exc
+
+
 def load_pack(path: Path) -> dict:
     """A pack file, checked. A pack is data another tool ships for the hooks IT installs:
     {pack: name, registry_version: N, rules: [rows], hooks_not_rules: {script: why}}. Anything
     else in the file is refused, because a key init does not carry over (hosts, retired ...)
     would be dropped without a word."""
     yaml = yaml_module()
-    if not path.is_file():
-        raise Refused(f"there is no pack at {path}")
     try:
+        # Inside the guard: on Python 3.12 the look itself raises for a folder that cannot be entered.
+        if not path.is_file():
+            raise Refused(f"there is no pack at {path}")
         data = yaml.load(path.read_text(encoding="utf-8"), Loader=pack_loader(yaml))  # noqa: S506 - a SafeLoader
     # ValueError: PyYAML builds a date from `2026-11-31` and Python refuses the day.
     except (OSError, ValueError, yaml.YAMLError) as exc:
@@ -746,7 +755,7 @@ def init(root: Path, args: list[str]) -> int:
         raise Refused(f"{root} is not the top of a git checkout; run init at the repository root")
     need_yaml()  # also on a dry run: it reports what the real run would do, and that run would stop here
     # Read before anything else: a file that is not a pack is refused whether or not a registry exists.
-    packs = [(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]
+    packs = [(path, load_pack(path)) for path in map(pack_path, pack_files)]
     packs_agree(packs)
     registry = governance_file(root, "rules.yaml")
     if registry.exists() and not registry.is_file():

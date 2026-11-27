@@ -1428,6 +1428,8 @@ class Packs(CorrectCase):
                  dict(PACK, rules=[dict(row, enforcer=dict(row["enforcer"], registered="PreToolUse"))])),
                 ("the row `no-bad` cannot be replayed: `proofs` is not a list of cases",
                  dict(PACK, rules=[dict(row, proofs={"from": "x"})])),
+                ("the row `no-bad` cannot be replayed: `known_misses` is not a list of cases",
+                 dict(PACK, rules=[dict(row, known_misses=["ticket pending"])])),
                 ("the row `no-bad` cannot be replayed: `controls` is not a list of cases",
                  dict(PACK, rules=[dict(row, controls=["git status"])])),
                 ("the row `no-bad` cannot be replayed: `level` is not a word",
@@ -1442,6 +1444,28 @@ class Packs(CorrectCase):
         self.refused("there is no pack at", "--pack", str(self.tmp / "absent.yaml"))
         self.refused("--pack needs a file", "--pack")
         self.refused("--pack needs a file", "--pack=")
+        # `~user` for a user this machine does not have: expanding it raises, before any file is looked for.
+        self.refused("is not a path this run can read", "--pack", "~no-such-user-bro4147/pack.yaml")
+
+    def test_a_pack_in_a_folder_that_cannot_be_entered_is_refused_not_a_traceback(self) -> None:
+        """Looking for the file can itself fail. A review got a traceback and exit 1 on Python
+        3.12, where the look raises; on later versions it answers that no file is there. Either
+        way: exit 2, the pack named, nothing written."""
+        if os.geteuid() == 0:
+            self.skipTest("root enters any folder")
+        locked = self.tmp / "locked"
+        locked.mkdir()
+        pack = self.pack(name="pack.yaml")
+        inside = locked / "pack.yaml"
+        inside.write_bytes(pack.read_bytes())
+        locked.chmod(0o000)
+        self.addCleanup(locked.chmod, 0o700)
+        before = tree(self.repo)
+        proc = self.run_correct("init", "--pack", str(inside))
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertIn(str(inside), proc.stderr)
+        self.assertEqual(tree(self.repo), before)
 
     def test_two_packs_that_disagree_are_refused(self) -> None:
         first = str(self.pack())

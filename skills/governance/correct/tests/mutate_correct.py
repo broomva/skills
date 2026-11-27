@@ -286,7 +286,11 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("a pack is recorded in the output and not added to the registry",
      "    if not packs:\n        return template\n", "    if True:\n        return template\n"),
     ("a pack file that is not there is a traceback",
-     "    if not path.is_file():\n        raise Refused(f\"there is no pack at {path}\")\n", ""),
+     "        if not path.is_file():\n            raise Refused(f\"there is no pack at {path}\")\n", ""),
+    ("a pack in a folder that cannot be entered is looked for outside the guard (a traceback on Python 3.12)",
+     "    try:\n        # Inside the guard: on Python 3.12 the look itself raises for a folder that cannot be entered.\n"
+     "        if not path.is_file():\n            raise Refused(f\"there is no pack at {path}\")\n",
+     "    if not path.is_file():\n        raise Refused(f\"there is no pack at {path}\")\n    try:\n"),
     ("a pack that is not a mapping is a traceback",
      "    if not isinstance(data, dict):\n        raise Refused(f\"{path} is not a pack: it is not a mapping\")\n", ""),
     ("a pack's keys init does not carry over are dropped without a word",
@@ -303,9 +307,9 @@ MUTANTS: list[tuple[str, str, str]] = [
      "        hooks = []\n"),
     ("a file that is not a pack is accepted when a registry exists",
      "    # Read before anything else: a file that is not a pack is refused whether or not a registry exists.\n"
-     "    packs = [(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]\n",
+     "    packs = [(path, load_pack(path)) for path in map(pack_path, pack_files)]\n",
      "    packs = [] if governance_file(root, \"rules.yaml\").exists() else "
-     "[(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]\n"),
+     "[(path, load_pack(path)) for path in map(pack_path, pack_files)]\n"),
     ("the notice that main is closed comes after the replay, if the replay ends",
      "          \"branch. The replay below checks the registration.\", flush=True)\n    return replay(root, wrote=True)\n",
      "          \"branch. The replay below checks the registration.\", flush=True) if False else None\n"
@@ -361,6 +365,11 @@ MUTANTS: list[tuple[str, str, str]] = [
      "    return yaml.dump(data, Dumper=Plain, sort_keys=False", "    return yaml.dump(data, Dumper=yaml.SafeDumper, sort_keys=False"),
     ("a gap row whose target is not a mapping passes",
      "    if \"target\" in row and not isinstance(row[\"target\"], dict):\n", "    if False:\n"),
+    ("a row whose known_misses is not a list of cases passes",
+     "    for key in (\"proofs\", \"controls\", \"known_misses\"):\n", "    for key in (\"proofs\", \"controls\"):\n"),
+    ("a pack path that cannot be expanded is a traceback",
+     "    except (OSError, RuntimeError) as exc:\n        raise Refused(f\"--pack {given} is not a path this run can read",
+     "    except ZeroDivisionError as exc:\n        raise Refused(f\"--pack {given} is not a path this run can read"),
     ("a row whose occurrences is a number passes",
      "    if \"occurrences\" in row and not isinstance(row[\"occurrences\"], list):\n", "    if False:\n"),
     ("a row whose hosts is a word passes",
