@@ -204,11 +204,7 @@ def run_tool(script: str, root: Path, args: list[str]) -> int:
         print(f"\ncorrect: {script} stopped on an error it does not handle; the traceback is above. No "
               "row was judged: this is not a failed row, and the command could not run (exit 2). The "
               "usual cause is a registry row with a value of the wrong kind, a word where a mapping or a "
-              "list goes; the last lines of the traceback show the read that failed. Correct the row in "
-              "the registry file. If the row came from a pack, correct the pack too and copy the "
-              "corrected row into the registry by hand: init does not rewrite a registry that exists. "
-              "(Deleting the registry and running init again would also take the corrected pack, and "
-              "would lose every row and edit of your own in it.)", file=sys.stderr)
+              "list goes; the last lines of the traceback show the read that failed.", file=sys.stderr)
         return 2
     return status
 
