@@ -58,14 +58,18 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   last file written, so a run that stops early leaves a repository the next run
   still sets up. It is created, never replaced: `init` links a finished file to
   the registry's name, which the filesystem refuses when the name is taken. Of
-  two `init` runs at once, one writes the registry; the other says that the
-  registry appeared while it ran, writes none, and replays the one that is there. On a
-  filesystem that cannot link, `init` exits 2 at that write: the files before it
-  are in place, the hook among them, and there is no registry, so back out as
-  described below. A temporary name it cannot remove once
-  the registry is written is named on stderr, and the run goes on. To back out, delete the registry, the four files under
-  `scripts/`, the `PreToolUse` entry that runs `scripts/branch-first-hook.py`,
-  and the policy file if `init` wrote it (its output lists the file when it did).
+  two `init` runs at once, one writes the registry; the other finds it there,
+  or finds its name taken when it comes to write, and either way writes none
+  and replays the one that is there. A temporary file `init` cannot remove,
+  whether it wrote the registry or found the name taken, is named on stderr,
+  and the run goes on. On a filesystem that cannot link, `init` exits 2 at that
+  write and says the link failed: the files before it are in place, the hook
+  among them, and there is no registry; back out as follows. To back out, remove only what `init` added:
+  the registry; each file its output listed as `write` that was not there
+  before the run; and the `PreToolUse` entry that runs
+  `scripts/branch-first-hook.py`, taken out of `.claude/settings.json`. Restore
+  from version control any file `--force` replaced. A file listed as `keep` was
+  there before the run and is not `init`'s to delete.
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing

@@ -26,9 +26,10 @@ could not run (no repository, no registry for check, git or PyYAML missing, a
 registry of a version this copy does not replay, an unreadable settings file,
 a file init would have to overwrite, a path that leaves the repository). On 2,
 init has written nothing unless it says which files it wrote. A dry run on a
-repository without a registry lists what would be written, is refused whenever
-the real run would be, and cannot say whether the replay will pass afterwards;
-on a repository with a registry it is the same run as the real one.
+repository without a registry lists what would be written and is refused
+wherever the real run is refused before it writes; it tries no write, so it
+cannot say that one will fail, nor whether the replay will pass afterwards. On
+a repository with a registry it is the same run as the real one.
 """
 from __future__ import annotations
 
@@ -299,8 +300,19 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
     return sorted(set(out))
 
 
-class Taken(Exception):
-    """write_file was asked for a new file and its name is taken. What is there is kept."""
+class NotCreated(Exception):
+    """write_file was asked for a new file and did not create it. `left` is the temporary
+    file's name if it could not be removed, else None."""
+
+    left: str | None = None
+
+
+class Taken(NotCreated):
+    """The name is taken. What is there is kept."""
+
+
+class NotLinked(NotCreated):
+    """The filesystem refused the link that creates the file. The message is its error."""
 
 
 def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
@@ -309,11 +321,13 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
 
     With `new`, the target must not exist, and is never replaced: the finished temporary file
     is linked to the target's name, which the filesystem does in one step and refuses when
-    the name is taken (Taken). There is no other way in: a filesystem that cannot link
-    raises its own error. Any error raised here means this call did not write the target.
+    the name is taken (Taken). There is no other way in: a link the filesystem refuses for
+    any other reason is NotLinked. Any error raised here means this call did not write the
+    target.
 
-    Returns None. The one exception: a new file that is written, whose temporary name could
-    not then be removed, returns that name. The file is there; the caller says what is left."""
+    A new file's outcome (written, taken, not linked) is settled before its temporary file is
+    removed, and a removal that fails does not change it: the name that is left is returned
+    (written) or carried by the exception, for the caller to say. Otherwise the return is None."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
@@ -322,6 +336,7 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
     os.umask(umask)
     mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    failed: NotCreated | None = None
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
@@ -329,8 +344,10 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
         if new:
             try:
                 os.link(tmp, path)
-            except FileExistsError as exc:
-                raise Taken(str(path)) from exc
+            except FileExistsError:
+                failed = Taken(str(path))
+            except OSError as exc:
+                failed = NotLinked(str(exc))
         else:
             os.replace(tmp, path)
             return None
@@ -338,11 +355,23 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
-    try:  # the new file is written; the temporary file is now only a second name for it
+    left = None
+    try:
         os.unlink(tmp)
+    except FileNotFoundError:
+        pass
     except OSError:
-        return tmp
-    return None
+        left = tmp
+    if failed:
+        failed.left = left
+        raise failed
+    return left
+
+
+def say_left(folder: Path, left: str | None) -> None:
+    if left:
+        print(f"correct init: this run could not remove its temporary file {folder / Path(left).name}.",
+              file=sys.stderr, flush=True)
 
 
 def replay(root: Path, wrote: bool) -> int:
@@ -356,9 +385,7 @@ def replay(root: Path, wrote: bool) -> int:
               "  - The starter row is replayed, not yet certified on the real harness: replace its\n"
               "    `canary: {none, ticket}` ticket with one of yours, or write canary cases and run\n"
               "    `correct.py canary run`.\n"
-              "  - To back out: delete the registry, the four files under scripts/, the PreToolUse entry\n"
-              "    that runs scripts/branch-first-hook.py in .claude/settings.json, and the policy file\n"
-              "    if init wrote it (it is listed above when it did).")
+              "  - To back out: `init` in this skill's SKILL.md says what to remove and what to leave.")
     elif status != 0 and wrote:
         print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
               "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
@@ -367,7 +394,7 @@ def replay(root: Path, wrote: bool) -> int:
               file=sys.stderr)
     elif status != 0:
         print(f"\ncorrect init: the replay exits {status}; its output is above. init does not change a "
-              "registry that is there, so it repairs nothing either. If a row says `not registered` "
+              "registry that is there, so it does not repair one either. If a row says `not registered` "
               "or its script is missing, something init installed was removed: restore it from version "
               "control, or delete the registry and run init again to write the starter files anew. "
               "Otherwise fix the row or the enforcer the FAIL names.", file=sys.stderr)
@@ -429,20 +456,26 @@ def init(root: Path, args: list[str]) -> int:
             # The registry is created, never replaced. It was not there when this run looked;
             # if another init has published one since, that one stands, whatever is in it.
             left = write_file(path, content, executable, new=path == target)
-        except Taken:
-            print(f"correct init: {target.relative_to(root)} appeared while this run was writing its files "
-                  "(another init, most likely). This run wrote no registry; the one that is there is "
-                  "replayed.", flush=True)
+        except Taken as taken:
+            print(f"correct init: the name {target.relative_to(root)} was taken while this run was writing "
+                  "its files (another init, most likely). This run wrote no registry.", flush=True)
+            say_left(target.parent.relative_to(root), taken.left)
             return on_registry(root)
+        except NotLinked as refused:
+            say_left(target.parent.relative_to(root), refused.left)
+            raise Refused(f"could not create {target.relative_to(root)}: linking the finished file to that "
+                          f"name failed ({refused}). This run wrote no registry. Written before it: "
+                          f"{', '.join(done) or 'nothing'}. The starter hook and its settings entry are in "
+                          "place, so an edit on main or master is refused where the harness runs the hook, "
+                          "and there is no registry. `init` in this skill's SKILL.md says how to back out."
+                          ) from refused
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
                           "written, so the repository is not set up; fix the cause and run init again."
                           ) from exc
         done.append(str(path.relative_to(root)))
-        if left:
-            print(f"correct init: {path.relative_to(root)} is written. Its temporary name, "
-                  f"{Path(left).name}, could not be removed and is still beside it.", file=sys.stderr, flush=True)
+        say_left(path.parent.relative_to(root), left)
     return replay(root, wrote=True)
 
 
