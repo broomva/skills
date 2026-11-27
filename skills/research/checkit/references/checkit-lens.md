@@ -54,7 +54,7 @@ contract travels to any agent environment installed from skills.sh.
 | **GitHub repo** | Evaluate-against-our-stack: extract mechanism → map to what we build → **build-vs-reuse** decision → file the comparison. |
 | **arXiv / research paper** | Extract the load-bearing mechanism + result → map to our design → does it change a decision? → file with HIGH/MED/LOW-tagged claims. |
 | **Competitor / product / startup** | Competitive + differentiation analysis: what they do, what we'd adopt, where our edge is → file with a "bearing on our work" note. |
-| **Blog post / article / thread** | Extract the insight → is it actionable for us → connect to existing knowledge → a synthesis note if it combines with ≥2 prior notes. **For a social thread / image post (X, IG photo, FB): pull the pixels too** — browser-screenshot→Read + in-browser image fetch; a markdown extractor drops the images. Recipe: `research/entities/pattern/full-fidelity-content-ingest.md`. |
+| **Blog post / article / thread** | Extract the insight → is it actionable for us → connect to existing knowledge → a synthesis note if it combines with ≥2 prior notes. **For a social thread / image post (X, Reddit, HN, public LinkedIn, App Store, IG photo, FB):** prefer `rsrc` (`research-sources`, when on `PATH`) as the zero-login Tier-1 direct-lookup fast-path (see §Direct social lookup fast-path below) and **pull the pixels too** — a markdown extractor drops the images. Recipe: `research/entities/pattern/full-fidelity-content-ingest.md`. |
 | **Image / screenshot / diagram** | Identify what it is → relevance → if it encodes a decision/architecture, transcribe into text (don't leave knowledge trapped in a PNG). |
 | **Video / reel / short / TikTok** | *Watch it, don't just transcribe.* Run the validated tool — `python3 scripts/video_ingest.py '<url>' --query '…'` (single-quote both — untrusted input; BRO-1979; `~/broomva/scripts/…` from other cwd) — then Read `manifest.contact_sheet` + follow `manifest.recommendation.mode` (transcript-only · escalate-frames · frames-mandatory). Gated IG/FB: `--cookies-from-browser chrome` (reads your own local session, stays local). Recipe/fallback: `research/entities/pattern/adaptive-video-ingest.md`. |
 | **File in our repo / @-mention** | Review current state → trace dependencies → what's the next step → tie to a task. |
@@ -104,6 +104,33 @@ and its `single-agent-loop-kit` README counts independent verification and "work
 reads far more than the main agent needs afterwards" as reasons to keep one. In a
 bstack workspace see `research/entities/pattern/subagent-must-earn-its-context.md`.
 
+### Direct social lookup fast-path (`rsrc`)
+
+When `rsrc` (`SamuelZ12/research-sources`) is installed on `PATH`, use it as the
+**zero-login Tier-1 direct-lookup fast-path** before spinning up a browser:
+
+- **X:** `rsrc x read|replies <id|status-url|handle-article-url>` (never
+  `/i/article/<id>`, which exits `2`; syndication fallback on `x read` only) and
+  `rsrc x thread <id|status-url>` (bare ID or `/status/<id>` only). Inspect
+  **`raw.media`**, **`raw.article.images`**, and **`raw.quoted.media`** — pass
+  videos to `scripts/video_ingest.py` and download images to `Read` so pixels
+  enter vision. Fall back to `agent-browser` / `interceptor` if FxTwitter leaves
+  unresolved article placeholders such as `[image]` in `text`, or when a
+  signed-in session or full-page visual capture is needed.
+- **Reddit / HN / YouTube / LinkedIn / App Store:** `rsrc reddit read --backend
+  arctic-shift <url>` (fall back to `interceptor` / `agent-browser` for live
+  search or brand-new posts), `rsrc hn|youtube|appstore search|read`, and
+  `rsrc linkedin read <url>` (read-only).
+- **Partial-status checks on `ok: true` paths:** Inspect `meta.sources` on mixed
+  `rsrc check` runs (all-fail exits non-zero with top-level `error`),
+  `meta.truncated` on commands with `--max-requests` (`x search`, `x timeline`,
+  `appstore read` — a capped `appstore read` exits `0` with partial reviews and
+  no `warning` when ≥1 review is returned, or `1` with no reviews), and
+  `raw.transcript.status` on `rsrc youtube read` (exits `0` / `ok: true` with
+  `incomplete_metadata` on qualifying `yt-dlp` metadata-run warnings, excluding
+  unknown-codec and caption-fetch warnings; upgrade `yt-dlp` or fall back to
+  `scripts/video_ingest.py`).
+
 ## Procedure
 
 1. **Classify** (artifact-gate) then **infer + declare intent** in one line:
@@ -118,8 +145,9 @@ bstack workspace see `research/entities/pattern/subagent-must-earn-its-context.m
    sources; **docs** → follow the doc tree; **paper** → mechanism-bearing
    sections; **video** → run `scripts/video_ingest.py <url> --query "…"`, Read the
    contact sheet, follow the manifest recommendation (adaptive-video-ingest), never
-   uniform-poll per second; **social thread/image post** → pull the pixels too
-   (full-fidelity-content-ingest), a markdown extractor drops images. **Verify
+   uniform-poll per second; **social thread/image post** → use `rsrc` zero-login
+   Tier-1 fast-path when available (§Direct social lookup fast-path) and pull the
+   pixels too (full-fidelity-content-ingest), a markdown extractor drops images. **Verify
    every URL.** **Provenance honesty:** a `[HIGH]` tag names
    the artifact actually read; a summary is `[MED]`, labeled — never
    "spec/repo-verified" against a source not opened. **Exhaustion check:** what
