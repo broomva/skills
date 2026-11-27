@@ -517,3 +517,450 @@ def test_load_bearing_survives_both_polarity_guards():
                          A.ArmStats(90, 5, 0, check_failures=85), min_trials=10)
     assert v["verdict"] == A.VERDICT_LOAD_BEARING
     assert v["skill_lift"] > 0.9
+
+
+# ---------------------------------------------------------------------------
+# the noise band (BRO-4110): a description beside the verdict, never a test
+# ---------------------------------------------------------------------------
+
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import itertools  # noqa: E402
+import json  # noqa: E402
+import random  # noqa: E402
+import re  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+DECISIVE = {A.VERDICT_LOAD_BEARING, A.VERDICT_RETIRE}
+RANK = {A.VERDICT_LOAD_BEARING: 2, A.VERDICT_RETIRE: 2}  # everything else ranks 0
+
+
+def prompts_report(per_prompt, *, error_prompts=(), order=None):
+    """A report with one positive case per entry of `per_prompt` = [(passes, n), ...]."""
+    cases = []
+    for i, (passes, n) in enumerate(per_prompt):
+        if i in error_prompts:
+            results = [{"outcome": "ERROR"}] * n
+        else:
+            results = ([trial("PASS", [chk("x", passed=True)], triggered=True)] * passes
+                       + [trial("FAIL", [chk("x", passed=False)], triggered=True)] * (n - passes))
+        cases.append({"case_id": f"p{i}", "should_trigger": True, "results": results})
+    if order is not None:
+        cases = [cases[i] for i in order]
+    return report(cases=cases)
+
+
+def band_compare(present, absent, replicate, *, replicate_errors=(), **kw):
+    return A.compare(prompts_report(present), prompts_report(absent), non_pass=NON_PASS,
+                     min_trials=10,
+                     replicate_report=prompts_report(replicate, error_prompts=replicate_errors),
+                     **kw)
+
+
+def plain_compare(present, absent, **kw):
+    return A.compare(prompts_report(present), prompts_report(absent), non_pass=NON_PASS,
+                     min_trials=10, **kw)
+
+
+def test_without_a_replicate_nothing_changes_and_noise_is_null():
+    cmp = plain_compare([(3, 3)] * 10, [(0, 3)] * 10)
+    assert cmp["noise"] is None
+    assert "  replicate    not run (--noise-band adds it)" in A.format_comparison(cmp)
+
+
+VERDICT_KEYS = ("verdict", "why", "skill_lift", "skill_lift_ci", "end_to_end_lift",
+                "present", "absent", "leaked_baseline_trials")
+
+
+def test_the_band_never_changes_the_verdict():
+    """The contract after five P20 rounds (D8): the band describes, it never decides.
+    Every verdict field is identical with and without it, over seeded random prompt
+    sets with errors in any arm and over every two-prompt clustered outcome."""
+    outcomes = [(0, 3), (1, 3), (2, 3), (3, 3), (0, 1), (1, 1), (5, 20)]
+    rng = random.Random(4110)
+
+    def errs(n):
+        return tuple(i for i in range(n) if rng.random() < 0.3)
+    cases = []
+    for _ in range(600):
+        n = rng.randint(1, 8)
+        cases.append(([rng.choice(outcomes) for _ in range(n)],
+                      [rng.choice(outcomes) for _ in range(n)],
+                      [rng.choice(outcomes) for _ in range(n)], errs(n), errs(n), errs(n)))
+    clustered = [(0, 12), (12, 12)]
+    for P in itertools.product(clustered, repeat=2):
+        for B in itertools.product(clustered, repeat=2):
+            for R_ in itertools.product(clustered, repeat=2):
+                cases.append((list(P), list(B), list(R_), (), (), ()))
+    for P, B, R_, pe, be, re_ in cases:
+        p, b = prompts_report(P, error_prompts=pe), prompts_report(B, error_prompts=be)
+        plain = A.compare(p, b, non_pass=NON_PASS, min_trials=10)
+        banded = A.compare(p, b, non_pass=NON_PASS, min_trials=10,
+                           replicate_report=prompts_report(R_, error_prompts=re_))
+        assert {k: banded[k] for k in VERDICT_KEYS} == {k: plain[k] for k in VERDICT_KEYS}, (P, B, R_)
+
+
+def test_the_replicate_row_is_the_whole_arm():
+    """P20 continuation r5: an earlier version silently dropped replicate trials on
+    prompts the present arm could not grade. The row now matches its neighbours."""
+    P = [(3, 3)] * 4
+    p = prompts_report(P, error_prompts=(0,))
+    cmp = A.compare(p, prompts_report(P), non_pass=NON_PASS, min_trials=1,
+                    replicate_report=prompts_report(P))
+    assert cmp["noise"]["replicate"]["graded_positive_trials"] == 12
+
+
+def test_the_band_computes_no_number_across_the_arms():
+    """D11's reversal (continuation review before round 6): the noise dict carries the
+    replicate arm and its attempts, nothing derived from present and replicate together."""
+    cmp = band_compare([(9, 10)] * 3, [(0, 10)] * 3, [(6, 10)] * 3)
+    assert set(cmp["noise"]) == {"replicate", "replicate_attempts", "replicate_errors"}
+    assert cmp["noise"]["replicate"] == A.arm_stats(prompts_report([(6, 10)] * 3), NON_PASS).to_dict()
+
+
+def test_the_report_describes_and_does_not_test():
+    """No p-value, threshold, NOTE, gap or verdict language comes from the band."""
+    text = A.format_comparison(band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(2, 3)] * 10))
+    assert re.search(r"(?m)^  replicate\s+30\s+30\s+0\.67\s+1\.00$", text), text
+    assert "Not tested (BRO-4140)" in text
+    for word in ("p=", "NOTE", "confirmed", "drifted", "noisy", "gap", "minus"):
+        assert word not in text, word
+
+
+def test_end_to_end_lift_is_untouched_by_the_band():
+    P, B = [(3, 3)] * 10, [(0, 3)] * 10
+    p, b = prompts_report(P), prompts_report(B)
+    p["aggregate"] = {"positive": {"pass_rate": 0.9}}
+    with_band = A.compare(p, b, non_pass=NON_PASS, min_trials=10,
+                          replicate_report=prompts_report(P))
+    without = A.compare(p, b, non_pass=NON_PASS, min_trials=10)
+    assert with_band["end_to_end_lift"] == without["end_to_end_lift"] is not None
+
+
+def test_a_margin_above_one_is_refused():
+    with pytest.raises(SystemExit) as exc:
+        R.main(["--skill-dir", str(FIXTURE / "skill"),
+                "--prompts", str(FIXTURE / "evals/prompts.json"), "--cli", "/bin/true",
+                "--no-version-check", "--ablate", "--dry-run", "--ablation-margin", "1.1"])
+    assert exc.value.code == 2
+
+
+def test_a_non_finite_margin_is_refused_before_any_arm_runs():
+    with pytest.raises(SystemExit) as exc:
+        R.main(["--skill-dir", str(FIXTURE / "skill"),
+                "--prompts", str(FIXTURE / "evals/prompts.json"), "--cli", "/bin/true",
+                "--no-version-check", "--ablate", "--noise-band", "--dry-run",
+                "--ablation-margin", "nan"])
+    assert exc.value.code == 2
+
+
+def test_exit_four_does_not_read_as_a_threshold_failure():
+    text = R.format_report([], R.aggregate([], case_threshold=R.DEFAULT_CASE_THRESHOLD),
+                           mode="live", skill="demo", threshold=0.8,
+                           exit_code=R.EXIT_ABLATION_UNUSABLE)
+    assert "-> PASS (exit 4)" in text
+
+
+# --- the runner: the replicate arm as it is actually wired ---------------------------
+
+FIXTURE = Path("tests/skill_evals/fixtures/harness-selftest")
+BASE_ARGS = ["--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "evals/prompts.json"),
+             "--cli", "/bin/true", "--no-version-check", "--ablate", "--json", "--trials", "4"]
+
+
+def stubbed_main(tmp_path, *args, write_during=None, actions=None, outcome=None,
+                 baseline_outcome=None):
+    """Run R.main with every trial stubbed; record each arm's config. A real
+    RealStateWatch watches one file that `write_during` (an arm number) touches."""
+    watched = tmp_path / "state"
+    watched.write_text("before")
+    arms = []
+    real_run_suite, real_watch = R.run_suite, R.jail_mod.RealStateWatch
+
+    def case_runner(runner, case, cfg):
+        o = (baseline_outcome if not cfg.visibility.expects_visible and baseline_outcome
+             else outcome) or R.PASS
+        trials = [R.TrialResult(case.id, t, o, triggered=cfg.visibility.expects_visible,
+                                checks=[{"check_id": "x", "passed": o == R.PASS}])
+                  for t in range(1, cfg.trials + 1)]
+        return R.CaseResult(case.id, case.should_trigger, case.origin, trials=trials)
+
+    def suite(runner, prompts, cfg):
+        arms.append({"visibility": cfg.visibility.id, "cases": [c.id for c in prompts.cases],
+                     "positives_only": all(c.should_trigger for c in prompts.cases),
+                     "jobs": cfg.jobs, "keep_workspaces": cfg.keep_workspaces})
+        if write_during == len(arms):
+            watched.write_text(f"written during arm {len(arms)}")
+        if actions and len(arms) in actions:
+            actions[len(arms)](watched)
+        return real_run_suite(runner, prompts, cfg)
+
+    out = io.StringIO()
+    with patch.object(R, "run_suite", suite), patch.object(R, "run_case", case_runner), \
+         patch.object(R.jail_mod, "RealStateWatch", lambda: real_watch(paths=(str(watched),))), \
+         patch.object(R.jail_mod, "prepare_jail"), \
+         patch.object(R.jail_mod, "verify_jail", return_value=SimpleNamespace(holds=True)), \
+         patch.object(R.jail_mod, "auth_material_missing", return_value=False), \
+         contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        rc = R.main(BASE_ARGS + list(args))
+    return rc, json.loads(out.getvalue()), arms
+
+
+def test_the_replicate_runs_the_positives_with_the_skill_present(tmp_path):
+    """P20 round 1: none of this was pinned; six wiring mutations survived."""
+    rc, rep, arms = stubbed_main(tmp_path, "--noise-band", "--jobs", "3",
+                                 "--ablate-baseline", "bare")
+    assert len(arms) == 3
+    present, baseline, replicate = arms
+    assert replicate["visibility"] == present["visibility"] == "present"
+    assert replicate["positives_only"] is True
+    assert set(replicate["cases"]) < set(present["cases"])
+    assert replicate["jobs"] == 3
+    assert rep["ablation"]["noise"] is not None
+    assert rep["ablation"]["noise"]["replicate"]["graded_positive_trials"] == 4 * len(replicate["cases"])
+    assert rep["ablation_replicate_arm"]["meta"]["arm"] == "present-replicate"
+
+
+def test_without_the_flag_no_replicate_runs(tmp_path):
+    _, rep, arms = stubbed_main(tmp_path)
+    assert len(arms) == 2 and rep["ablation"]["noise"] is None
+
+
+@pytest.mark.parametrize("arm", [2, 3])
+def test_a_state_change_during_an_ablation_arm_is_seen(tmp_path, arm):
+    """P20 round 1: the watch was read after the primary arm only, so a write during
+    the baseline (pre-existing) or the replicate passed --fail-on-real-state-change."""
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=arm)
+    assert rep["meta"].get("real_state_changes"), arm
+    assert rc != R.EXIT_OK
+
+
+def test_noise_band_without_ablate_is_refused():
+    for extra in (["--dry-run"], ["--validate-only"]):
+        rc = R.main([
+            "--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "evals/prompts.json"),
+            "--cli", "/bin/true", "--no-version-check", "--noise-band", *extra,
+        ])
+        assert rc == R.EXIT_USAGE, extra
+
+
+def test_the_dry_run_counts_the_replicate_exactly(capsys):
+    prompt_set = json.loads((FIXTURE / "evals/prompts.json").read_text())
+    cases = prompt_set["cases"]
+    positives = sum(1 for c in cases if c.get("should_trigger"))
+    rc = R.main(["--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "evals/prompts.json"),
+                 "--cli", "/bin/true", "--no-version-check", "--ablate", "--noise-band",
+                 "--dry-run", "--trials", "2"])
+    assert rc == R.EXIT_OK
+    expected = len(cases) * 2 + positives * 2 + positives * 2
+    assert f"would run {expected} trial(s)" in capsys.readouterr().out
+
+
+# --- P20 round 5 on #336 (stratum A) --------------------------------------------------
+
+def _trigger_only(n):
+    return [trial("PASS", [chk("skill_triggered", passed=True)], triggered=True)] * n
+
+
+def _outcome(passes, n):
+    return ([trial("PASS", [chk("x", passed=True)], triggered=True)] * passes
+            + [trial("FAIL", [chk("x", passed=False)], triggered=True)] * (n - passes))
+
+
+def _cases(*results):
+    return report(cases=[{"case_id": f"p{i}", "should_trigger": True, "results": r}
+                         for i, r in enumerate(results)])
+
+
+def test_a_trigger_only_replicate_row_uses_the_same_denominator_as_present():
+    # The continuation review's probe 7b: the row is arm_stats(), like its neighbours,
+    # so a trigger-only replicate reads as its neighbours would, and no gap line contradicts it.
+    present = _cases(_trigger_only(6), _outcome(6, 6))
+    replicate = _cases(_trigger_only(6), [{"outcome": "ERROR"}] * 6)
+    cmp = A.compare(present, _cases(_outcome(3, 6), _outcome(3, 6)), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=replicate)
+    assert cmp["noise"]["replicate"] == A.arm_stats(replicate, NON_PASS).to_dict()
+    assert cmp["present"] == A.arm_stats(present, NON_PASS).to_dict()
+    text = A.format_comparison(cmp)
+    assert "  replicate    6 of 12 attempts produced no signal" in text
+    assert "A/A" not in text
+
+
+def test_the_replicate_row_and_its_errors_are_printed():
+    cmp = band_compare([(3, 3)] * 4, [(1, 3)] * 4, [(3, 3)] * 4, replicate_errors=(0, 1, 2))
+    text = A.format_comparison(cmp)
+    assert re.search(r"(?m)^  replicate\s+3\s+3\s+1\.00\s+1\.00$", text), text
+    assert "  replicate    9 of 12 attempts produced no signal" in text
+    assert (cmp["noise"]["replicate_attempts"], cmp["noise"]["replicate_errors"]) == (12, 9)
+
+
+def test_a_replicate_cannot_undo_a_baseline_change_before_the_watch_reads(tmp_path):
+    moved = tmp_path / "moved-away"
+    actions = {2: lambda w: w.rename(moved), 3: lambda w: moved.rename(w)}
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              actions=actions)
+    assert any(c.startswith("deleted: ") for c in rep["meta"].get("real_state_changes", [])), rep["meta"]
+    assert rc == R.EXIT_BELOW_THRESHOLD
+
+
+@pytest.mark.parametrize("mode", [["--list-checks"], ["--verify-jail"]])
+def test_every_mode_refuses_noise_band_without_ablate(mode):
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert R.main([*mode, "--noise-band"]) == R.EXIT_USAGE
+
+
+@pytest.mark.parametrize("margin", ["-0.01", "-1", "1.0001", "nan", "inf"])
+def test_a_margin_outside_the_unit_interval_is_refused(margin):
+    with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+        R.build_parser().parse_args(["--skill", "x", "--ablation-margin", margin])
+
+
+def test_a_state_exit_keeps_the_threshold_verdict():
+    agg = R.aggregate([], case_threshold=R.DEFAULT_CASE_THRESHOLD)
+    text = R.format_report([], agg, mode="live", skill="s", threshold=0.8,
+                           exit_code=R.EXIT_BELOW_THRESHOLD, state_exit=True)
+    assert "-> PASS (exit 1)" in text
+    assert "exit 1 is --fail-on-real-state-change" in text
+    plain = R.format_report([], agg, mode="live", skill="s", threshold=0.8,
+                            exit_code=R.EXIT_BELOW_THRESHOLD)
+    assert "-> FAIL (exit 1)" in plain and "fail-on-real-state-change" not in plain
+
+
+@pytest.mark.parametrize("arm", [1, 2, 3])
+def test_a_state_exit_names_its_cause_in_the_report(tmp_path, arm):
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=arm)
+    assert rc == R.EXIT_BELOW_THRESHOLD
+    assert rep.get("exit_cause") == "real_state_change", arm
+
+
+def test_a_clean_run_names_no_exit_cause(tmp_path):
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change")
+    assert rc == R.EXIT_OK and "exit_cause" not in rep
+
+
+def test_replicate_attempts_count_positive_cases_like_the_graded_trials():
+    rep = _cases(_outcome(3, 3))
+    rep["cases"].append({"case_id": "n0", "should_trigger": False, "results": _outcome(0, 3)})
+    band = A.noise_band(rep, NON_PASS)
+    assert (band["replicate_attempts"], band["replicate_errors"]) == (3, 0)
+
+
+def test_a_row_with_no_outcome_evidence_prints_na_not_zero():
+    """P20 #336 r6 stratum B: equal trial counts from different prompts made a replicate
+    that ran no outcome check read 0.00 beside a present arm's 1.00."""
+    present = _cases(_outcome(12, 12), [{"outcome": "ERROR"}] * 12)
+    replicate = _cases([{"outcome": "ERROR"}] * 12, _trigger_only(12))
+    cmp = A.compare(present, _cases(_outcome(6, 12), _outcome(6, 12)), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=replicate)
+    assert cmp["noise"]["replicate"]["outcome_checked_trials"] == 0
+    assert cmp["present"]["outcome_checked_trials"] == 12
+    text = A.format_comparison(cmp)
+    assert re.search(r"(?m)^  present\s+12\s+12\s+1\.00\s+1\.00$", text), text
+    assert re.search(r"(?m)^  replicate\s+12\s+0\s+n/a\s+1\.00$", text), text
+    assert "equal counts can cover different prompts" in text
+
+
+def test_the_checked_count_never_changes_a_verdict_field():
+    present = _cases(_trigger_only(6), _outcome(6, 6))
+    absent = _cases(_outcome(3, 6), _outcome(3, 6))
+    plain = A.compare(present, absent, non_pass=NON_PASS, min_trials=10)
+    assert plain["present"]["outcome_checked_trials"] == 6
+    assert plain["present"]["outcome_pass_rate"] == 0.5  # the verdict's rate is unchanged
+
+
+def test_the_replicate_keeps_workspaces_like_the_other_arms(tmp_path):
+    _, _, arms = stubbed_main(tmp_path, "--noise-band", "--keep-workspaces")
+    assert [a["keep_workspaces"] for a in arms] == [True, True, True]
+
+
+def test_the_replicate_arm_report_has_no_exit_status(tmp_path):
+    _, rep, _ = stubbed_main(tmp_path, "--noise-band")
+    assert rep["ablation_replicate_arm"]["exit_code"] is None
+
+
+@pytest.mark.parametrize("trials", ["0", "-1"])
+def test_trials_must_be_at_least_one(trials):
+    with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+        R.build_parser().parse_args(["--skill", "x", "--trials", trials])
+
+
+@pytest.mark.parametrize("margin", ["0", "1", "0.08"])
+def test_a_margin_at_or_inside_the_unit_interval_is_accepted(margin):
+    args = R.build_parser().parse_args(["--skill", "x", "--ablation-margin", margin])
+    assert args.ablation_margin == float(margin)
+
+
+@pytest.mark.parametrize("arm", [1, 2, 3])
+def test_a_state_change_does_not_override_an_earlier_failure(tmp_path, arm):
+    """Exit precedence (P20 r6 C, mutant M08): a threshold failure stays exit 1 without a
+    state cause; the state rule only replaces an exit 0, in the primary arm or after it."""
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=arm, outcome=R.FAIL)
+    assert rc == R.EXIT_BELOW_THRESHOLD
+    assert "exit_cause" not in rep
+
+
+def test_an_unusable_baseline_does_not_override_a_state_exit(tmp_path):
+    """Exit precedence (mutant M09): a state exit 1 is kept, with its cause, when the
+    baseline is also unusable (exit 4 only replaces an exit 0)."""
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=3, baseline_outcome="ERROR")
+    assert rc == R.EXIT_BELOW_THRESHOLD
+    assert rep.get("exit_cause") == "real_state_change"
+
+
+@pytest.mark.parametrize("unchecked", ["present", "absent"])
+@pytest.mark.parametrize("band", [False, True])
+def test_an_arm_with_no_outcome_evidence_gets_no_actionable_verdict(unchecked, band):
+    """Continuation review before r7: an arm whose trials ran no outcome check entered
+    the lift as rate 0.0, giving load-bearing or retire-candidate on no evidence."""
+    checked = _cases(_outcome(12, 12), _outcome(12, 12))
+    trigger_only = _cases(_trigger_only(12), _trigger_only(12))
+    absent_checked = _cases(_outcome(3, 12), _outcome(3, 12))
+    present, absent = ((trigger_only, absent_checked) if unchecked == "present"
+                       else (checked, trigger_only))
+    cmp = A.compare(present, absent, non_pass=NON_PASS, min_trials=10,
+                    replicate_report=checked if band else None)
+    assert cmp["verdict"] == A.VERDICT_WEAK_CHECKS
+    assert cmp["skill_lift"] is None
+    assert f"no {unchecked}-arm trial ran an outcome check" in cmp["why"]
+    text = A.format_comparison(cmp)
+    assert "skill lift   NOT MEASURED" in text
+
+
+def test_stats_built_without_counting_are_not_treated_as_unchecked():
+    p = A.ArmStats(graded_positive_trials=20, outcome_passes=18, trigger_events=20, check_failures=2)
+    b = A.ArmStats(graded_positive_trials=20, outcome_passes=2, trigger_events=0, check_failures=18)
+    assert A.decide_verdict(p, b)["verdict"] == A.VERDICT_LOAD_BEARING
+
+
+def test_a_row_built_without_counting_shows_its_rate_and_no_checked_count():
+    stats = A.ArmStats(graded_positive_trials=4, outcome_passes=3, trigger_events=4).to_dict()
+    cmp = {"skill": "s", "present": stats, "absent": stats, "noise": None, "skill_lift": None,
+           "verdict": "v", "why": "w"}
+    assert re.search(r"(?m)^  present\s+4\s+n/a\s+0\.75\s+1\.00$", A.format_comparison(cmp))
+
+
+def test_an_unchecked_arm_has_no_rate_in_json_or_text():
+    """Continuation review #4 before r7: text said n/a while JSON said 0.0 for the same
+    unchecked replicate. One rule on ArmStats feeds both."""
+    present = _cases(_outcome(12, 12), _trigger_only(12))
+    replicate = _cases([{"outcome": "ERROR"}] * 12, _trigger_only(12))
+    cmp = A.compare(present, _cases(_outcome(6, 12), _outcome(6, 12)), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=replicate)
+    rep = json.loads(json.dumps(cmp))["noise"]["replicate"]
+    assert (rep["outcome_checked_trials"], rep["outcome_pass_rate"]) == (0, None)
+    assert re.search(r"(?m)^  replicate\s+12\s+0\s+n/a\s+1\.00$", A.format_comparison(cmp))
+
+
+def test_a_checked_arm_with_no_passes_keeps_a_zero_rate():
+    stats = A.arm_stats(_cases(_outcome(0, 12)), NON_PASS)
+    assert (stats.outcome_checked_trials, stats.outcome_pass_rate) == (12, 0.0)
+
+
+def test_an_uncounted_arm_keeps_its_rate():
+    stats = A.ArmStats(graded_positive_trials=4, outcome_passes=3, trigger_events=4)
+    assert stats.outcome_pass_rate == 0.75

@@ -55,6 +55,7 @@ so the ablation arm is a one-line registration plus a flag, not a refactor.
 from __future__ import annotations
 
 import argparse
+import math
 import hashlib
 import json
 import os
@@ -1623,6 +1624,7 @@ def format_report(
     skill: str,
     threshold: float,
     exit_code: int,
+    state_exit: bool = False,
 ) -> str:
     lines: list[str] = []
     lines.append("")
@@ -1699,7 +1701,8 @@ def format_report(
             f"${agg['mean_cost_usd']:.4f}/trial   "
             f"mean {(agg['mean_duration_ms'] or 0) / 1000:.1f}s/trial{provenance}"
         )
-    verdict = "PASS" if exit_code == EXIT_OK else "FAIL"
+    # Exit 4 is set only when this arm passed: the threshold verdict is still PASS.
+    verdict = "PASS" if exit_code in (EXIT_OK, EXIT_ABLATION_UNUSABLE) or state_exit else "FAIL"
     lines.append(
         f"  threshold   {threshold:.2f} -> {verdict} (exit {exit_code})   "
         f"[mode={mode.upper()} skill={skill}]"
@@ -1711,6 +1714,11 @@ def format_report(
         lines.append(
             "              ^ exit 4 is the ABLATION BASELINE, not this arm: the "
             "measurement is void, the numbers above stand"
+        )
+    if state_exit:
+        lines.append(
+            "              ^ exit 1 is --fail-on-real-state-change: watched real state "
+            "changed during the run, the numbers above stand"
         )
     lines.append("")
     return "\n".join(lines)
@@ -1782,7 +1790,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompts", type=Path, help="explicit path to prompts.json")
     p.add_argument("--skills-root", type=Path, default=DEFAULT_SKILLS_ROOT)
     p.add_argument("--skill-dir", type=Path, help="explicit skill directory (overrides lookup)")
-    p.add_argument("--trials", type=int, default=DEFAULT_TRIALS, help="trials per case (default 3)")
+    p.add_argument("--trials", type=_positive_int, default=DEFAULT_TRIALS, help="trials per case (default 3)")
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
                    help="aggregate trial pass-rate required to exit 0 (default 0.80)")
     p.add_argument("--case-threshold", type=float, default=DEFAULT_CASE_THRESHOLD,
@@ -1850,8 +1858,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ablation-min-trials", type=int, default=ablation_mod.ABLATION_MIN_TRIALS,
                    help="below this many graded positive trials per arm the verdict is "
                         "'underpowered' rather than a number a reader would act on")
-    p.add_argument("--ablation-margin", type=float, default=ablation_mod.ABLATION_MARGIN,
+    p.add_argument("--ablation-margin", type=_finite_unit, default=ablation_mod.ABLATION_MARGIN,
                    help="a lift interval entirely below this marks a retirement candidate")
+    p.add_argument("--noise-band", action="store_true",
+                   help="BRO-4110: with --ablate, run the with-skill arm a second time and "
+                        "report it as a third row beside the verdict (no test; it "
+                        "changes no verdict; adds one arm of trials)")
     p.add_argument("--fail-on-retire-candidate", action="store_true",
                    help="exit non-zero when the ablation verdict is retire-candidate "
                         "(opt-in; --ablate is report-only by default)")
@@ -1862,8 +1874,31 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _positive_int(text: str) -> int:
+    """Trials per case, at least 1: 0 or a negative count planned no trial yet each arm
+    reported one placeholder error per case as an attempt (P20 #336 r6 C)."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {text!r}")
+    return value
+
+
+def _finite_unit(text: str) -> float:
+    """A margin in [0, 1]; refused at parse time, before any arm spends a trial."""
+    value = float(text)
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError(f"must be a finite number in [0, 1], got {text!r}")
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Before any mode can return OK on a flag combination that would be refused.
+    if args.noise_band and not args.ablate:
+        print("error: --noise-band measures the noise of an ablation; pass --ablate too",
+              file=sys.stderr)
+        return EXIT_USAGE
 
     if args.list_checks:
         for check_id, fn in sorted(checks_mod.CHECK_REGISTRY.items()):
@@ -2048,7 +2083,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         len(_baseline_cases(prompt_set, args.ablate_baseline)) * args.trials
         if args.ablate else 0
     )
-    planned = len(prompt_set.cases) * args.trials + ablate_trials
+    # BRO-4110: the noise band re-runs the with-skill arm on the POSITIVE cases, the
+    # only ones the lift is computed from.
+    replicate_trials = len(prompt_set.positives) * args.trials if args.noise_band else 0
+    planned = len(prompt_set.cases) * args.trials + ablate_trials + replicate_trials
 
     if args.ablate:
         if args.visibility != "present":
@@ -2083,7 +2121,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"[skill-evals] ABLATION: {len(prompt_set.cases)}x{args.trials} present + "
             f"{len(_baseline_cases(prompt_set, args.ablate_baseline))}x{args.trials} "
-            f"{args.ablate_baseline} = {planned} "
+            f"{args.ablate_baseline}"
+            + (f" + {len(prompt_set.positives)}x{args.trials} replicate"
+               if args.noise_band else "")
+            + f" = {planned} "
             f"trials ({'replay' if args.replay else 'LIVE — this costs money'})\n"
             f"[skill-evals] baseline={args.ablate_baseline} — measuring {measures}",
             file=sys.stderr,
@@ -2252,6 +2293,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fixtures_unusable=fixtures_unusable,
         allow_errors=args.allow_errors,
     )
+    state_exit = False  # exit 1 set by --fail-on-real-state-change, not by the threshold
     if real_state_changes and args.fail_on_real_state_change and exit_code == EXIT_OK:
         print(
             "[skill-evals] --fail-on-real-state-change: the numbers passed, but this run "
@@ -2259,6 +2301,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         exit_code = EXIT_BELOW_THRESHOLD
+        state_exit = True
     report = build_report(
         prompt_set, case_results, agg,
         mode=runner.mode, threshold=args.threshold, exit_code=exit_code, meta=meta,
@@ -2282,21 +2325,70 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         absent_results = run_suite(runner, baseline_set, absent_cfg)
+        # Read the watch after EACH arm: a later arm can undo an earlier arm's write
+        # (rename out, rename back), and one read at the end would see nothing.
+        arm_changes = watch.changes() if watch is not None else []
         absent_agg = aggregate(absent_results, case_threshold=args.case_threshold)
         absent_report = build_report(
             baseline_set, absent_results, absent_agg,
             mode=runner.mode, threshold=args.threshold, exit_code=0,
             meta={"arm": args.ablate_baseline},
         )
+        replicate_report = None
+        if args.noise_band:
+            # BRO-4110: the same with-skill arm, again, on the positive cases, reported
+            # beside the verdict (ablation.py: a description, not a test).
+            replicate_cfg = RunConfig(
+                skill=skill, skill_dir=skill_dir, trials=args.trials,
+                visibility=VISIBILITY_REGISTRY["present"], jobs=max(1, args.jobs),
+                keep_workspaces=args.keep_workspaces,
+            )
+            print("[skill-evals] running the REPLICATE arm (skill installed, again) "
+                  "for the noise band", file=sys.stderr)
+            replicate_set = PromptSet(
+                skill=prompt_set.skill, version=prompt_set.version,
+                cases=list(prompt_set.positives),
+                notes=prompt_set.notes, path=prompt_set.path,
+            )
+            replicate_results = run_suite(runner, replicate_set, replicate_cfg)
+            if watch is not None:
+                arm_changes += [c for c in watch.changes() if c not in arm_changes]
+            replicate_report = build_report(
+                replicate_set, replicate_results,
+                aggregate(replicate_results, case_threshold=args.case_threshold),
+                mode=runner.mode, threshold=args.threshold, exit_code=0,
+                meta={"arm": "present-replicate"},
+            )
+            # An arm report, not a run: it has no exit status of its own, and a 0 here
+            # read as "the replicate passed" even when every trial errored (P20 r6 A).
+            replicate_report["exit_code"] = None
         comparison = ablation_mod.compare(
             report, absent_report,
             non_pass=sorted(NON_PASS_ERRORS),
             builtin_names=BUILTIN_SKILL_NAMES,
             min_trials=args.ablation_min_trials,
             margin=args.ablation_margin,
+            replicate_report=replicate_report,
         )
         report["ablation"] = comparison
         report["ablation_absent_arm"] = absent_report
+        if replicate_report is not None:
+            report["ablation_replicate_arm"] = replicate_report
+
+        # The ablation arms run live too: what the watch saw after each of them, beyond
+        # what the primary arm already reported.
+        if watch is not None:
+            arm_changes = [c for c in arm_changes if c not in real_state_changes]
+            if arm_changes:
+                real_state_changes = real_state_changes + arm_changes
+                report["meta"]["real_state_changes"] = real_state_changes
+                print(f"[skill-evals] REAL STATE CHANGED during the ablation arms — "
+                      f"{len(arm_changes)} more path(s):", file=sys.stderr)
+                for line in arm_changes[:8]:
+                    print(f"[skill-evals]   - {line}", file=sys.stderr)
+                if args.fail_on_real_state_change and exit_code == EXIT_OK:
+                    exit_code = EXIT_BELOW_THRESHOLD
+                    state_exit = True
         if not args.json:
             print(ablation_mod.format_comparison(comparison))
 
@@ -2311,12 +2403,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             exit_code = exit_code or EXIT_BELOW_THRESHOLD
         report["exit_code"] = exit_code
 
+    if state_exit:  # the threshold did not set this exit; say what did
+        report["exit_cause"] = "real_state_change"
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         print(format_report(
             case_results, agg, mode=runner.mode, skill=skill,
-            threshold=args.threshold, exit_code=exit_code,
+            threshold=args.threshold, exit_code=exit_code, state_exit=state_exit,
         ))
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
 {
   "name": "broomva-skills",
-  "description": "The broomva/skills monorepo as plugins: one per category bucket (23), plus `broomva-skills` with all 119 skills.",
+  "description": "The broomva/skills monorepo as plugins: one per category bucket (23), plus `broomva-skills` with all 120 skills.",
   "owner": {
     "name": "Broomva",
     "url": "https://github.com/broomva"
@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "broomva-skills",
-      "description": "Every broomva/skills skill in one plugin: 119 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
+      "description": "Every broomva/skills skill in one plugin: 120 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
       "source": "./",
       "category": "productivity",
       "tags": [
@@ -116,7 +116,7 @@
     },
     {
       "name": "governance",
-      "description": "Governance & control skills from broomva/skills: agentic-control-kernel, architecture-design-principles, autoreview, bstack, correct, cross-review, dogfood, harness-engineering-playbook, keel, legal-readiness, spec-contract, unhobble.",
+      "description": "Governance & control skills from broomva/skills: agentic-control-kernel, architecture-design-principles, autoreview, bstack, checkable, correct, cross-review, dogfood, harness-engineering-playbook, keel, legal-readiness, spec-contract, unhobble.",
       "source": "./skills/governance",
       "strict": false,
       "skills": [

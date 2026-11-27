@@ -32,10 +32,13 @@ of a pack that was named; 2 the command
 could not run (no repository, no registry for check, git or PyYAML missing, a
 registry of a version this copy does not replay, an unreadable settings file,
 a file init would have to overwrite, a path that leaves the repository). On 2,
-init has written nothing unless it says which files it wrote. A dry run on a
-repository without a registry lists what would be written, is refused whenever
-the real run would be, and cannot say whether the replay will pass afterwards;
-on a repository with a registry it is the same run as the real one.
+init has written nothing unless it says which files it wrote; when the link
+that creates the registry answers with an error, the registry is not among the
+files it lists and may be there all the same. A dry run on a
+repository without a registry lists what would be written and is refused
+wherever the real run is refused before it tries a write; it tries none, so it
+cannot say that one will fail, nor whether the replay will pass afterwards. On
+a repository with a registry it is the same run as the real one.
 """
 from __future__ import annotations
 
@@ -43,6 +46,7 @@ import json
 import os
 import re
 import site
+import stat
 import subprocess
 import sys
 import tempfile
@@ -168,10 +172,15 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
     if not registry.is_file():
         raise Refused(f"there is no registry at {registry}" + ("; run init first" if not named else
                       " (--registry is read relative to the current directory, as the runner reads it)"))
+    replayable(registry)
+
+
+def replayable(registry: Path) -> None:
+    """The file is YAML, and a registry of a version this copy of the skill replays."""
     yaml = yaml_module()
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError) as exc:  # ValueError: a date that is no date
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise Refused(f"{registry} is not readable YAML ({exc})") from exc
     version = data.get("version") if isinstance(data, dict) else None
     if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true
@@ -601,21 +610,46 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
     return sorted(set(out))
 
 
-def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> None:
+class NotCreated(Exception):
+    """write_file was asked for a new file and the link that creates it did not answer yes.
+    `left` is the temporary file's name if removing it answered with an error other than that
+    it was already gone, else None."""
+
+    left: str | None = None
+
+
+class Taken(NotCreated):
+    """The link answered that the name is taken. What is there is kept."""
+
+
+class NotLinked(NotCreated):
+    """The link answered with any other error. The message is that error."""
+
+
+def write_file(path: Path, content: bytes, executable: bool, new: bool = False) -> str | None:
     """Whole or not at all: the content goes to a temporary file beside the target, which then
     replaces it, so an interrupted run never leaves a half-written settings file.
 
-    With `new`, the target must not exist: the temporary file is linked to its name, which the
-    filesystem does in one step and refuses when the name is taken (FileExistsError). A
-    filesystem that cannot link falls back to replacing, without that guarantee."""
+    With `new`, the target must not exist, and is never replaced: the finished temporary file
+    is linked to the target's name, which the filesystem does in one step and refuses when
+    the name is taken (Taken). There is no other way in: any other error from the link is
+    NotLinked. The link's answer is taken as given: nothing looks at the name before the link
+    or after it. link(2) can answer with an error for a link it made (its BUGS section), so
+    NotLinked does not mean the file is not there, and no caller says it does.
+
+    The answer is settled before the temporary file is removed, and a removal that answers
+    with an error does not change it: the temporary name is returned (written) or carried by
+    the exception as `left`, for the caller to say. When the removal succeeds, or the temporary
+    file is already gone, that value is None."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
     # hook is executable for its owner, and for whoever else may already read it.
     umask = os.umask(0)
     os.umask(umask)
-    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask
+    mode = (path.stat().st_mode & 0o777) if not new and path.is_file() else 0o666 & ~umask
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    failed: NotCreated | None = None
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
@@ -624,32 +658,50 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
             try:
                 os.link(tmp, path)
             except FileExistsError:
-                raise
-            except OSError:
-                os.replace(tmp, path)
-            else:
-                os.unlink(tmp)
+                failed = Taken(str(path))
+            except OSError as exc:
+                failed = NotLinked(str(exc))
         else:
             os.replace(tmp, path)
+            return None
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+    left = None
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        left = tmp
+    if failed:
+        failed.left = left
+        raise failed
+    return left
 
 
-def replay(root: Path, wrote: bool) -> int:
-    print("\ncorrect init: replaying the registry (correct.py check)\n")
-    status = run_tool("rules_check.py", root, [])
+def say_left(folder: Path, left: str | None) -> None:
+    if left:
+        print(f"correct init: removing this run's temporary file {folder / Path(left).name} answered with an "
+              "error.", file=sys.stderr, flush=True)
+
+
+def replay(root: Path, wrote: bool, registry: Path | None = None) -> int:
+    """Run the runner and say what its status means. With `registry`, the runner is told which
+    file to replay; without, it finds the repository's registry itself."""
+    if registry:
+        print(f"\ncorrect init: replaying the registry at {registry}\n")
+    else:
+        print("\ncorrect init: replaying the registry (correct.py check)\n")
+    status = run_tool("rules_check.py", root, ["--registry", str(registry)] if registry else [])
     if status == 0 and wrote:
         print("\ncorrect init: done. The starter rule is installed and its proofs and controls replay.\n"
               "  - Commit the new files on a branch. In CI run this skill's correct.py with:\n"
               "      check --ci --base origin/main\n"
               "  - The starter row is replayed, not yet certified on the real harness: replace its\n"
               "    `canary: {none, ticket}` ticket with one of yours, or write canary cases and run\n"
-              "    `correct.py canary run`.\n"
-              "  - To back out: delete the registry, the four files under scripts/, the PreToolUse entry\n"
-              "    that runs scripts/branch-first-hook.py in .claude/settings.json, and the policy file\n"
-              "    if init wrote it (it is listed above when it did).")
+              "    `correct.py canary run`.")
     # What follows is about a row that failed (exit 1). A runner that could not run (exit 2) has
     # said why itself, and init adds nothing to it.
     elif status == 1 and wrote:
@@ -658,20 +710,21 @@ def replay(root: Path, wrote: bool) -> int:
               "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
               "run `correct.py check` again.", file=sys.stderr)
     elif status == 1:
-        print(f"\ncorrect init: the replay exits {status}; its output is above. init changes nothing in a "
-              "repository that has a registry, so it repairs nothing either. Each FAIL row names the rule and "
+        print(f"\ncorrect init: the replay exits {status}; its output is above. init does not change a "
+              "registry that is there, so it does not repair one either. Each FAIL row names the rule and "
               "what did not hold.", file=sys.stderr)
     return status
 
 
-def on_registry(root: Path, registry: Path, packs: list[tuple[Path, dict]]) -> int:
-    """init on a registry that is there: compare it with the packs, replay it, write nothing."""
-    need_registry(root, [])  # first: a registry this skill does not read is compared with no pack
+def on_registry(root: Path, registry: Path, packs: list[tuple[Path, dict]], named: bool = False) -> int:
+    """init on a registry that is there, which the caller has read: compare it with the packs,
+    replay it, write nothing. With `named` (after a collision) the runner is told this file's
+    name; without, it finds the repository's registry itself, as `check` does."""
     whole = True
     if packs:
         lines, whole = pack_report(registry, packs)
         print("\n".join(lines))
-    status = replay(root, wrote=False)
+    status = replay(root, wrote=False, registry=registry if named else None)
     # A replay that passes with a pack row absent is not the state the caller asked for.
     return PACK_NOT_WHOLE if status == 0 and not whole else status
 
@@ -699,6 +752,7 @@ def init(root: Path, args: list[str]) -> int:
               "registry. Nothing written."
               + (" A pack is added only to a registry init writes, so --pack changes nothing here."
                  if packs else ""))
+        need_registry(root, [])  # first: a registry this skill does not read is compared with no pack
         return on_registry(root, registry, packs)
 
     try:
@@ -724,22 +778,43 @@ def init(root: Path, args: list[str]) -> int:
         print("correct init: dry run, nothing written.")
         return 0
     done: list[str] = []
+    # The registry this run writes is the plan's last write. Its path is the plan's, not the
+    # one looked at above: the look says where a registry would be FOUND, and with an empty
+    # new-style folder that is the old folder, while the plan writes into the new one.
+    target = writes[-1][0]
     for path, content, executable in writes:
         try:
-            # The registry is created, never replaced: it was not there when this run looked,
-            # and if another init has written one since, that one stands.
-            write_file(path, content, executable, new=path == registry)
-        except FileExistsError:
-            print(f"correct init: another init wrote {registry.relative_to(root)} while this one ran. "
-                  "This run wrote no registry; the one that is there is compared with the packs "
-                  "given here and replayed.", flush=True)
-            return on_registry(root, registry, packs)
+            # The registry is created, never replaced. It was not there when this run looked;
+            # if another init has published one since, that one stands, whatever is in it.
+            left = write_file(path, content, executable, new=path == target)
+        except NotCreated as why:
+            say_left(target.parent.relative_to(root), why.left)
+            name, before = target.relative_to(root), f"Written before it: {', '.join(done) or 'nothing'}."
+            if isinstance(why, NotLinked):
+                raise Refused(f"the link that creates {name} answered with an error ({why}). A registry may "
+                              f"be at that name all the same: this run did not look. {before} The starter "
+                              "hook and its settings entry are in place.") from why
+            print(f"correct init: the link that creates {name} answered that the name is taken. What is "
+                  f"there is kept. {before}", flush=True)
+            try:
+                a_file = stat.S_ISREG(os.stat(target).st_mode)
+            except FileNotFoundError:  # a link to nothing
+                a_file = False
+            except OSError as unreadable:
+                raise Refused(f"what is at {name} could not be read ({unreadable}).") from why
+            if not a_file:
+                raise Refused(f"there is no regular file at {name}.") from why
+            # This file, at this name, from here on: read here, and the runner is told its name
+            # (another governance folder may hold a registry too).
+            replayable(target)
+            return on_registry(root, target, packs, named=True)
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
                           "written, so the repository is not set up; fix the cause and run init again."
                           ) from exc
         done.append(str(path.relative_to(root)))
+        say_left(path.parent.relative_to(root), left)
     # Said here, before the replay, and flushed: a caller that stops a slow replay must already
     # have been told. It says what init did, not what the harness will do: settings can keep
     # the harness from running the hook (disableAllHooks), and the replay is what finds that.

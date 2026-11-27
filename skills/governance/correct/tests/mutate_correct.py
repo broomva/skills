@@ -8,12 +8,18 @@ tests/test_correct.py runs against the copy. A mutant the suite still passes on 
 no test holds.
 
   python3 -I tests/mutate_correct.py        prints one line per mutant, then "N killed, M survived"
+  python3 -I tests/mutate_correct.py --shard K/N
+                                            runs every N-th mutant, starting at the K-th, and first
+                                            prints "shard K/N: <run here> of <all> mutants". Each
+                                            mutant is in exactly one of the N shards. CI runs one
+                                            job per shard: one job for all of them passed its time limit.
 
 A mutant is killed only when a test fails; a run that timed out is reported as undecided.
 
 Exit 0 when every mutant is killed, 1 when one survives, 2 when a mutant no longer applies
-(its text is not found exactly once: the code changed, so the mutant must be rewritten) or
-when the unchanged suite does not pass (a red suite would "kill" every mutant).
+(its text is not found exactly once: the code changed, so the mutant must be rewritten),
+when the unchanged suite does not pass (a red suite would "kill" every mutant), or when
+--shard is not K/N with 1 <= K <= N. A mutant that no longer applies stops every shard.
 The live skill directory is never modified.
 """
 from __future__ import annotations
@@ -34,11 +40,65 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("an existing registry is overwritten",
      "    if registry.exists():\n", "    if False:\n"),
     ("an existing registry is reported as success without a replay",
-     "        print(\"\\n\".join(lines))\n    status = replay(root, wrote=False)\n",
+     "        print(\"\\n\".join(lines))\n    status = replay(root, wrote=False, registry=registry if named else None)\n",
      "        print(\"\\n\".join(lines))\n    status = 0\n"),
     ("a dry run on an existing registry exits 0 without replaying",
      "        return on_registry(root, registry, packs)\n\n    try:\n",
      "        return 0 if dry else on_registry(root, registry, packs)\n\n    try:\n"),
+    ("the registry is replaced when another init has published one",
+     "                os.link(tmp, path)\n", "                os.replace(tmp, path)\n"),
+    ("an init that finds the registry written meanwhile does not take the existing-registry path",
+     "        except NotCreated as why:\n", "        except ZeroDivisionError as why:\n"),
+    ("a write that stops on a name taken, or on any error, is handled as a registry not created",
+     "        except NotCreated as why:\n", "        except (NotCreated, OSError) as why:\n"),
+    ("a name taken by a folder or a dangling link is replayed",
+     "            if not a_file:\n", "            if False:\n"),
+    ("a link to nothing at the name is said to be something that cannot be read",
+     "            except FileNotFoundError:  # a link to nothing\n                a_file = False\n",
+     "            except FileNotFoundError:  # a link to nothing\n                raise\n"),
+    ("a name taken by something that cannot be read is a traceback",
+     "            except OSError as unreadable:\n", "            except ZeroDivisionError as unreadable:\n"),
+    ("a link that answers with an error is told as a name that was taken",
+     "            if isinstance(why, NotLinked):\n", "            if False:\n"),
+    ("an init that loses the race replays a registry of a version this copy does not replay",
+     "            replayable(target)\n", ""),
+    ("after a collision the registry is searched for again, not read at the plan's name",
+     "            replayable(target)\n", "            need_registry(root, [])\n"),
+    ("an init that loses the race reports success whatever the replay says",
+     "            return on_registry(root, target, packs, named=True)\n        except OSError as exc:\n",
+     "            on_registry(root, target, packs, named=True)\n            return 0\n        except OSError as exc:\n"),
+    ("after a collision the registry that is there is not compared with the packs given",
+     "            return on_registry(root, target, packs, named=True)\n", "            return on_registry(root, target, [], named=True)\n"),
+    ("after a collision the runner searches for a registry and may replay another folder's",
+     "            return on_registry(root, target, packs, named=True)\n", "            return on_registry(root, target, packs)\n"),
+    ("the path init looks at, not the one its plan writes, is the registry it creates as new",
+     "    target = writes[-1][0]\n", "    target = registry\n"),
+    ("a name that is taken is treated as a registry this run wrote",
+     "            except FileExistsError:\n                failed = Taken(str(path))\n",
+     "            except FileExistsError:\n                pass\n"),
+    ("a new file's name is looked at before the link, so a taken name that cannot be read is a failed write",
+     "    mode = (path.stat().st_mode & 0o777) if not new and path.is_file() else 0o666 & ~umask\n",
+     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask\n"),
+    ("the name is looked at after the link's answer, and that look's error replaces the link's",
+     "            except OSError as exc:\n                failed = NotLinked(str(exc))\n",
+     "            except OSError as exc:\n                os.stat(path)\n                failed = NotLinked(str(exc))\n"),
+    ("a link that answers with an error is treated as a registry this run wrote",
+     "            except OSError as exc:\n                failed = NotLinked(str(exc))\n",
+     "            except OSError as exc:\n                pass\n"),
+    ("a temporary file that cannot be removed turns a written or taken registry into a failed write",
+     "    except OSError:\n        left = tmp\n", "    except ZeroDivisionError:\n        left = tmp\n"),
+    ("a temporary file that is already gone is called left",
+     "    except FileNotFoundError:\n        pass\n    except OSError:\n        left = tmp\n",
+     "    except OSError:\n        left = tmp\n"),
+    ("a temporary file that is left is never said",
+     "    if left:\n        print(f\"correct init: removing this run's temporary file", "    if False:\n        print(f\"correct init: removing this run's temporary file"),
+    ("a run that did not create the registry does not say the temporary file it left",
+     "            say_left(target.parent.relative_to(root), why.left)\n", ""),
+    ("a run that wrote the registry does not say the temporary file it left",
+     "        say_left(path.parent.relative_to(root), left)\n", ""),
+    ("an existing registry of an unknown version is replayed by init, and compared with a pack",
+     "        need_registry(root, [])  # first: a registry this skill does not read is compared with no pack\n",
+     ""),
     ("a registry of an unknown version is replayed",
      "    if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true\n", "    if False:\n"),
     ("a registry version that is a float or a boolean is accepted",
@@ -148,10 +208,10 @@ MUTANTS: list[tuple[str, str, str]] = [
      "        os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n",
      "        os.chmod(tmp, mode | 0o111 if executable else mode)\n"),
     ("a replaced file loses its permissions",
-     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask\n", "    mode = 0o666 & ~umask\n"),
+     "    mode = (path.stat().st_mode & 0o777) if not new and path.is_file() else 0o666 & ~umask\n", "    mode = 0o666 & ~umask\n"),
     ("a new file ignores the caller's umask",
-     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask\n",
-     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o644\n"),
+     "    mode = (path.stat().st_mode & 0o777) if not new and path.is_file() else 0o666 & ~umask\n",
+     "    mode = (path.stat().st_mode & 0o777) if not new and path.is_file() else 0o644\n"),
     ("a registry path that is a directory is treated as a registry",
      "    if registry.exists() and not registry.is_file():\n", "    if False:\n"),
     ("a missing git is a traceback",
@@ -176,9 +236,26 @@ MUTANTS: list[tuple[str, str, str]] = [
      "    writes.append((gov / \"rules.yaml\", registry_with_packs(packs or []), False))\n    return writes, kept, conflicts\n",
      "    writes.insert(0, (gov / \"rules.yaml\", registry_with_packs(packs or []), False))\n    return writes, kept, conflicts\n"),
     ("a failed write is a traceback, not a refusal",
-     "        except OSError as exc:\n            raise Refused(", "        except ZeroDivisionError as exc:\n            raise Refused("),
+     "        except OSError as exc:\n            raise Refused(f\"could not write", "        except ZeroDivisionError as exc:\n            raise Refused(f\"could not write"),
     ("a failed write leaves its temporary file",
      "        if os.path.exists(tmp):\n            os.unlink(tmp)\n        raise\n", "        raise\n"),
+    # After a collision the replay line says which file is replayed.
+    ("the replay after a collision does not say which registry",
+     "        print(f\"\\ncorrect init: replaying the registry at {registry}\\n\")\n",
+     "        print(\"\\ncorrect init: replaying the registry (correct.py check)\\n\")\n"),
+    # The file is finished before its name appears. Linked first and written after (whatever the
+    # link answers), every test that looks once the call has returned still finds it whole: only
+    # the one that reads the name at the link does not.
+    ("a new file is linked before it is written",
+     "        with os.fdopen(fd, \"wb\") as handle:\n            handle.write(content)\n"
+     "        os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n"
+     "        if new:\n            try:\n                os.link(tmp, path)\n",
+     "        if not new:\n            with os.fdopen(fd, \"wb\") as handle:\n                handle.write(content)\n"
+     "            os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n"
+     "        if new:\n            try:\n                try:\n                    os.link(tmp, path)\n"
+     "                finally:\n"
+     "                    with os.fdopen(fd, \"wb\") as handle:\n                        handle.write(content)\n"
+     "                    os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n"),
     # A real in-place write: same content, same mode, no temporary file left. Only a test that
     # looks at WHICH file was written (a second name for the old one) can tell it from a replace.
     ("a file is written in place, not replaced whole",
@@ -196,7 +273,7 @@ MUTANTS: list[tuple[str, str, str]] = [
      "            if i + 1 >= len(argv):\n                raise Refused(\"--root needs a directory\")\n",
      "            if i + 1 >= len(argv):\n                break\n"),
     ("a registry that is not YAML is a traceback",
-     "    except (OSError, ValueError, yaml.YAMLError) as exc:  # ValueError: a date that is no date\n        raise Refused(f\"{registry} is not readable YAML",
+     "    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:\n        raise Refused(f\"{registry} is not readable YAML",
      "    except ZeroDivisionError as exc:\n        raise Refused(f\"{registry} is not readable YAML"),
     ("a pack that is not YAML is a traceback",
      "    except (OSError, ValueError, yaml.YAMLError) as exc:\n        raise Refused(f\"{path} is not readable YAML",
@@ -245,10 +322,6 @@ MUTANTS: list[tuple[str, str, str]] = [
      "    except (OSError, yaml.YAMLError) as exc:\n        raise Refused(f\"{path} is not readable YAML ({exc})\") from exc\n    if not isinstance(data, dict):\n        raise Refused(f\"{path} is not a pack: it is not a mapping\")"),
     ("a tool that refuses to run, with a message, is passed on as a failed row",
      "    if not isinstance(stop.code, str):\n        raise\n", "    raise\n"),
-    ("the registry is replaced when another init has written one",
-     "                os.link(tmp, path)\n", "                os.replace(tmp, path)\n"),
-    ("an init that finds the registry written meanwhile fails with a traceback",
-     "        except FileExistsError:\n            print(f\"correct init: another init wrote", "        except FileNotFoundError:\n            print(f\"correct init: another init wrote"),
     ("two spellings of one hook command are two hooks to init",
      "            name = \" \".join(script.split())  # the runner splits a hook's command on whitespace\n", "            name = script\n"),
     ("a reader that closed the pipe is reported as a registry row of the wrong kind",
@@ -263,9 +336,6 @@ MUTANTS: list[tuple[str, str, str]] = [
      "isinstance(r.get(\"id\"), str) and r[\"id\"].strip() for r in rules", "isinstance(r.get(\"id\"), str) and r[\"id\"] for r in rules"),
     ("a row whose level is an empty word passes",
      "    if not (isinstance(row.get(\"level\"), str) and row[\"level\"].strip()):\n", "    if not isinstance(row.get(\"level\"), str):\n"),
-    ("an existing registry of an unknown version is replayed by init, and compared with a pack",
-     "    need_registry(root, [])  # first: a registry this skill does not read is compared with no pack\n    whole = True\n",
-     "    whole = True\n"),
     ("a row that differs from the pack only in the kind of a value is called the same",
      "if r[\"id\"] in rows and not same(rows[r[\"id\"]], r)]", "if r[\"id\"] in rows and rows[r[\"id\"]] != r]"),
     ("a value two rows share is written as an anchor and aliases",
@@ -360,13 +430,24 @@ def run(snapshot: Path, target: Path, mutant: tuple[str, str, str]) -> tuple[str
     return name, "killed"
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
     plan = [(TARGET, m) for m in MUTANTS] + [(VENDORED, m) for m in VENDORED_MUTANTS]
+    k, n = 1, 1
+    if argv:
+        parts = argv[1].split("/") if len(argv) == 2 and argv[0] == "--shard" else []
+        if len(parts) != 2 or not all(p.isascii() and p.isdigit() for p in parts) or not 1 <= int(parts[0]) <= int(parts[1]):
+            print("usage: mutate_correct.py [--shard K/N], with 1 <= K <= N", file=sys.stderr)
+            return 2
+        k, n = int(parts[0]), int(parts[1])
     stale = [m[0] for target, m in plan if (SKILL / target).read_text().count(m[1]) != 1]
     if stale:
         for name in stale:
             print(f"mutant no longer applies (its text is not found exactly once): {name}", file=sys.stderr)
         return 2
+    everything = len(plan)
+    plan = plan[k - 1::n]
+    if argv:
+        print(f"shard {k}/{n}: {len(plan)} of {everything} mutants", flush=True)
     # One snapshot for the whole run: an edit to the live skill while this runs cannot mix
     # one version's code with another version's tests.
     with tempfile.TemporaryDirectory(prefix="correct-snapshot-") as snap:
@@ -391,4 +472,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
