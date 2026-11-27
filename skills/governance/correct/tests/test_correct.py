@@ -12,6 +12,7 @@ would pass all of the others too.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -694,6 +695,67 @@ class Packs(CorrectCase):
         registry = correct.governance_file(self.repo, "rules.yaml")
         registry.write_text("version: 1\nrules: 42\n")
         self.refused("does not read as a registry", "--pack", str(self.pack()))
+
+    def test_a_key_given_twice_in_a_pack_is_refused(self) -> None:
+        """PyYAML keeps the last of two `rules:` blocks and drops the first without a word."""
+        second = "rules:\n- {id: second, rule: x, level: gap, ticket: T-2, target: {level: hook, mechanism: m}}\n"
+        self.refused("the key `rules` is given twice", "--pack",
+                     str(self.pack(yaml.safe_dump(PACK, sort_keys=False) + second, "twice.yaml")))
+
+    def test_a_gap_row_whose_target_is_not_a_mapping_is_refused(self) -> None:
+        pack = dict(LATER, rules=[dict(LATER["rules"][0], target="hook")])
+        self.refused("the row `later-gap` cannot be replayed: `target` is not a mapping", "--pack",
+                     str(self.pack(pack, "target.yaml")))
+
+    def test_a_row_the_runner_stops_on_is_reported_as_could_not_run(self) -> None:
+        """init looks at the top level of a row only. Deeper, the runner stops on a value of the
+        wrong kind. That is exit 2 and what to do about it, not exit 1 and a bare traceback."""
+        row = copy.deepcopy(PACK["rules"][0])
+        row["proofs"][0]["event"] = "not a mapping"
+        proc = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[row]), "deep.yaml")))
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("rules_check.py stopped on an error it does not handle", proc.stderr)
+        self.assertIn("delete the registry and run init again", proc.stderr)
+        again = self.run_correct("check")
+        self.assertEqual(again.returncode, 2, again.stdout + again.stderr)
+        self.assertIn("this is not a failed row", again.stderr)
+
+    def test_a_row_that_differs_from_the_pack_only_in_the_kind_of_a_value_differs(self) -> None:
+        """False and 0 are equal to Python, and are different YAML and different JSON."""
+        held = copy.deepcopy(PACK["rules"][0])
+        held["proofs"][0]["event"]["tool_input"]["flag"] = False
+        first = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[held]))))
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        asked = copy.deepcopy(held)
+        asked["proofs"][0]["event"]["tool_input"]["flag"] = 0
+        proc = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[asked]), "zero.yaml")))
+        self.assertEqual(proc.returncode, correct.PACK_NOT_WHOLE, proc.stdout + proc.stderr)
+        self.assertIn("row(s) that differ from the pack: no-bad", proc.stdout)
+
+    def test_two_packs_whose_rows_share_a_value_are_written_out_and_read_back(self) -> None:
+        """PyYAML writes a shared value as an anchor and aliases, and names the first anchor of
+        every dump alike: two such packs in one registry did not read back as written."""
+        def shares(name: str) -> str:
+            return (f"pack: {name}\nregistry_version: 1\nrules:\n"
+                    f"- {{id: {name}-one, rule: one, source: a test, level: gap, ticket: T-1, target: &t {{level: hook, mechanism: m}}}}\n"
+                    f"- {{id: {name}-two, rule: two, source: a test, level: gap, ticket: T-2, target: *t}}\n")
+        proc = self.run_correct("init", "--pack", str(self.pack()), "--pack", str(self.pack(shares("a"), "a.yaml")),
+                                "--pack", str(self.pack(shares("b"), "b.yaml")))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        written = (self.repo / ".control" / "rules.yaml").read_text()
+        self.assertNotIn("&id", written)
+        self.assertNotIn("*id", written)
+        self.assertEqual([r["id"] for r in yaml.safe_load(written)["rules"]][-4:], ["a-one", "a-two", "b-one", "b-two"])
+
+    def test_the_notice_says_what_init_did_and_leaves_the_harness_to_the_replay(self) -> None:
+        """With hooks disabled in the settings the replay says the hook is not registered. The
+        notice before it must not have said that edits are refused from now on."""
+        (self.repo / ".claude" / "settings.json").write_text(json.dumps({"disableAllHooks": True}))
+        proc = self.run_correct("init")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("Where the harness runs it, an edit on main or master in this repository is refused", proc.stdout)
+        self.assertNotIn("From now on", proc.stdout)
+        self.assertIn("disableAllHooks", proc.stdout)
 
     def refused(self, needle: str, *args: str) -> None:
         before = tree(self.repo)
