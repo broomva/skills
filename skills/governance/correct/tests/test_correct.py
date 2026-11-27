@@ -555,7 +555,7 @@ class Init(CorrectCase):
                             unittest.mock.patch.object(correct, "run_tool", side_effect=AssertionError("replayed")), \
                             self.assertRaises(correct.Refused) as caught:
                         correct.init(repo, [])
-                    self.assertEqual(str(caught.exception), f"there is no file at {folder}/rules.yaml.")
+                    self.assertEqual(str(caught.exception), f"there is no regular file at {folder}/rules.yaml.")
                     self.assertIn(f"correct init: the link that creates {folder}/rules.yaml answered that the name "
                                   "is taken. What is there is kept. Written before it: scripts/branch-first-hook.py, ",
                                   out.getvalue())
@@ -662,9 +662,9 @@ class Init(CorrectCase):
     def test_the_registry_is_whole_at_the_instant_it_is_linked(self) -> None:
         """The reason for the link: no reader ever finds the registry short. At the moment the
         name appears, the file already holds every byte and its final mode. A review found the
-        suite passing with the write moved after the link, when a second init read nothing."""
-        target = self.tmp / "out" / "rules.yaml"
-        content = (SKILL / "assets" / "templates" / "rules.yaml").read_bytes()
+        suite passing with the write moved after the link, when a second init read nothing.
+        The template is larger than a write buffer and goes to the file at once; the short
+        content stays in the buffer until the file is closed."""
         real, seen = os.link, []
 
         def link(src: object, dst: object) -> None:
@@ -673,10 +673,15 @@ class Init(CorrectCase):
 
         umask = os.umask(0o022)
         self.addCleanup(os.umask, umask)
-        with unittest.mock.patch.object(correct.os, "link", link):
-            self.assertIsNone(correct.write_file(target, content, False, new=True))
-        self.assertEqual(seen, [(content, 0o644)])
-        self.assertEqual((target.read_bytes(), target.stat().st_mode & 0o777), (content, 0o644))
+        for folder, content in (("template", (SKILL / "assets" / "templates" / "rules.yaml").read_bytes()),
+                                ("short", b"version: 1\nrules: []\n")):
+            with self.subTest(content=folder):
+                target = self.tmp / folder / "rules.yaml"
+                seen.clear()
+                with unittest.mock.patch.object(correct.os, "link", link):
+                    self.assertIsNone(correct.write_file(target, content, False, new=True))
+                self.assertEqual(seen, [(content, 0o644)])
+                self.assertEqual((target.read_bytes(), target.stat().st_mode & 0o777), (content, 0o644))
 
     def test_where_the_filesystem_cannot_link_no_registry_is_written(self) -> None:
         """No fallback to replacing: a registry init cannot create safely is not created. The
@@ -855,6 +860,7 @@ class Init(CorrectCase):
             status = correct.init(self.repo, [])
         self.assertEqual(status, 1, out.getvalue() + err.getvalue())
         self.assertIn("the link that creates .control/rules.yaml answered that the name is taken", out.getvalue())
+        self.assertIn(f"\ncorrect init: replaying the registry at {registry}\n", out.getvalue())
         self.assertEqual(registry.read_bytes(), theirs)
         self.assertEqual(self.run_correct("check", "--registry", str(registry)).returncode, 1)
         self.assertEqual(self.run_correct("check", "--registry", str(other)).returncode, 0)

@@ -95,4 +95,4 @@ jobs:
           set -euo pipefail
           python3 -I tests/mutate_correct.py > /tmp/mutate.out 2>&1 || { cat /tmp/mutate.out; exit 1; }
           cat /tmp/mutate.out
-          grep -q '^99 killed, 0 survived$' /tmp/mutate.out
+          grep -q '^100 killed, 0 survived$' /tmp/mutate.out
