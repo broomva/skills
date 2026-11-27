@@ -19,7 +19,7 @@ A mutant is killed only when a test fails; a run that timed out is reported as u
 Exit 0 when every mutant is killed, 1 when one survives, 2 when a mutant no longer applies
 (its text is not found exactly once: the code changed, so the mutant must be rewritten),
 when the unchanged suite does not pass (a red suite would "kill" every mutant), or when
---shard is not K/N with 1 <= K <= N. A mutant that no longer applies stops every shard.
+--shard is not K/N with 1 <= K <= N (at most four digits each). A mutant that no longer applies stops every shard.
 The live skill directory is never modified.
 """
 from __future__ import annotations
@@ -326,8 +326,13 @@ MUTANTS: list[tuple[str, str, str]] = [
      "            name = \" \".join(script.split())  # the runner splits a hook's command on whitespace\n", "            name = script\n"),
     ("a reader that closed the pipe is reported as a registry row of the wrong kind",
      "except BrokenPipeError:\n    raise\n", ""),
-    ("init adds its advice about failed rows after a runner that could not run",
+    ("init adds its line about a failed replay after a runner that could not run",
      "    elif status == 1:\n", "    elif status != 0:\n"),
+    ("init adds its line about a failed first replay after a runner that could not run",
+     "    elif status == 1 and wrote:\n", "    elif status != 0 and wrote:\n"),
+    ("after a failed first replay init prescribes a repair",
+     "the replay exits {status}; its output is above.\",\n              file=sys.stderr)\n",
+     "the replay exits {status}; its output is above. Add a row for each FAIL row.\",\n              file=sys.stderr)\n"),
     ("a hook script named by nothing is accepted in hooks_not_rules",
      "            isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip() for", "            isinstance(k, str) and isinstance(v, str) and v.strip() for"),
     ("a hook's reason that is only spaces is accepted",
@@ -435,7 +440,7 @@ def main(argv: list[str]) -> int:
     k, n = 1, 1
     if argv:
         parts = argv[1].split("/") if len(argv) == 2 and argv[0] == "--shard" else []
-        if len(parts) != 2 or not all(p.isascii() and p.isdigit() for p in parts) or not 1 <= int(parts[0]) <= int(parts[1]):
+        if len(parts) != 2 or not all(p.isascii() and p.isdigit() and len(p) <= 4 for p in parts) or not 1 <= int(parts[0]) <= int(parts[1]):
             print("usage: mutate_correct.py [--shard K/N], with 1 <= K <= N", file=sys.stderr)
             return 2
         k, n = int(parts[0]), int(parts[1])

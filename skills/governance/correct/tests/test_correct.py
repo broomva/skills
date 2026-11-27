@@ -1083,7 +1083,11 @@ class Init(CorrectCase):
         proc = self.run_correct("init")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("policy gate no-force-push has a pattern but no row", proc.stdout)
-        self.assertIn("the files are written", proc.stderr)
+        # What happened, and no repair: the cause of a failed first replay is not init's to guess
+        # (a review found "add a row for each" printed for a policy file with no `gates.hard`).
+        self.assertTrue(proc.stderr.endswith(
+            "correct init: the files are written, and the replay exits 1; its output is above.\n"), proc.stderr)
+        self.assertNotIn("add a row", proc.stderr)
         self.assertTrue((self.repo / ".control" / "rules.yaml").is_file())
         self.assertIn("no-force-push", (self.repo / ".control" / "policy.yaml").read_text())  # theirs, untouched
 
@@ -1268,6 +1272,7 @@ class Packs(CorrectCase):
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertIn("rules_check.py stopped on an error it does not handle", proc.stderr)
         self.assertIn("The replay did not finish", proc.stderr)
+        self.assertNotIn("the files are written, and the replay exits", proc.stderr)
         again = self.run_correct("check")
         self.assertEqual(again.returncode, 2, again.stdout + again.stderr)
         self.assertIn("this is not a failed row", again.stderr)
@@ -1277,7 +1282,7 @@ class Packs(CorrectCase):
         self.assertEqual(existing.returncode, 2, existing.stdout + existing.stderr)
         self.assertIn("this is not a failed row", existing.stderr)
         self.assertNotIn("delete the registry", existing.stderr)
-        self.assertNotIn("Each FAIL row names", existing.stderr)
+        self.assertNotIn("so it does not repair one either", existing.stderr)
         self.assertNotIn("delete the registry", proc.stderr)
 
     def test_only_an_error_the_tool_does_not_handle_is_reported_as_a_stopped_runner(self) -> None:
@@ -1412,7 +1417,7 @@ class Packs(CorrectCase):
             proc = self.run_correct(*command)
             self.assertEqual(proc.returncode, 2, (command, proc.stdout + proc.stderr))
             self.assertIn("class_threshold must be a positive integer", proc.stderr)
-            self.assertNotIn("Each FAIL row", proc.stderr)
+            self.assertNotIn("so it does not repair one either", proc.stderr)
             self.assertNotIn("Traceback", proc.stderr)
 
     def test_a_registry_is_created_and_never_replaced(self) -> None:

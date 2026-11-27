@@ -702,17 +702,15 @@ def replay(root: Path, wrote: bool, registry: Path | None = None) -> int:
               "  - The starter row is replayed, not yet certified on the real harness: replace its\n"
               "    `canary: {none, ticket}` ticket with one of yours, or write canary cases and run\n"
               "    `correct.py canary run`.")
-    # What follows is about a row that failed (exit 1). A runner that could not run (exit 2) has
-    # said why itself, and init adds nothing to it.
+    # What follows is about a replay that exits 1. A runner that could not run (exit 2) has said
+    # why itself, and init adds nothing to it. Neither line names a repair: what did not hold
+    # is in the replay's output, and init does not know its cause.
     elif status == 1 and wrote:
-        print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
-              "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
-              "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
-              "run `correct.py check` again.", file=sys.stderr)
+        print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above.",
+              file=sys.stderr)
     elif status == 1:
         print(f"\ncorrect init: the replay exits {status}; its output is above. init does not change a "
-              "registry that is there, so it does not repair one either. Each FAIL row names the rule and "
-              "what did not hold.", file=sys.stderr)
+              "registry that is there, so it does not repair one either.", file=sys.stderr)
     return status
 
 
