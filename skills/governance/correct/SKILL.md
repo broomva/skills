@@ -61,13 +61,14 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   two `init` runs at once, one writes the registry; the other finds it there,
   or finds its name taken when it comes to write, and either way keeps the registry
   that is there: it is checked and replayed like any existing registry, and
-  anything else at that name is refused. A temporary file `init` cannot
-  remove is named on stderr. On a filesystem that cannot link, `init` exits 2 at
+  anything else at that name is refused. A temporary file whose
+  removal answers with an error is named on stderr. On a filesystem that cannot link, `init` exits 2 at
   that write with the link's error: the files before it are in place, the
   hook among them (BRO-4210). `init` takes the link's answer as given. A link
-  can answer with an error after it was made, and `init` then exits 2 with a
-  complete registry on disk; it does not say whether the registry was written,
-  and the next `init` finds what is there.
+  can answer with an error after it was made. If the answer is that the name is
+  taken, `init` treats its own registry as one that was there, and replays it.
+  For any other error it exits 2 with a complete registry on disk; it does not
+  say whether the registry was written, and the next `init` finds what is there.
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing

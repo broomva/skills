@@ -25,7 +25,9 @@ Exit codes: 0 done and the replay passed; 1 the replay failed; 2 the command
 could not run (no repository, no registry for check, git or PyYAML missing, a
 registry of a version this copy does not replay, an unreadable settings file,
 a file init would have to overwrite, a path that leaves the repository). On 2,
-init has written nothing unless it says which files it wrote. A dry run on a
+init has written nothing unless it says which files it wrote; when the link
+that creates the registry answers with an error, the registry is not among the
+files it lists and may be there all the same. A dry run on a
 repository without a registry lists what would be written and is refused
 wherever the real run is refused before it tries a write; it tries none, so it
 cannot say that one will fail, nor whether the replay will pass afterwards. On
@@ -154,6 +156,11 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
     if not registry.is_file():
         raise Refused(f"there is no registry at {registry}" + ("; run init first" if not named else
                       " (--registry is read relative to the current directory, as the runner reads it)"))
+    replayable(registry)
+
+
+def replayable(registry: Path) -> None:
+    """The file is YAML, and a registry of a version this copy of the skill replays."""
     if site.getusersitepackages() not in sys.path:
         sys.path.append(site.getusersitepackages())
     import yaml  # noqa: PLC0415  (need_yaml ran first)
@@ -323,20 +330,20 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
     With `new`, the target must not exist, and is never replaced: the finished temporary file
     is linked to the target's name, which the filesystem does in one step and refuses when
     the name is taken (Taken). There is no other way in: any other error from the link is
-    NotLinked. The link's answer is taken as given and nothing looks again. link(2) can answer
-    with an error for a link it made (its BUGS section), so NotLinked does not mean the file
-    is not there, and no caller says it does.
+    NotLinked. The link's answer is taken as given: nothing looks at the name before the link
+    or after it. link(2) can answer with an error for a link it made (its BUGS section), so
+    NotLinked does not mean the file is not there, and no caller says it does.
 
-    The answer is settled before the temporary file is removed, and a removal that fails does
-    not change it: the name that is left is returned (written) or carried by the exception,
-    for the caller to say. Otherwise the return is None."""
+    The answer is settled before the temporary file is removed, and a removal that answers
+    with an error does not change it: the temporary name is returned (written) or carried by
+    the exception, for the caller to say. Otherwise the return is None."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
     # private); a new one gets what the caller's umask allows, as any created file would. The
     # hook is executable for its owner, and for whoever else may already read it.
     umask = os.umask(0)
     os.umask(umask)
-    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask
+    mode = (path.stat().st_mode & 0o777) if not new and path.is_file() else 0o666 & ~umask
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
     failed: NotCreated | None = None
     try:
@@ -372,8 +379,8 @@ def write_file(path: Path, content: bytes, executable: bool, new: bool = False) 
 
 def say_left(folder: Path, left: str | None) -> None:
     if left:
-        print(f"correct init: this run could not remove its temporary file {folder / Path(left).name}.",
-              file=sys.stderr, flush=True)
+        print(f"correct init: removing this run's temporary file {folder / Path(left).name} answered with an "
+              "error.", file=sys.stderr, flush=True)
 
 
 def replay(root: Path, wrote: bool) -> int:
@@ -461,21 +468,20 @@ def init(root: Path, args: list[str]) -> int:
             say_left(target.parent.relative_to(root), why.left)
             name, before = target.relative_to(root), f"Written before it: {', '.join(done) or 'nothing'}."
             if isinstance(why, NotLinked):
-                raise Refused(f"the link that creates {name} answered with an error ({why}). {before} The "
-                              "starter hook and its settings entry are in place.") from why
-            print(f"correct init: the name {name} was taken while this run was writing its files (another "
-                  f"init, most likely). What is there is kept. {before}", flush=True)
-            try:  # what is there, and whether this copy replays it: one question, and any error is one answer
-                try:
-                    a_file = stat.S_ISREG(os.stat(target).st_mode)
-                except FileNotFoundError:  # a link to nothing
-                    a_file = False
-                if a_file:
-                    need_registry(root, [])
+                raise Refused(f"the link that creates {name} answered with an error ({why}). A registry may "
+                              f"be at that name all the same: this run did not look. {before} The starter "
+                              "hook and its settings entry are in place.") from why
+            print(f"correct init: the link that creates {name} answered that the name is taken. What is "
+                  f"there is kept. {before}", flush=True)
+            try:
+                a_file = stat.S_ISREG(os.stat(target).st_mode)
+            except FileNotFoundError:  # a link to nothing
+                a_file = False
             except OSError as unreadable:
                 raise Refused(f"what is at {name} could not be read ({unreadable}).") from why
             if not a_file:
                 raise Refused(f"what is at {name} is not a file.") from why
+            replayable(target)  # this file, at this name: no second search for where a registry might be
             return replay(root, wrote=False)
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
