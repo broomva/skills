@@ -511,9 +511,11 @@ def test_the_declared_writers_cover_the_fleet_paths_the_ticket_saw():
     home = os.path.expanduser("~/.config/broomva")
     for leaf in ("fleet/meta/dispatch-gate.jsonl", "fleet/meta/fleet-snapshot.json",
                  "fleet/meta/loop-health.json", "fleet/meta/outcomes/maint.json",
-                 "role/events.jsonl", "token-ledger/abc.json", "worktree-reaper/launchd.log"):
+                 "role/events.jsonl", "token-ledger/abc.json", "worktree-reaper/launchd.log",
+                 "p9/wait-marks/cc-c65d82c15fd336f9.json"):
         assert watch.is_background(f"{home}/{leaf}"), leaf
-    for leaf in ("p9/queue.json", "p9/watchers.json", "role/other.jsonl", "fleet/hosts.json"):
+    for leaf in ("p9/queue.json", "p9/watchers.json", "p9/wait-marks/nested/x.json.bak",
+                 "role/other.jsonl", "fleet/hosts.json"):
         assert not watch.is_background(f"{home}/{leaf}"), leaf
 
 

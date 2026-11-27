@@ -153,6 +153,11 @@ BACKGROUND_WRITERS: tuple[tuple[str, str], ...] = (
     ("~/.config/broomva/role/events.jsonl", "role-x prompt hooks in every agent session"),
     ("~/.config/broomva/token-ledger/*.json", "per-session token ledger hooks"),
     ("~/.config/broomva/worktree-reaper/*.log", "worktree reaper launchd job"),
+    # A live run on 2026-11-27 flagged p9/wait-marks/cc-<id>.json. <id> was the p9 session
+    # id of the operator's own agent session, whose productive-wait hook marks a wait on
+    # every delegate_task or PR watch. The rest of the p9 store stays watched.
+    ("~/.config/broomva/p9/wait-marks/*.json",
+     "p9 productive-wait hooks in every agent session (one mark per session)"),
 )
 
 

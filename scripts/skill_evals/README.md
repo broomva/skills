@@ -280,7 +280,8 @@ declared list of those writers, `jail.BACKGROUND_WRITERS`: each entry is a glob 
 the writer it belongs to.
 - A change under one of those globs goes into the report as `real_state_background`,
   with a one-line note, and is never counted as a leak.
-- Everything else, including the skill stores `p9` and `kg`, still counts.
+- Everything else still counts. That includes the `kg` store and all of the `p9` store
+  except its per-session wait marks.
 
 The list has one blind spot: a case that escaped into exactly those files would not be
 counted. `--verify-jail` covers that, so add a glob only for a writer that runs outside
