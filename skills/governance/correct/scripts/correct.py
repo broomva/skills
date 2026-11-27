@@ -247,11 +247,38 @@ def load_pack(path: Path) -> dict:
     if not isinstance(rules, list) or not rules or not all(
             isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"] for r in rules):
         raise Refused(f"{path}: `rules` is not a list of rows that each have an `id`")
+    for row in rules:
+        problem = row_shape(row)
+        if problem:
+            raise Refused(f"{path}: the row `{row['id']}` cannot be replayed: {problem}")
     not_rules = data.get("hooks_not_rules", {})
     if not isinstance(not_rules, dict) or not all(
             isinstance(k, str) and isinstance(v, str) and v for k, v in not_rules.items()):
         raise Refused(f"{path}: `hooks_not_rules` is not a mapping of hook script to the reason it enforces no rule")
     return data
+
+
+def row_shape(row: dict) -> str | None:
+    """What is wrong with the shape of a pack row, or None. Only the shapes the runner reads
+    without looking: a row with one of these wrong does not fail its replay, it stops the
+    runner with a traceback, and by then init has written the registry. This is not a schema
+    of the registry. Whether a well-shaped row holds is still the replay's to say."""
+    if not isinstance(row.get("level"), str):
+        return "`level` is not a word (hook, test, gap ...)"
+    enforcer = row.get("enforcer")
+    if enforcer is not None and not isinstance(enforcer, dict):
+        return "`enforcer` is not a mapping (`path:` and `registered:`)"
+    if isinstance(enforcer, dict) and enforcer.get("registered") is not None \
+            and not isinstance(enforcer["registered"], dict):
+        return "`enforcer.registered` is not a mapping (`event:`, `tools:`, `scope:`)"
+    for key in ("proofs", "controls", "known_misses"):
+        cases = row.get(key)
+        if cases is not None and not (isinstance(cases, list) and all(isinstance(c, dict) for c in cases)):
+            return f"`{key}` is not a list of cases"
+    hooks = row.get("covers_hooks")
+    if hooks is not None and not (isinstance(hooks, list) and all(isinstance(h, str) for h in hooks)):
+        return "`covers_hooks` is not a list of hook names"
+    return None
 
 
 def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:

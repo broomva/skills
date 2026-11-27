@@ -60,7 +60,9 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
 - **`init --pack FILE`** also adds a pack's rows to the registry it writes. A pack
   is the rows that prove hooks some other tool installed, shipped by that tool
   (`pack`, `registry_version`, `rules`, and `hooks_not_rules` for its hooks that
-  enforce nothing). bstack ships one for the hooks `bstack bootstrap` installs,
+  enforce nothing). A row whose shape the runner could not read (an `enforcer` that
+  is not a mapping, cases that are not a list) is refused before anything is
+  written. bstack ships one for the hooks `bstack bootstrap` installs,
   and bootstrap passes it. `init` installs nothing for a pack: it records the rows
   after the starter's and replays them. A file that is not a pack, a row id
   already in the registry, or two packs that disagree are refused with nothing

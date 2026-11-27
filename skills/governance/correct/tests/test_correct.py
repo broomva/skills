@@ -738,6 +738,20 @@ class Packs(CorrectCase):
                 ("`rules` is not a list of rows", dict(PACK, rules={"no-bad": row})),
                 ("`rules` is not a list of rows", dict(PACK, rules=[{k: v for k, v in row.items() if k != "id"}])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules=["notify.sh"])),
+                # Shapes the runner reads without looking: written, they stop it with a traceback
+                # and leave a registry that the next init keeps. Found by a review.
+                ("the row `no-bad` cannot be replayed: `enforcer` is not a mapping",
+                 dict(PACK, rules=[dict(row, enforcer="scripts/gate.py")])),
+                ("the row `no-bad` cannot be replayed: `enforcer.registered` is not a mapping",
+                 dict(PACK, rules=[dict(row, enforcer=dict(row["enforcer"], registered="PreToolUse"))])),
+                ("the row `no-bad` cannot be replayed: `proofs` is not a list of cases",
+                 dict(PACK, rules=[dict(row, proofs={"from": "x"})])),
+                ("the row `no-bad` cannot be replayed: `controls` is not a list of cases",
+                 dict(PACK, rules=[dict(row, controls=["git status"])])),
+                ("the row `no-bad` cannot be replayed: `level` is not a word",
+                 dict(PACK, rules=[{k: v for k, v in row.items() if k != "level"}])),
+                ("the row `later-gap` cannot be replayed: `covers_hooks` is not a list of hook names",
+                 dict(LATER, rules=[dict(LATER["rules"][0], covers_hooks="notify.sh")])),
                 ("the row id `branch-first` is already in the registry", dict(PACK, rules=[dict(row, id="branch-first")])),
         ):
             self.refused(needle, "--pack", str(self.pack(data)))
