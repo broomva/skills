@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import signal
 import shutil
 import site
 import subprocess
@@ -677,7 +678,38 @@ class Packs(CorrectCase):
         proc = self.run_correct("init")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertTrue((self.repo / "scripts" / "branch-first-hook.py").is_file())
-        self.assertIn("an edit on main or master in this repository is refused", proc.stderr)
+        # Said before the replay starts, so a caller that stops the replay has already read it.
+        notice = proc.stdout.index("an edit on main or master in this repository is refused")
+        self.assertLess(notice, proc.stdout.index("replaying the registry"))
+
+    def test_the_first_init_with_a_pack_replays_the_packs_rows_itself(self) -> None:
+        """Not a later `check`: init's own exit status is the replay's. The gate here allows
+        everything before init runs, so the pack's row must fail inside init."""
+        (self.repo / "scripts" / "gate.py").write_text(ALLOW_ALL)
+        proc = self.run_correct("init", "--pack", str(self.pack()))
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stdout, r"FAIL +hook +no-bad")
+
+    def test_a_registry_that_holds_no_list_of_rows_is_refused_not_a_traceback(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        registry = correct.governance_file(self.repo, "rules.yaml")
+        registry.write_text("version: 1\nrules: 42\n")
+        self.refused("does not read as a registry", "--pack", str(self.pack()))
+
+    def test_a_polite_stop_while_a_file_is_written_leaves_no_temporary_file(self) -> None:
+        """A caller's time limit arrives as SIGTERM. The handler raises, write_file unwinds and
+        removes what it was writing."""
+        target = self.tmp / "out" / "file.txt"
+        real_replace = os.replace
+        def stopped(_src: str, _dst: object) -> None:
+            correct.stop_on_sigterm(signal.SIGTERM, None)
+        self.addCleanup(setattr, os, "replace", real_replace)
+        os.replace = stopped
+        with self.assertRaises(SystemExit) as caught:
+            correct.write_file(target, b"x", False)
+        os.replace = real_replace
+        self.assertEqual(caught.exception.code, 143)
+        self.assertEqual(list(target.parent.iterdir()), [])
 
     def refused(self, needle: str, *args: str) -> None:
         before = tree(self.repo)

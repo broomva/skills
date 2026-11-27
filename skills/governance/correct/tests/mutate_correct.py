@@ -232,10 +232,17 @@ MUTANTS: list[tuple[str, str, str]] = [
      "    packs = [(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]\n",
      "    packs = [] if governance_file(root, \"rules.yaml\").exists() else "
      "[(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]\n"),
-    ("a failed first replay does not say that main is closed",
-     "              \"The starter rule's hook is installed whatever the replay says: from now on an edit on main \"\n"
-     "              \"or master in this repository is refused; work on a branch.\",\n",
-     "              \"\",\n"),
+    ("the notice that main is closed comes after the replay, if the replay ends",
+     "          \"this repository is refused; work on a branch.\", flush=True)\n    return replay(root, wrote=True)\n",
+     "          \"this repository is refused; work on a branch.\", flush=True) if False else None\n"
+     "    status = replay(root, wrote=True)\n"
+     "    print(\"an edit on main or master in this repository is refused\")\n    return status\n"),
+    ("the first init with a pack reports success without replaying",
+     "    return replay(root, wrote=True)\n", "    return 0 if packs else replay(root, wrote=True)\n"),
+    ("a registry that holds no list of rows is a traceback",
+     "    if not isinstance(rules, list):\n", "    if False:\n"),
+    ("a polite stop is ignored, so nothing unwinds",
+     "    raise SystemExit(143)\n", "    return None\n"),
     ("pack keys of two types are a traceback",
      "    unknown = sorted(str(k) for k in set(data) - PACK_KEYS)\n", "    unknown = sorted(set(data) - PACK_KEYS)\n"),
     ("a pack's name may be any text, a second line included",

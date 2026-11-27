@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import site
 import subprocess
 import sys
@@ -309,9 +310,12 @@ def pack_report(registry: Path, packs: list[tuple[Path, dict]]) -> tuple[list[st
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError):
         data = None
-    if not isinstance(data, dict):
-        return [f"  {registry.name} does not read as a registry, so what it holds of the pack(s) is unknown"], False
-    rows = {r.get("id"): r for r in data.get("rules") or [] if isinstance(r, dict)}
+    rules = data.get("rules") if isinstance(data, dict) else None
+    if not isinstance(rules, list):
+        # Not a failed row: nothing was replayed. The command could not run on this file.
+        raise Refused(f"{registry} does not read as a registry (a mapping whose `rules` is a list); "
+                      "nothing written and nothing replayed")
+    rows = {r.get("id"): r for r in rules if isinstance(r, dict) and isinstance(r.get("id"), str)}
     held = data.get("hooks_not_rules") if isinstance(data.get("hooks_not_rules"), dict) else {}
     lines, whole = [], True
     for path, pack in packs:
@@ -488,7 +492,6 @@ def replay(root: Path, wrote: bool) -> int:
     status = run_tool("rules_check.py", root, [])
     if status == 0 and wrote:
         print("\ncorrect init: done. The starter rule is installed and its proofs and controls replay.\n"
-              "  - From now on an edit on main or master in this repository is refused; work on a branch.\n"
               "  - Commit the new files on a branch. In CI run this skill's correct.py with:\n"
               "      check --ci --base origin/main\n"
               "  - The starter row is replayed, not yet certified on the real harness: replace its\n"
@@ -501,9 +504,7 @@ def replay(root: Path, wrote: bool) -> int:
         print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
               "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
               "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
-              "run `correct.py check` again. Output with no rows means the runner itself stopped.\n"
-              "The starter rule's hook is installed whatever the replay says: from now on an edit on main "
-              "or master in this repository is refused; work on a branch.",
+              "run `correct.py check` again. Output with no rows means the runner itself stopped.",
               file=sys.stderr)
     elif status != 0:
         print(f"\ncorrect init: the replay exits {status}; its output is above. init changes nothing in a "
@@ -577,10 +578,21 @@ def init(root: Path, args: list[str]) -> int:
                           "written, so the repository is not set up; fix the cause and run init again."
                           ) from exc
         done.append(str(path.relative_to(root)))
+    # Said here, before the replay, and flushed: the hook is active from this line on whatever
+    # the replay finds, and a caller that stops a slow replay must already have been told.
+    print("correct init: the starter rule's hook is installed. From now on an edit on main or master in "
+          "this repository is refused; work on a branch.", flush=True)
     return replay(root, wrote=True)
 
 
+def stop_on_sigterm(_signum: int, _frame: object) -> None:
+    """A caller's time limit arrives as SIGTERM. Raising unwinds through write_file, which
+    removes the temporary file it was writing; the default action would leave it behind."""
+    raise SystemExit(143)
+
+
 def main(argv: list[str]) -> int:
+    signal.signal(signal.SIGTERM, stop_on_sigterm)
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(__doc__)
         return 0 if argv else 2
