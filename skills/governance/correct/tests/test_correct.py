@@ -641,9 +641,43 @@ class Packs(CorrectCase):
         self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
         before = tree(self.repo)
         proc = self.run_correct("init", "--pack", str(self.pack(LATER, "later.yaml")))
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("--pack changes nothing here", proc.stdout)
         self.assertEqual(tree(self.repo), before)
+        # The replay passes (the first pack owns every hook), and the registry lacks the later
+        # pack's row: that is said, and it is not exit 0.
+        self.assertIn("pack   later", proc.stdout)
+        self.assertIn("is NOT all in this registry", proc.stdout)
+        self.assertIn(f"row(s) missing: {LATER['rules'][0]['id']}", proc.stdout)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+
+    def test_a_registry_that_holds_the_whole_pack_says_so_and_exits_0(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        for extra in ((), ("--dry-run",)):
+            proc = self.run_correct("init", "--pack", str(self.pack()), *extra)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("pack   demo: all 1 row(s) are in this registry", proc.stdout)
+            self.assertNotIn("NOT all", proc.stdout)
+
+    def test_a_registry_whose_row_differs_from_the_pack_is_reported(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        row = PACK["rules"][0]
+        newer = dict(PACK, rules=[dict(row, rule=row["rule"] + " (reworded in a later release)")],
+                     hooks_not_rules=dict(PACK["hooks_not_rules"], **{"later-hook.sh": "added later"}))
+        proc = self.run_correct("init", "--pack", str(self.pack(newer, "newer.yaml")))
+        self.assertIn(f"row(s) that differ from the pack: {row['id']}", proc.stdout)
+        self.assertIn("hooks_not_rules missing or with another reason: later-hook.sh", proc.stdout)
+        self.assertNotIn("row(s) missing", proc.stdout)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+
+    def test_a_file_that_is_not_a_pack_is_refused_on_a_registry_that_exists_too(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        self.refused("it is not a mapping", "--pack", str(self.pack("[]", "bad.yaml")))
+
+    def test_a_replay_that_fails_after_the_files_are_written_still_says_main_is_closed(self) -> None:
+        proc = self.run_correct("init")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertTrue((self.repo / "scripts" / "branch-first-hook.py").is_file())
+        self.assertIn("an edit on main or master in this repository is refused", proc.stderr)
 
     def refused(self, needle: str, *args: str) -> None:
         before = tree(self.repo)
@@ -659,7 +693,12 @@ class Packs(CorrectCase):
                 ("is not readable YAML", "rules: [unclosed"),
                 ("it is not a mapping", "[]"),
                 ("key(s) a pack does not carry: hosts", dict(PACK, hosts={"mac": ["x"]})),
+                # YAML keys of two types: found as a traceback by a review, not by a test.
+                ("key(s) a pack does not carry: 1, foo",
+                 "pack: demo\nregistry_version: 1\nrules: [{id: no-bad}]\n1: a\nfoo: b\n"),
                 ("does not name itself", {k: v for k, v in PACK.items() if k != "pack"}),
+                ("is not a plain name", dict(PACK, pack="demo\nhosts: {mac: [x]}")),
+                ("is not a plain name", dict(PACK, pack="-demo")),
                 ("`registry_version: 2`", dict(PACK, registry_version=2)),
                 ("`registry_version: 1.0`", dict(PACK, registry_version=1.0)),
                 ("`registry_version: None`", {k: v for k, v in PACK.items() if k != "registry_version"}),

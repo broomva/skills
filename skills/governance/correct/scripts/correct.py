@@ -12,6 +12,8 @@
       registry init writes: a pack is the rows that prove hooks some other tool
       installed (bstack ships one for the hooks `bstack bootstrap` installs).
       init installs nothing for a pack; it only records and replays its rows.
+      On a repository that already has a registry, --pack changes nothing and
+      init says which of the pack's rows that registry holds.
   correct.py check  [--root DIR] [runner options ...]
       Replay every row against its real enforcer (scripts/rules_check.py in this
       skill): --ci, --json, --markdown, --only ID ..., --base REF, --replay-only.
@@ -24,7 +26,9 @@ else the git checkout the current directory is in. The runner and the canary run
 from this skill's directory, outside the repository they judge; the enforcers
 and the registry rows are the repository's own files.
 
-Exit codes: 0 done and the replay passed; 1 the replay failed; 2 the command
+Exit codes: 0 done and the replay passed; 1 the replay failed; 3 (init --pack on
+a repository that has a registry) the replay passed and the registry lacks part
+of a pack that was named; 2 the command
 could not run (no repository, no registry for check, git or PyYAML missing, a
 registry of a version this copy does not replay, an unreadable settings file,
 a file init would have to overwrite, a path that leaves the repository). On 2,
@@ -37,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import site
 import subprocess
 import sys
@@ -183,6 +188,8 @@ def run_tool(script: str, root: Path, args: list[str]) -> int:
 
 
 PACK_KEYS = {"pack", "registry_version", "rules", "hooks_not_rules"}
+PACK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+PACK_NOT_WHOLE = 3  # init: the registry exists, replays, and lacks part of a pack named with --pack
 
 
 def take_packs(args: list[str]) -> tuple[list[str], list[str]]:
@@ -220,12 +227,17 @@ def load_pack(path: Path) -> dict:
         raise Refused(f"{path} is not readable YAML ({exc})") from exc
     if not isinstance(data, dict):
         raise Refused(f"{path} is not a pack: it is not a mapping")
-    unknown = sorted(set(data) - PACK_KEYS)
+    # YAML keys need not be strings (`1: a`), and Python will not order an int against a str.
+    unknown = sorted(str(k) for k in set(data) - PACK_KEYS)
     if unknown:
-        raise Refused(f"{path} has key(s) a pack does not carry: {', '.join(map(str, unknown))} "
+        raise Refused(f"{path} has key(s) a pack does not carry: {', '.join(unknown)} "
                       f"(a pack has {', '.join(sorted(PACK_KEYS))})")
     if not isinstance(data.get("pack"), str) or not data["pack"].strip():
         raise Refused(f"{path} does not name itself (`pack: <name>`)")
+    # The name goes into a comment line of the registry, so it is one plain word.
+    if not PACK_NAME.fullmatch(data["pack"]):
+        raise Refused(f"{path}: the pack name {data['pack']!r} is not a plain name "
+                      "(letters, digits, `.`, `_` and `-`, starting with a letter or digit)")
     version = data.get("registry_version")
     if type(version) is not int or version not in REGISTRY_VERSIONS:
         raise Refused(f"{path} says `registry_version: {version!r}`, and this copy of the skill writes "
@@ -244,13 +256,16 @@ def load_pack(path: Path) -> dict:
 def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
     """The starter registry with each pack's rows after its own row. The starter is kept byte
     for byte (its header is the field reference a reader starts from); the packs' rows and
-    their `hooks_not_rules` are appended as YAML. The result is read back and compared before
-    it is returned, so what init writes is what was asked for or init refuses."""
+    their `hooks_not_rules` are appended as YAML. The result is read back and compared, whole
+    document against whole document (the starter's keys unchanged, its rows followed by every
+    pack row value for value, the merged `hooks_not_rules`), before it is returned: what init
+    writes is what was asked for, or init refuses."""
     template = (TEMPLATES / "rules.yaml").read_bytes()
     if not packs:
         return template
     yaml = yaml_module()
-    ids = [r["id"] for r in yaml.safe_load(template)["rules"]]
+    starter = yaml.safe_load(template)
+    ids = [r["id"] for r in starter["rules"]]
     not_rules: dict[str, str] = {}
     text = template.decode("utf-8").rstrip("\n") + "\n"
     for path, pack in packs:
@@ -272,11 +287,52 @@ def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
         back = yaml.safe_load(text)
     except yaml.YAMLError:
         back = None
-    if not isinstance(back, dict) or [r.get("id") for r in back.get("rules") or []] != ids \
-            or (back.get("hooks_not_rules") or {}) != not_rules:
+    expected = dict(starter, rules=starter["rules"] + [row for _path, pack in packs for row in pack["rules"]])
+    if not_rules:
+        expected["hooks_not_rules"] = not_rules
+    if back != expected:
         raise Refused("the registry with the packs' rows does not read back as written; nothing written "
                       "(this is a defect in correct.py or in the starter registry's layout)")
     return text.encode("utf-8")
+
+
+def pack_report(registry: Path, packs: list[tuple[Path, dict]]) -> tuple[list[str], bool]:
+    """What an existing registry holds of each pack: (lines to print, all of every pack present).
+
+    init never edits a registry that exists, so a pack that came later, or a newer copy of one,
+    is not in it. Saying nothing would leave two silent states: hooks no row owns (the replay
+    names those) and rows the tool has since added for hooks already owned (nothing names
+    those). A row counts as present when the registry has a row with its id and the same
+    content; a `hooks_not_rules` entry when the registry has the script with the same reason."""
+    yaml = yaml_module()
+    try:
+        data = yaml.safe_load(registry.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        data = None
+    if not isinstance(data, dict):
+        return [f"  {registry.name} does not read as a registry, so what it holds of the pack(s) is unknown"], False
+    rows = {r.get("id"): r for r in data.get("rules") or [] if isinstance(r, dict)}
+    held = data.get("hooks_not_rules") if isinstance(data.get("hooks_not_rules"), dict) else {}
+    lines, whole = [], True
+    for path, pack in packs:
+        missing = [r["id"] for r in pack["rules"] if r["id"] not in rows]
+        differ = [r["id"] for r in pack["rules"] if r["id"] in rows and rows[r["id"]] != r]
+        hooks = [s for s, why in (pack.get("hooks_not_rules") or {}).items() if held.get(s) != why]
+        if not (missing or differ or hooks):
+            lines.append(f"  pack   {pack['pack']}: all {len(pack['rules'])} row(s) are in this registry")
+            continue
+        whole = False
+        lines.append(f"  pack   {pack['pack']} ({path}) is NOT all in this registry:")
+        if missing:
+            lines.append(f"           row(s) missing: {', '.join(missing)}")
+        if differ:
+            lines.append(f"           row(s) that differ from the pack: {', '.join(differ)}")
+        if hooks:
+            lines.append(f"           hooks_not_rules missing or with another reason: {', '.join(hooks)}")
+    if not whole:
+        lines.append("  init does not edit a registry that exists: copy what is listed from the pack file by "
+                     "hand, or keep your own rows for those hooks and read this as a difference, not a defect.")
+    return lines, whole
 
 
 def governance_dir(root: Path) -> Path:
@@ -445,7 +501,9 @@ def replay(root: Path, wrote: bool) -> int:
         print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
               "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
               "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
-              "run `correct.py check` again. Output with no rows means the runner itself stopped.",
+              "run `correct.py check` again. Output with no rows means the runner itself stopped.\n"
+              "The starter rule's hook is installed whatever the replay says: from now on an edit on main "
+              "or master in this repository is refused; work on a branch.",
               file=sys.stderr)
     elif status != 0:
         print(f"\ncorrect init: the replay exits {status}; its output is above. init changes nothing in a "
@@ -465,6 +523,8 @@ def init(root: Path, args: list[str]) -> int:
     if git_toplevel(root) != root:
         raise Refused(f"{root} is not the top of a git checkout; run init at the repository root")
     need_yaml()  # also on a dry run: it reports what the real run would do, and that run would stop here
+    # Read before anything else: a file that is not a pack is refused whether or not a registry exists.
+    packs = [(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]
     registry = governance_file(root, "rules.yaml")
     if registry.exists() and not registry.is_file():
         raise Refused(f"{registry.relative_to(root)} exists and is not a regular file; nothing written")
@@ -475,11 +535,16 @@ def init(root: Path, args: list[str]) -> int:
         print(f"correct init: {registry.relative_to(root)} exists, so this repository already has a "
               "registry. Nothing written."
               + (" A pack is added only to a registry init writes, so --pack changes nothing here."
-                 if pack_files else ""))
+                 if packs else ""))
+        whole = True
+        if packs:
+            lines, whole = pack_report(registry, packs)
+            print("\n".join(lines))
         need_registry(root, [])
-        return replay(root, wrote=False)
+        status = replay(root, wrote=False)
+        # A replay that passes with a pack row absent is not the state the caller asked for.
+        return PACK_NOT_WHOLE if status == 0 and not whole else status
 
-    packs = [(path, load_pack(path)) for path in (Path(f).expanduser().absolute() for f in pack_files)]
     try:
         writes, kept, conflicts = plan(root, packs)
         stops = blocked(root, writes)

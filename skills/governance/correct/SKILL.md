@@ -64,7 +64,11 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   and bootstrap passes it. `init` installs nothing for a pack: it records the rows
   after the starter's and replays them. A file that is not a pack, a row id
   already in the registry, or two packs that disagree are refused with nothing
-  written, and a pack is never added to a registry that already exists.
+  written. A pack is never added to a registry that already exists: there `init`
+  lists the pack's rows and `hooks_not_rules` entries the registry lacks or holds
+  differently, replays what is there, and exits 3 when the replay passes and
+  something of the pack is absent. Copy those rows by hand, or keep your own rows
+  for the same hooks.
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
