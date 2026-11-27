@@ -166,7 +166,7 @@ def replayable(registry: Path) -> None:
     import yaml  # noqa: PLC0415  (need_yaml ran first)
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    except Exception as exc:  # reading, decoding, parsing, and what a constructor raises on a value: all one answer
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise Refused(f"{registry} is not readable YAML ({exc})") from exc
     version = data.get("version") if isinstance(data, dict) else None
     if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true
@@ -310,7 +310,8 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
 
 class NotCreated(Exception):
     """write_file was asked for a new file and the link that creates it did not answer yes.
-    `left` is the temporary file's name if removing it answered with an error, else None."""
+    `left` is the temporary file's name if removing it answered with an error other than that
+    it was already gone, else None."""
 
     left: str | None = None
 
@@ -383,9 +384,11 @@ def say_left(folder: Path, left: str | None) -> None:
               "error.", file=sys.stderr, flush=True)
 
 
-def replay(root: Path, wrote: bool) -> int:
+def replay(root: Path, wrote: bool, registry: Path | None = None) -> int:
+    """Run the runner and say what its status means. With `registry`, the runner is told which
+    file to replay; without, it finds the repository's registry itself."""
     print("\ncorrect init: replaying the registry (correct.py check)\n")
-    status = run_tool("rules_check.py", root, [])
+    status = run_tool("rules_check.py", root, ["--registry", str(registry)] if registry else [])
     if status == 0 and wrote:
         print("\ncorrect init: done. The starter rule is installed and its proofs and controls replay.\n"
               "  - From now on an edit on main or master in this repository is refused; work on a branch.\n"
@@ -481,8 +484,10 @@ def init(root: Path, args: list[str]) -> int:
                 raise Refused(f"what is at {name} could not be read ({unreadable}).") from why
             if not a_file:
                 raise Refused(f"what is at {name} is not a file.") from why
-            replayable(target)  # this file, at this name: no second search for where a registry might be
-            return replay(root, wrote=False)
+            # This file, at this name, from here on: read here and replayed by name, with no second
+            # search for where a registry might be (another governance folder may hold one).
+            replayable(target)
+            return replay(root, wrote=False, registry=target)
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
