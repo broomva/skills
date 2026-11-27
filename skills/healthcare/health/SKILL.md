@@ -17,6 +17,8 @@ trigger_keywords:
   - vo2max, body battery, training load, ctl, atl, tsb, race readiness
   - my fitness, workout history, longevity, peter attia metric, andy galpin metric, stacy sims
   - daily health note, health dashboard, healthos
+  - daily check-in, health check-in, log my day, how am i doing, mood check
+  - wellbeing, holistic health, mental health check-in, spiritual health
   - meal photo, log my meal, what did I eat, calories, macros, protein, food log, nutrition
 ---
 
@@ -91,6 +93,7 @@ Invoke this skill on any trigger in the frontmatter `trigger_keywords` list. The
 | "Am I overreached?" / training-load read | [TrainingLoad](Workflows/TrainingLoad.md) | `health synthesis` (CTL/ATL/TSB field) |
 | "Recovery review" / 7-day rollup | [RecoveryReview](Workflows/RecoveryReview.md) | `health synthesis` (hrv_cv_30d + recovery_score) |
 | "VO2max arc" / longevity check | [VO2maxArc](Workflows/VO2maxArc.md) | `health synthesis` (vo2max_arc field) |
+| "Check in" / how am I doing (physical, mental, spiritual) | [CheckIn](Workflows/CheckIn.md) | AskUserQuestion → `health checkin record` |
 | "Log this meal" / meal photo / "what did I eat" | [MealLog](Workflows/MealLog.md) | `health food find` → `health food log` |
 | "Coach me / what should I do" | [Coaching](Workflows/Coaching.md) | **NOT IMPLEMENTED in v1** |
 
@@ -142,6 +145,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB — 42d/7d EWMA of Garmin per-activity training load |
 | **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
 | **VO2maxArc** | `health synthesis` → `vo2max_arc` | Quarterly check; longevity tracking | `{quarter_key: mean_vo2max}` |
+| **CheckIn** | AskUserQuestion → `health checkin record` / `show` | Daily (scheduled) or on request; holistic: physical, mental, spiritual | one journal line + a 4–6 line reflection |
 | **MealLog** | `health food import-usda DIR` once; `health food find Q`; `health food log --item [+]src:id=grams ...`; `health food show [--days N] [--totals]` | Meal photo or description; food vs energy/sleep/training questions | `Meal` (items, totals, ±30% low/high band) in a private `meals.jsonl` |
 | **Coaching** | *(not implemented in v1)* | — | — |
 
@@ -298,6 +302,7 @@ The L3 cadence is deliberate: skills compose; primitives stabilize. Don't promot
 
 **Per-workflow docs:**
 - [Workflows/Sync.md](Workflows/Sync.md)
+- [Workflows/CheckIn.md](Workflows/CheckIn.md)
 - [Workflows/MealLog.md](Workflows/MealLog.md)
 - [Workflows/Backfill.md](Workflows/Backfill.md)
 - [Workflows/Status.md](Workflows/Status.md)
