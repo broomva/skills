@@ -1440,6 +1440,31 @@ class Packs(CorrectCase):
         ):
             self.refused(needle, "--pack", str(self.pack(data)))
 
+    def test_each_condition_of_the_row_shape_check_refuses_a_pack_on_its_own(self) -> None:
+        """One pack for each condition `row_shape` tests, so that taking any one of them out is
+        noticed. Two reviews each found one that no case reached: `known_misses`, then the kind
+        of the entries of `hosts` (YAML reads the unquoted host name `on` as true)."""
+        row, gap = PACK["rules"][0], LATER["rules"][0]
+        cases = [
+            ("`level` is not a word", dict(row, level=3)),
+            ("`level` is not a word", dict(row, level="  ")),
+            ("`enforcer` is not a mapping", dict(row, enforcer=["scripts/gate.py"])),
+            ("`enforcer.registered` is not a mapping", dict(row, enforcer=dict(row["enforcer"], registered=["PreToolUse"]))),
+            *[(f"`{key}` is not a list of cases", dict(row, **{key: value}))
+              for key in ("proofs", "controls", "known_misses") for value in ("a case", ["a case"], {"event": {}})],
+            ("`covers_hooks` is not a list of hook names", dict(gap, covers_hooks={"notify.sh": True})),
+            ("`covers_hooks` is not a list of hook names", dict(gap, covers_hooks=["notify.sh", 3])),
+            ("`target` is not a mapping", dict(gap, target=["hook"])),
+            ("`hosts` is not a list of host group names", dict(row, hosts={"mac": True})),
+            ("`hosts` is not a list of host group names", dict(row, hosts=["mac", True])),
+            ("`occurrences` is not a list", dict(row, occurrences={"n": 2})),
+        ]
+        for needle, bad in cases:
+            with self.subTest(needle=needle, row=repr(bad)[:80]):
+                base = LATER if bad["id"] == gap["id"] else PACK
+                self.refused(f"the row `{bad['id']}` cannot be replayed: {needle}", "--pack",
+                             str(self.pack(dict(base, rules=[bad]), "shape.yaml")))
+
     def test_a_pack_file_that_is_not_there_or_not_named_is_refused(self) -> None:
         self.refused("there is no pack at", "--pack", str(self.tmp / "absent.yaml"))
         self.refused("--pack needs a file", "--pack")
