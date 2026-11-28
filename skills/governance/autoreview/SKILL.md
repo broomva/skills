@@ -226,36 +226,26 @@ reference's peer-review adapter. Keep the scientific score separate from P20.
    allowed after the final score is that round's own ledger entry, and the
    report names both hashes: the text scored, and the text with its ledger.
 
-**Round budget.** Take the round *counting* from `/cross-review` (record each
-round, ask `cross-review round budget` before another and follow the status it
-returns; there is no fixed number of rounds), but **not its pass
-mark**: its 7/10 is for code. A design round passes only on `spec-contract`'s
-rule above. To log a design round with `cross-review round record-round`,
-decide pass or fail with `spec-contract`'s rule first, then pass `--score` as:
+**Round budget.** Whether another round may run is `/cross-review`'s
+controller's answer: record each round with `cross-review round record-round`,
+run `cross-review round budget` before another, and follow the status it
+returns, as the cross-review skill describes ("The round budget is dynamic").
+Do **not** take its pass mark: its 7/10 is for code. A design round passes only on
+`spec-contract`'s rule above. Decide pass or fail with that rule first, then
+record the round with `--score` as:
 
 - a **passing** round: the total scaled to ten and rounded down
   (`total × 10 / 15`; 11/15 logs as 7, 12/15 as 8);
-- a **failing** round: the same, **capped at 6**. The budget script treats a
-  score of 7 or more as passed and closes, so without the cap a round at
-  11/15 that fails on R2 or R4 would close the budget on a failure.
+- a **failing** round: the same, **capped at 6**, because the controller reads
+  a round score of 7 or more as a pass.
 
-Write both halves with their scale — `--score=N/10` and one
-`--stratum=L:N/10:PASS|FAIL` per stratum carrying the stratum's own
-`spec-contract` verdict. The ledger refuses a raw `/15` score and any bare
-integer (BRO-2615), and it refuses a round of 7 or more over a stratum marked
-FAIL -- so the cap is enforced for every stratum you record. It cannot see a
-stratum you leave out: a failing stratum omitted from `--stratum` is not
-detected, which is the writer's assertion, same as `--strata`.
-
-Pass `--defect=yes` when the round located at least one checkable defect in
-the text (a contradiction, a wrong number, a gate that cannot be checked as
-written), `no` otherwise. Two consecutive `no` rounds raise a signal: the budget
-refuses another round until you record a decision (`cross-review round
-record-decision`), which is right: a score that stays low without a locatable
-defect is a structural problem, not a wording one. Keep `R1..R5` and the
-unscaled total in the ledger. When the budget returns STOP without a pass,
-stop: do not keep editing. Record the last round's
-objections as open, and the verdict follows the output contract.
+Write `--score=N/10` for the round and one `--stratum=L:N/10:PASS|FAIL` per
+stratum with that stratum's own `spec-contract` verdict. Pass `--defect=yes`
+when the round located at least one checkable defect in the text (a
+contradiction, a wrong number, a gate that cannot be checked as written), `no`
+otherwise. Keep `R1..R5` and the unscaled total in the ledger. When the
+controller says to stop without a pass, stop: do not keep editing. Record the
+last round's objections as open, and the verdict follows the output contract.
 
 ### 6. Report
 
