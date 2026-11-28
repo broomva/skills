@@ -1929,12 +1929,13 @@ def _compare_files(repo: str, basehead: str) -> tuple[str | None, list | None]:
 def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
                          listing: "PRListing | None" = None,
                          base_sha: str | None = None,
-                         comments_before: str | None = None) -> PRGateFacts:
+                         comments: list | None = None) -> PRGateFacts:
     """`listing` is the caller's COMPLETE file listing, pre-rename paths
     included (gh pr view caps its own at 100 and drops renames); without it, a
-    longer PR fails the `classifiable` gate. `comments_before` (an ISO time)
-    keeps only comments written at or before it, BEFORE the verdict marker is
-    chosen, so every carry-forward fact describes that marker (p20-at-merge)."""
+    longer PR fails the `classifiable` gate. `comments`, when given, replaces
+    the view's comments BEFORE the verdict marker is chosen, so every
+    carry-forward fact describes the marker the caller judges (p20-at-merge
+    passes the comments as they stood at the merge)."""
     f = PRGateFacts(pr=pr)
     fields = ("state,isDraft,baseRefName,headRefOid,mergeStateStatus,mergeable,"
               "reviewDecision,reviews,comments,additions,deletions,"
@@ -1956,10 +1957,8 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
     f.review_decision = (view.get("reviewDecision") or "").upper()
     f.reviews = list(view.get("reviews") or [])
     f.comments = list(view.get("comments") or [])
-    if comments_before is not None:
-        # A comment with no time cannot be placed before the merge; drop it.
-        f.comments = [c for c in f.comments
-                      if (c.get("createdAt") or "\uffff") <= comments_before]
+    if comments is not None:
+        f.comments = list(comments)
     f.additions = int(view.get("additions") or 0)
     f.deletions = int(view.get("deletions") or 0)
     f.files = [x.get("path") for x in view.get("files") or [] if x.get("path")]
@@ -4243,34 +4242,46 @@ def _branch_before_merge(repo: str, sha: str, pr: int) -> str:
     if len(commits) > 1:
         last = json.loads(commits[-1])
         if ((c.get("commit") or {}).get("message") or "") == last:
-            raise _AtMergeUnknown("a rebase merge of several commits: the branch before it is unknown")
+            raise _AtMergeUnknown("a rebase of several commits, or a squash with the last commit's message: the branch before it is unknown")
     return parents[0]
 
 
-def _comments_unsettled_at(repo: str, pr: int, merged_at: str, bots: Iterable[str]) -> str | None:
-    """Why the comments the rule read at the merge cannot be reconstructed now,
-    or None. A trusted comment written by the merge and edited at or after it
-    (an edit can remove a verdict as well as change one, so what the comment
-    says now is not looked at); a trusted comment in the same second as the
-    merge (timestamps are whole seconds, so its side of the merge is unknown);
-    any comment deleted at or after the merge (a deleted FAIL can uncover an
-    older PASS). GitHub's updated_at moves on an edit, not on a reaction."""
+def _comments_at_merge(repo: str, pr: int, merged_at: str, bots: Iterable[str]) -> list[dict]:
+    """The PR's comments as the merge gate read them at the merge, from ONE read
+    that carries each comment's body and its edit time together, so nothing
+    can change between judging a comment's history and reading what it says.
+    Deletions are read after that snapshot, so a deletion at any point after
+    the merge, including during this read, is seen.
+
+    Unknown (raises _AtMergeUnknown) when a trusted comment written by the
+    merge was edited at or after it (an edit can remove a verdict as well as
+    change one); when a trusted comment is in the merge's own second
+    (timestamps are whole seconds); or when any comment was deleted at or after
+    the merge (a deleted FAIL can uncover an older PASS). GitHub's updated_at
+    moves on an edit, not on a reaction."""
     rows = _gh_paginated_list([
         "gh", "api", "--paginate", f"repos/{repo}/issues/{pr}/comments", "--jq",
-        '.[] | [.user.login, .author_association, .created_at, .updated_at] | @tsv'])
+        '.[] | {login: .user.login, association: .author_association,'
+        ' created: .created_at, updated: .updated_at, body: .body} | @json'])
     if rows is None:
-        return "could not read the pull request's comments"
+        raise _AtMergeUnknown("could not read the pull request's comments")
+    kept: list[dict] = []
     for row in rows:
-        cols = row.split("\t")
-        if len(cols) != 4:
-            return "a comment row did not parse"
-        login, assoc, created, updated = cols
-        if assoc.upper() not in _TRUSTED_ASSOCIATIONS or _is_bot(login, bots):
-            continue
-        if created == merged_at:
-            return "a trusted comment was written in the same second as the merge"
-        if created < merged_at and updated > created and updated >= merged_at:
-            return "a comment the rule reads was edited after the merge"
+        try:
+            c = json.loads(row)
+            login, assoc = str(c["login"] or ""), str(c["association"] or "")
+            created, updated = str(c["created"]), str(c["updated"])
+            body = c["body"] if isinstance(c["body"], str) else ""
+        except (ValueError, KeyError, TypeError):
+            raise _AtMergeUnknown("a comment row did not parse") from None
+        trusted = assoc.upper() in _TRUSTED_ASSOCIATIONS and not _is_bot(login, bots)
+        if trusted and created == merged_at:
+            raise _AtMergeUnknown("a trusted comment was written in the same second as the merge")
+        if trusted and created < merged_at and updated > created and updated >= merged_at:
+            raise _AtMergeUnknown("a comment the rule reads was edited after the merge")
+        if created < merged_at:
+            kept.append({"author": {"login": login}, "authorAssociation": assoc,
+                         "body": body, "createdAt": created})
     owner, _, name = repo.partition("/")
     q = ("query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){"
          "timelineItems(itemTypes:[COMMENT_DELETED_EVENT],first:100){pageInfo{hasNextPage} "
@@ -4282,12 +4293,12 @@ def _comments_unsettled_at(repo: str, pr: int, merged_at: str, bots: Iterable[st
         # totalCount ignores the itemTypes filter (it counted 19 on a PR with no
         # deletion, 2026-11-28); whether the page is complete is hasNextPage.
         if items["pageInfo"]["hasNextPage"] is not False:
-            return "too many deleted comments to read"
+            raise _AtMergeUnknown("too many deleted comments to read")
         if any((n or {}).get("createdAt", "") >= merged_at for n in items["nodes"]):
-            return "a comment was deleted after the merge"
+            raise _AtMergeUnknown("a comment was deleted after the merge")
     except (KeyError, TypeError):
-        return "could not read the pull request's deleted comments"
-    return None
+        raise _AtMergeUnknown("could not read the pull request's deleted comments") from None
+    return kept
 
 
 def _require_carry_forward_facts(g: MergeGates, f: PRGateFacts) -> None:
@@ -4353,12 +4364,6 @@ def cmd_p20_at_merge(args: argparse.Namespace) -> int:
         return EXIT_USAGE
     repo = resolve_repo(args.repo)
     try:
-        local = load_policy(args.policy).auto_merge
-    except PolicyError:
-        # Its message can quote a policy value; the kind of failure is enough.
-        print("p20-at-merge: the local policy file is missing or malformed", file=sys.stderr)
-        return EXIT_POLICY_ERROR
-    try:
         found = _merged_pr(repo, sha)
         if found is None:
             line = f"P20 at merge, commit {sha[:12]}: no pull request merged as this commit."
@@ -4368,15 +4373,24 @@ def cmd_p20_at_merge(args: argparse.Namespace) -> int:
         pr, merged_at = found
         before = _branch_before_merge(repo, sha, pr)
         listing = _gh_pr_listing(pr, repo)
-        governing, _ = authoritative_auto_merge_policy(local, repo, before, listing.paths)
+        governing, source = authoritative_auto_merge_policy(None, repo, before, listing.paths)
+        if governing is None and (source.startswith("local policy")
+                                  or source == "BROOMVA_P9_POLICY pin"):
+            # The branch before the merge has no policy file, or an operator
+            # pinned one: only then does a local copy judge. Its errors can
+            # quote its values, so they print as fixed text.
+            try:
+                governing = load_policy(args.policy).auto_merge
+            except Exception:  # noqa: BLE001 -- any failure to read it is one answer
+                print("p20-at-merge: the local policy file is missing or malformed",
+                      file=sys.stderr)
+                return EXIT_POLICY_ERROR
         if governing is None or governing.gates is None:
             raise _AtMergeUnknown("the policy before the merge is unreadable or has no gates")
         g = governing.gates
-        unsettled = _comments_unsettled_at(repo, pr, merged_at, g.review_bots)
-        if unsettled:
-            raise _AtMergeUnknown(unsettled)
+        at_merge = _comments_at_merge(repo, pr, merged_at, g.review_bots)
         f = gather_pr_gate_facts(pr, repo, g, listing=listing, base_sha=before,
-                                 comments_before=merged_at)
+                                 comments=at_merge)
         if not f.head_sha or f.head_sha != listing.head_sha:
             raise _AtMergeUnknown("could not read the pull request")
         _require_carry_forward_facts(g, f)

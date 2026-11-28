@@ -39,11 +39,12 @@ def _run(view, *, pulls=None, edited=None, extra_comments=(), parents=(BASE,),
         if cmd[:3] == ["gh", "api", "--paginate"] and f"/pulls/{PR}/commits" in joined:
             return _Run("".join(json.dumps(m) + "\n" for m in pr_commits))
         if cmd[:3] == ["gh", "api", "--paginate"] and "/comments" in joined:
-            rows = [f"{c['author']['login']}\t{c['authorAssociation']}\t{c['createdAt']}\t"
-                    f"{edited.get(i, c['createdAt'])}\n"
-                    for i, c in enumerate(view["comments"])]
-            rows += ["\t".join(r) + "\n" for r in extra_comments]
-            return _Run("".join(rows))
+            rows = [{"login": c["author"]["login"], "association": c["authorAssociation"],
+                     "created": c["createdAt"], "updated": edited.get(i, c["createdAt"]),
+                     "body": c["body"]} for i, c in enumerate(view["comments"])]
+            rows += [{"login": lg, "association": asc, "created": cr, "updated": up, "body": "text"}
+                     for lg, asc, cr, up in extra_comments]
+            return _Run("".join(json.dumps(r) + "\n" for r in rows))
         if cmd[:2] == ["gh", "api"] and cmd[-1] == f"repos/broomva/test/commits/{MERGE}":
             return _Run(json.dumps({"sha": MERGE, "commit": {"message": merge_message},
                                     "parents": [{"sha": x} for x in parents]}))
@@ -384,11 +385,46 @@ def test_the_policy_is_the_one_before_the_merge(p9, monkeypatch, capsys, tmp_pat
     assert any(f"/contents/.control/policy.yaml?ref={BASE}" in c for c in calls), calls
 
 
-def test_a_malformed_local_policy_prints_none_of_its_values(p9, monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize("old,new", [
+    ("pass_score: 7", "pass_score: REVIEW_SENTINEL"),            # PolicyError
+    ("max_concurrent_prs: 1", "max_concurrent_prs: REVIEW_SENTINEL"),  # ValueError (round 3)
+])
+def test_a_malformed_local_policy_prints_none_of_its_values(p9, monkeypatch, capsys, tmp_path, old, new):
     bad = tmp_path / "policy.yaml"
-    bad.write_text(_GATED.read_text().replace("pass_score: 7", "pass_score: REVIEW_SENTINEL"))
+    assert old in _GATED.read_text()
+    bad.write_text(_GATED.read_text().replace(old, new))
+    monkeypatch.setattr(p9.subprocess, "run", _run(_view()))  # the pin makes the local copy judge
     rc, out, err = _main(p9, capsys, "--policy", str(bad))
     assert rc == p9.EXIT_POLICY_ERROR and "REVIEW_SENTINEL" not in out + err, err
+
+
+def test_a_missing_local_policy_does_not_stop_an_audit_the_base_policy_governs(
+        p9, monkeypatch, capsys, tmp_path):
+    monkeypatch.delenv("BROOMVA_P9_POLICY", raising=False)
+    monkeypatch.setattr(p9.subprocess, "run", _run(_view(), base_policy=_GATED.read_text()))
+    rc, out, _ = _main(p9, capsys, "--policy", str(tmp_path / "absent.yaml"))
+    assert rc == p9.EXIT_OK and "names the final head" in out, (rc, out)
+
+
+def test_the_comments_judged_are_the_snapshot_whose_history_was_checked(p9, monkeypatch, capsys):
+    # gh pr view (a later read) would show only the PASS; the snapshot holds a
+    # newer FAIL. The judgement must come from the snapshot.
+    view = _view(comments=[_comment(_marker())])
+    inner = _run(_view(comments=[_comment(_marker()),
+                                 _comment(_marker(verdict="FAIL", score=3), at="2026-09-26T11:00:00Z")]))
+
+    def run(cmd, *a, **k):
+        if cmd[:3] == ["gh", "pr", "view"] and "-q" not in cmd and cmd[-1] != "headRefOid":
+            return _Run(json.dumps(dict(_fake_view_shape(view))))
+        return inner(cmd, *a, **k)
+    monkeypatch.setattr(p9.subprocess, "run", run)
+    rc, out, _ = _main(p9, capsys)
+    assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and "fails or stops" in out, (rc, out)
+
+
+def _fake_view_shape(view):
+    every = [x["path"] for x in view["files"]]
+    return dict(view, files=view["files"][:100], changedFiles=len(every))
 
 
 @pytest.mark.parametrize("deleted,want", [
@@ -435,7 +471,7 @@ def test_a_rebase_of_several_commits_cannot_be_told(p9, monkeypatch, capsys):
     monkeypatch.setattr(p9.subprocess, "run", _run(
         _view(), parents=(E2,), merge_message="second", pr_commits=("first", "second")))
     rc, _, err = _main(p9, capsys)
-    assert rc == p9.EXIT_EXTERNAL_ERROR and "rebase" in err, err
+    assert rc == p9.EXIT_EXTERNAL_ERROR and "rebase" in err and "squash" in err, err
 
 
 def test_more_deleted_comments_than_one_page_cannot_be_told(p9, monkeypatch, capsys):
