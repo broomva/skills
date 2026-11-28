@@ -1765,6 +1765,33 @@ def _p20_recorded_binds(g: MergeGates, f: PRGateFacts, m: P20Marker | None) -> s
             f"mentions P20-VERDICT can be edited")
 
 
+def p20_rule(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
+    """The review rule alone: the `p20` gate and, for a PR that touches a
+    governance path, the `governance_strata` gate. `evaluate_merge_gates` uses
+    it before a merge and `p20-at-merge` after one, so the two cannot judge a
+    PR differently (BRO-4175: a second copy of this rule in a workspace script
+    disagreed with p9 on its first day, over the carry-forward)."""
+    out: list[GateResult] = []
+    marker = latest_p20_marker(f.comments, g.review_bots)
+    why = p20_triggers(g, f)
+    if why:
+        ok, reason = _p20_verdict(g, f, marker)
+        out.append(GateResult("p20", ok, f"required ({'; '.join(why)}): {reason}"))
+    else:
+        hold = _p20_recorded_binds(g, f, marker)
+        out.append(GateResult("p20", hold is None, hold or "under the P20 threshold"))
+    gov = governance_paths_touched(g, f)
+    if gov:
+        need = g.governance.required_strata
+        have = marker.strata if marker and marker.verdict == "PASS" else ()
+        missing = [s for s in need if s not in have]
+        out.append(GateResult(
+            "governance_strata", not missing,
+            f"governance-class ({', '.join(gov)}) needs strata {','.join(need)}; "
+            + (f"missing {','.join(missing)}" if missing else "all recorded")))
+    return out
+
+
 def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
     """Pure: judge one PR's facts against the gates. Merge iff every result is
     ok. Every gate is evaluated (no short-circuit) so a block names ALL causes."""
@@ -1824,13 +1851,8 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
          else f"{f.unresolved_threads} unresolved review thread(s)")
 
     marker = latest_p20_marker(f.comments, g.review_bots)
-    why = p20_triggers(g, f)
-    if why:
-        ok, reason = _p20_verdict(g, f, marker)
-        gate("p20", ok, f"required ({'; '.join(why)}): {reason}")
-    else:
-        hold = _p20_recorded_binds(g, f, marker)
-        gate("p20", hold is None, hold or "under the P20 threshold")
+    rule = {r.gate: r for r in p20_rule(g, f)}
+    out.append(rule["p20"])
 
     # Something independent must have looked at this PR: a check that actually
     # ran (not a bot, not an aggregate that passes vacuously when nothing else
@@ -1851,12 +1873,7 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
 
     gov = governance_paths_touched(g, f)
     if gov:
-        need = g.governance.required_strata
-        have = marker.strata if marker and marker.verdict == "PASS" else ()
-        missing = [s for s in need if s not in have]
-        gate("governance_strata", not missing,
-             f"governance-class ({', '.join(gov)}) needs strata {','.join(need)}; "
-             + (f"missing {','.join(missing)}" if missing else "all recorded"))
+        out.append(rule["governance_strata"])
         if f.all_checks is None:
             gate("governance_checks", False, "checks could not be read")
         else:
@@ -4152,6 +4169,144 @@ def cmd_gate_check(args: argparse.Namespace) -> int:
     return EXIT_OK if d["action"] == "auto" else EXIT_AUTO_MERGE_BLOCKED
 
 
+# ─── p20-at-merge: the review rule, read after a merge (BRO-4175) ───────────
+# What a trigger is, in fixed words. p20_triggers' own text names paths, which
+# a PR author chose; the at-merge line goes to a CI log and holds none of it.
+_TRIGGER_KINDS = (("LOC >", "more changed lines than the threshold"),
+                  ("files >", "more files than the threshold"),
+                  ("always-review path", "an always-review path"),
+                  ("unmeasured", "a file with no counted lines"),
+                  ("governance-class", "a governance path"))
+
+
+class _AtMergeUnknown(P9Error):
+    """Raised with fixed words only: p20-at-merge prints its text."""
+
+
+def _trigger_kind(trigger: str) -> str:
+    for needle, kind in _TRIGGER_KINDS:
+        if needle in trigger:
+            return kind
+    return "another trigger"
+
+
+def _merged_pr(repo: str, sha: str) -> tuple[int, str] | None:
+    """The PR whose merge made this commit, and when it merged; None when no
+    PR did (a direct push). Raises P9Error when GitHub cannot be read."""
+    pulls = _gh_json(["gh", "api", f"repos/{repo}/commits/{sha}/pulls"])
+    if not isinstance(pulls, list):
+        raise _AtMergeUnknown("could not read which pull request made this commit")
+    for pr in pulls:
+        if isinstance(pr, dict) and pr.get("merge_commit_sha") == sha and pr.get("merged_at"):
+            return int(pr["number"]), str(pr["merged_at"])
+    return None
+
+
+def _verdict_edited_after(repo: str, pr: int, merged_at: str, bots: Iterable[str]) -> bool:
+    """Whether a comment the rule reads (trusted, not a bot, naming P20-VERDICT,
+    written before the merge) changed after it. Then what it said at the merge
+    is unknown. GitHub's updated_at moves on an edit."""
+    rows = _gh_paginated_list([
+        "gh", "api", "--paginate", f"repos/{repo}/issues/{pr}/comments", "--jq",
+        '.[] | select(.body | ascii_downcase | contains("p20-verdict"))'
+        ' | [.user.login, .author_association, .created_at, .updated_at] | @tsv'])
+    if rows is None:
+        raise _AtMergeUnknown("could not read the pull request's comments")
+    for row in rows:
+        cols = row.split("\t")
+        if len(cols) != 4:
+            raise _AtMergeUnknown("a comment row did not parse")
+        login, assoc, created, updated = cols
+        # A comment written after the merge is not read at all (p20_at_merge),
+        # so only one written before it and changed after it is unknown.
+        if (assoc.upper() in _TRUSTED_ASSOCIATIONS and not _is_bot(login, bots)
+                and created <= merged_at < updated):
+            return True
+    return False
+
+
+def p20_at_merge(g: MergeGates, f: PRGateFacts, merged_at: str) -> dict:
+    """Judge a merged PR by the review rule as it stood at the merge: comments
+    written after `merged_at` are not read. Pure. Returns covered, a fixed
+    `state`, the trigger kinds and each rule gate's outcome; no reason text,
+    since reasons quote paths."""
+    at_merge = dataclasses.replace(
+        f, comments=[c for c in f.comments if (c.get("createdAt") or "") <= merged_at])
+    results = p20_rule(g, at_merge)
+    needed = list(dict.fromkeys(_trigger_kind(t) for t in p20_triggers(g, at_merge)))
+    marker = latest_p20_marker(at_merge.comments, g.review_bots)
+    by = {r.gate: r.ok for r in results}
+    if all(by.values()):
+        if marker is None:
+            state = "no verdict was needed"
+        elif marker.sha == f.head_sha:
+            state = "a passing verdict names the final head"
+        else:
+            state = "a passing verdict carries to the final head"
+    elif marker is None:
+        state = "no verdict"
+    elif marker.verdict == "MALFORMED":
+        state = "the last verdict does not parse"
+    elif marker.verdict != "PASS" or marker.score < g.p20.pass_score:
+        state = "the last verdict fails or stops"
+    elif not by["p20"]:
+        state = "a passing verdict does not cover the final head"
+    else:
+        state = "a passing verdict lacks a stratum a governance path needs"
+    return {"pr": f.pr, "covered": all(by.values()), "state": state, "needed": needed,
+            "gates": [{"gate": r.gate, "ok": r.ok} for r in results]}
+
+
+def cmd_p20_at_merge(args: argparse.Namespace) -> int:
+    """Read-only, after the fact: say what the review rule finds on the PR that
+    merged as one commit. Meant for a workflow on every push to the default
+    branch, so every merge path is seen, whatever tool merged it. It blocks
+    nothing. Exit 0 covered, 7 not covered (or no PR made the commit), 4 could
+    not tell, 2 policy unreadable. The line holds numbers and fixed words only."""
+    sha = (args.commit or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        print("--commit must be a full 40-hex commit id", file=sys.stderr)
+        return EXIT_USAGE
+    repo = resolve_repo(args.repo)
+    try:
+        g = load_policy(args.policy).auto_merge.gates
+    except PolicyError as e:
+        print(f"p20-at-merge: {e}", file=sys.stderr)
+        return EXIT_POLICY_ERROR
+    if g is None:
+        print("p20-at-merge: the policy has no auto_merge.gates block", file=sys.stderr)
+        return EXIT_POLICY_ERROR
+    try:
+        found = _merged_pr(repo, sha)
+        if found is None:
+            line = f"P20 at merge, commit {sha[:12]}: no pull request merged as this commit."
+            print(json.dumps({"commit": sha, "pr": None, "covered": False,
+                              "state": "no pull request"}) if args.json else line)
+            return EXIT_AUTO_MERGE_BLOCKED
+        pr, merged_at = found
+        listing = _gh_pr_listing(pr, repo)
+        f = gather_pr_gate_facts(pr, repo, g, listing=listing)
+        if not f.head_sha or f.head_sha != listing.head_sha:
+            raise _AtMergeUnknown("could not read the pull request")
+        if _verdict_edited_after(repo, pr, merged_at, g.review_bots):
+            raise _AtMergeUnknown("a verdict comment the rule reads was edited after the merge")
+    except _AtMergeUnknown as e:
+        print(f"p20-at-merge: could not tell: {e}", file=sys.stderr)
+        return EXIT_EXTERNAL_ERROR
+    except (P9Error, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as e:
+        # Other messages can quote a file row or gh's stderr; print the kind only.
+        print(f"p20-at-merge: could not tell ({type(e).__name__})", file=sys.stderr)
+        return EXIT_EXTERNAL_ERROR
+    d = p20_at_merge(g, f, merged_at)
+    if args.json:
+        print(json.dumps(d | {"commit": sha}))
+    else:
+        why = (f"a verdict was needed ({', '.join(d['needed'])})" if d["needed"]
+               else "no verdict was needed")
+        print(f"P20 at merge, pull request {pr}: {d['state']}; {why}.")
+    return EXIT_OK if d["covered"] else EXIT_AUTO_MERGE_BLOCKED
+
+
 def cmd_p20_record(args: argparse.Namespace) -> int:
     """Record a P20 verdict on a PR as the marker the merge gate reads.
 
@@ -6404,6 +6559,16 @@ def build_parser() -> argparse.ArgumentParser:
     ppr.add_argument("--note", default=None, help="Free text appended below the marker")
     ppr.add_argument("--dry-run", action="store_true")
     ppr.set_defaults(func=cmd_p20_record)
+
+    pam = sub.add_parser("p20-at-merge",
+                         help="Read-only, after a merge: what the review rule "
+                              "finds on the PR that merged as COMMIT (observe only)")
+    pam.add_argument("--commit", required=True, help="Full SHA of a commit on the default branch")
+    pam.add_argument("--repo", default=None)
+    pam.add_argument("--policy", default=None,
+                     help="Policy file to judge by (default: the walk-up .control/policy.yaml)")
+    pam.add_argument("--json", action="store_true")
+    pam.set_defaults(func=cmd_p20_at_merge)
 
     pwf = sub.add_parser(
         "wait-for",

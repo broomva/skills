@@ -613,6 +613,23 @@ p9 gate-check <n> [--json]   # read-only: every gate PASS/FAIL + reason; exit 0 
                              # auto-merge also needs the PR in MERGE_READY
 ```
 
+**After the merge.** The gates above run only where p9 runs. A merge made by
+another tool, or by a person, is seen by a workflow on every push to the
+default branch that runs:
+
+```text
+p9 p20-at-merge --commit <sha> [--repo R] [--policy P] [--json]
+    # read-only, observe only: what the review rule finds on the PR that merged as <sha>.
+    # exit 0 covered · 7 not covered, or no PR made the commit · 4 could not tell · 2 policy
+```
+
+It judges with `p20_rule`, the same function the `p20` and `governance_strata`
+gates call, so a verdict carried across a base update reads as covered here
+too. It reads only comments written before the merge, and says it cannot tell
+when a verdict comment written before the merge was edited after it. The line
+it prints holds numbers and fixed words: a trigger is named by its kind, never
+by the path that set it off.
+
 ## Termination conditions
 
 The agent exits the heal loop when **any** of:
