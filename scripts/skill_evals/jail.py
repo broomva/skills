@@ -148,8 +148,20 @@ DEFAULT_WATCHED_PATHS: tuple[str, ...] = ("~/.config/broomva",)
 #: ``kg``) stay watched. Add a glob only for a writer that runs outside any eval, and
 #: name that writer.
 BACKGROUND_WRITERS: tuple[tuple[str, str], ...] = (
-    ("~/.config/broomva/fleet/meta/*",
-     "fleet meta loop: census, governor, dispatch gate, loop health, outcomes"),
+    # Each fleet file by name, never the whole directory: fleet/meta also holds leases a
+    # run takes (local-heavy.lock), and a glob over it would hide those (skills#350 r1).
+    *((f"~/.config/broomva/fleet/meta/{name}", writer) for name, writer in (
+        ("fleet-snapshot.json", "fleet census (launchd, every few minutes)"),
+        ("usage-watch.jsonl", "fleet census"),
+        ("capacity.json", "capacity governor (launchd)"),
+        ("capacity.log", "capacity governor"),
+        ("capacity-history.jsonl", "capacity governor"),
+        ("setpoints-eval.json", "setpoint controller"),
+        ("loop-health.json", "loop health grader"),
+        ("outcomes/*.json", "outcomes loop: one file per loop (maint, meta, sri)"),
+        ("dispatch-gate.jsonl", "dispatch gate hook in every agent session"),
+        ("dispatch-contract.jsonl", "dispatch gate hook in every agent session"),
+    )),
     ("~/.config/broomva/role/events.jsonl", "role-x prompt hooks in every agent session"),
     ("~/.config/broomva/token-ledger/*.json", "per-session token ledger hooks"),
     ("~/.config/broomva/worktree-reaper/*.log", "worktree reaper launchd job"),
@@ -405,6 +417,14 @@ def _snapshot_one(path: Path) -> dict[str, tuple[int, int]]:
     return out
 
 
+def _component_match(path: str, pattern: str) -> bool:
+    """``fnmatch`` per path component, so ``*`` never crosses ``/``: ``p9/wait-marks/*.json``
+    matches a mark the hook writes, not ``p9/wait-marks/archive/x.json`` (skills#350 r1).
+    Case-sensitive, and both sides are compared as written: no normalisation of ``..``."""
+    a, b = path.split("/"), pattern.split("/")
+    return len(a) == len(b) and all(fnmatch.fnmatchcase(x, y) for x, y in zip(a, b))
+
+
 @dataclass
 class RealStateWatch:
     """Before/after fingerprint of the real state stores a leak would land in.
@@ -426,14 +446,14 @@ class RealStateWatch:
     """
 
     paths: tuple[str, ...] = DEFAULT_WATCHED_PATHS
-    #: globs (``fnmatch``: ``*`` also crosses ``/``) whose changes are background
+    #: globs whose changes are background; ``*`` matches within one path component
     background: tuple[str, ...] = tuple(g for g, _ in BACKGROUND_WRITERS)
     before: dict[str, tuple[int, int]] = field(default_factory=dict, init=False)
     #: every background change any changes() call has seen, as "<kind>: <path>"
     background_seen: list[str] = field(default_factory=list, init=False)
 
     def is_background(self, path: str) -> bool:
-        return any(fnmatch.fnmatchcase(path, os.path.expanduser(g)) for g in self.background)
+        return any(_component_match(path, os.path.expanduser(g)) for g in self.background)
 
     def _expand(self) -> list[Path]:
         return [Path(os.path.expanduser(p)) for p in self.paths]

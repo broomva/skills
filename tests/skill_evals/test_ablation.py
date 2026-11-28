@@ -754,6 +754,16 @@ def test_a_background_writer_during_an_arm_does_not_trip_the_flag(tmp_path, duri
     assert [c.split(": ")[0] for c in rep["meta"]["real_state_background"]] == ["modified"]
 
 
+def test_a_background_writer_in_a_run_without_ablation_is_still_reported(tmp_path):
+    """skills#350 r1: the primary arm's note was unpinned; every other test ran --ablate."""
+    base = [a for a in BASE_ARGS if a != "--ablate"]
+    with patch.object(sys.modules[__name__], "BASE_ARGS", base):
+        rc, rep, arms = stubbed_main(tmp_path, "--fail-on-real-state-change", background_during={1})
+    assert len(arms) == 1 and rc == R.EXIT_OK
+    assert [c.split(": ")[0] for c in rep["meta"]["real_state_background"]] == ["modified"]
+    assert not rep["meta"].get("real_state_changes")
+
+
 def test_a_leak_beside_a_background_writer_still_trips_the_flag(tmp_path):
     rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
                               background_during={1, 2, 3}, write_during=3)

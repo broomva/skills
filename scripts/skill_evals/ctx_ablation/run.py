@@ -1038,6 +1038,9 @@ def cmd_calibrate(args) -> int:
                                     frozenset(t.id for t in tasks if t.cls == "harm"))
     changes = watch.changes()
     (out / "real-state-changes.json").write_text(json.dumps(changes, indent=2), encoding="utf-8")
+    # Declared host writers are kept apart, not dropped (BRO-4219, skills#350 r1).
+    (out / "real-state-background.json").write_text(json.dumps(watch.background_seen, indent=2),
+                                                     encoding="utf-8")
     costs = [r["cost_usd"] for r in rows if isinstance(r.get("cost_usd"), (int, float))]
     walls = [r["wall_ms"] / 1000 for r in rows if isinstance(r.get("wall_ms"), int)]
     cal = {
@@ -1054,6 +1057,7 @@ def cmd_calibrate(args) -> int:
         # A count only: the paths name the operator's machine and go to their own file
         # in the run directory, so this file is safe to commit as written.
         "real_state_changes": len(changes),
+        "real_state_background": len(watch.background_seen),
         "tasks": verdicts,
     }
     (out / "calibration.json").write_text(json.dumps(cal, indent=2), encoding="utf-8")
@@ -1143,10 +1147,14 @@ def cmd_run(args) -> int:
     if changes:
         print(f"[ctx-ablation] REAL STATE CHANGED under ~/.config/broomva during the run "
               f"({len(changes)} path(s)); another session may have written them", file=sys.stderr)
+    if watch.background_seen:
+        print(f"[ctx-ablation] {len(watch.background_seen)} watched path(s) moved under declared background "
+              "writers (jail.BACKGROUND_WRITERS); not counted as a leak", file=sys.stderr)
     meta = {"run": info, "calibration": str(args.calibration) if args.calibration else None,
             "tasks": [t.to_dict() for t in tasks], "arms": [a.__dict__ for a in arms],
             "model": s.model, "cli_version": s.cli_version, "trials": args.trials,
-            "corpus": s.corpus.manifest, "real_state_changes": changes}
+            "corpus": s.corpus.manifest, "real_state_changes": changes,
+            "real_state_background": list(watch.background_seen)}
     (out / "run-meta.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
     return cmd_report(args)
 

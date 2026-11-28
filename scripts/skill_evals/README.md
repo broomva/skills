@@ -276,8 +276,11 @@ there because the ticket's other complaint was that a leak was *invisible*.
 On a live fleet host, the fleet loop, the dispatch gate and session hooks write under
 `~/.config/broomva` around the clock. Before BRO-4219, every run on such a host
 reported those writes, so the flag failed every run there. The watch now takes a
-declared list of those writers, `jail.BACKGROUND_WRITERS`: each entry is a glob plus
-the writer it belongs to.
+declared list of those writers, `jail.BACKGROUND_WRITERS`: each entry is one file (or a
+one-component glob, where `*` never crosses `/`) plus the writer it belongs to. Fleet
+files are named one by one, because `fleet/meta` also holds leases a run takes.
+`ctx_ablation` keeps them too: `real_state_background` in its calibration and run
+metadata, and the paths in `real-state-background.json`.
 - A change under one of those globs goes into the report as `real_state_background`,
   with a one-line note, and is never counted as a leak.
 - Everything else still counts. That includes the `kg` store and all of the `p9` store
