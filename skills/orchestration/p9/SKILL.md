@@ -625,13 +625,14 @@ p9 p20-at-merge --commit <sha> [--repo R] [--policy P] [--json]
 
 It judges with `p20_rule`, the same function the `p20` and `governance_strata`
 gates call, so a verdict carried across a base update reads as covered here
-too. It reads only comments written by the merge, before it picks the verdict,
-and compares the reviewed commit with the PR's own base commit (after a merge
-commit, the branch name already contains it). It says it cannot tell when any
-trusted comment written by the merge was edited at or after it, or when a
-compare it needs failed while the reviewed commit still exists. The line
-it prints holds numbers and fixed words: a trigger is named by its kind, never
-by the path that set it off.
+too. It rebuilds what the gate saw at the merge: the branch just before it (a
+merge commit's first parent, or a squash's only parent; a rebase of several
+commits is unknown), the policy on that commit (the checkout's copy only when
+that commit has none), and the comments written before the merge. It says it
+cannot tell when a trusted comment was edited at or after the merge or written
+in its second, when any comment was deleted after it, or when a compare it
+needs failed. The line it prints holds numbers and fixed words: a trigger is
+named by its kind, never by the path that set it off.
 
 ## Termination conditions
 

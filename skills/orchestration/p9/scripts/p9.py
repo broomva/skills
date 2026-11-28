@@ -4197,71 +4197,111 @@ def _trigger_kind(trigger: str) -> str:
     return "another trigger"
 
 
-def _merged_pr(repo: str, sha: str) -> tuple[int, str, str] | None:
-    """The PR whose merge made this commit, when it merged, and the base commit
-    it was judged against; None when no PR did (a direct push). Raises
-    _AtMergeUnknown when GitHub cannot be read.
-
-    The base matters: after a merge commit or a fast-forward, every reviewed
-    commit is an ancestor of the moving branch, so comparing the branch NAME
-    with a reviewed commit returns no files. The PR's base commit predates it."""
+def _merged_pr(repo: str, sha: str) -> tuple[int, str] | None:
+    """The PR whose merge made this commit, and when it merged; None when no PR
+    did (a direct push). Raises _AtMergeUnknown when GitHub cannot be read."""
     rows = _gh_paginated_list([
         "gh", "api", "--paginate", f"repos/{repo}/commits/{sha}/pulls", "--jq",
-        '.[] | [(.number|tostring), (.merge_commit_sha // ""), (.merged_at // ""),'
-        ' (.base.sha // "")] | @tsv'])
+        '.[] | [(.number|tostring), (.merge_commit_sha // ""), (.merged_at // "")] | @tsv'])
     if rows is None:
         raise _AtMergeUnknown("could not read which pull request made this commit")
     for row in rows:
         cols = row.split("\t")
-        if len(cols) != 4:
+        if len(cols) != 3:
             raise _AtMergeUnknown("a pull request row did not parse")
-        number, merge_sha, merged_at, base = cols
+        number, merge_sha, merged_at = cols
         if merge_sha == sha and merged_at:
-            if not re.fullmatch(r"[0-9a-f]{40}", base):
-                raise _AtMergeUnknown("the pull request's base commit is unreadable")
-            return int(number), merged_at, base
+            return int(number), merged_at
     return None
 
 
-def _comment_edited_after(repo: str, pr: int, merged_at: str, bots: Iterable[str]) -> bool:
-    """Whether a comment the rule could read (trusted, not a bot, written by the
-    merge) changed at or after the merge. Then what the PR said at the merge is
-    unknown: an edit can remove a verdict as well as change one, so the check
-    does not look at what the comment says now. GitHub's updated_at moves on an
-    edit and equals created_at on a comment never edited."""
+def _branch_before_merge(repo: str, sha: str, pr: int) -> str:
+    """The commit the default branch pointed at just before this merge: the
+    base the merge gate judged against, and the commit whose policy governed.
+
+    A merge commit's first parent is that commit. A squash has one parent, the
+    same commit. A rebase merge of several commits also has one parent, but it
+    is one of the replayed commits, and nothing in the API names the branch tip
+    before them; so a rebase of more than one commit is unknown. A rebase
+    is told from a squash by its message: a rebase keeps the last commit's
+    message, a squash writes its own. (The PR's base.sha cannot stand in: it
+    is the base when the PR was last synchronised, which can be stale.)"""
+    c = _gh_json(["gh", "api", f"repos/{repo}/commits/{sha}"])
+    parents = [p.get("sha") for p in (c or {}).get("parents") or [] if isinstance(p, dict)]
+    if not isinstance(c, dict) or not parents or not all(
+            isinstance(x, str) and re.fullmatch(r"[0-9a-f]{40}", x) for x in parents):
+        raise _AtMergeUnknown("could not read the merge commit's parents")
+    if len(parents) == 2:
+        return parents[0]
+    if len(parents) != 1:
+        raise _AtMergeUnknown("the merge commit has an unexpected number of parents")
+    commits = _gh_paginated_list([
+        "gh", "api", "--paginate", f"repos/{repo}/pulls/{pr}/commits", "--jq",
+        '.[] | .commit.message | @json'])
+    if not commits:
+        raise _AtMergeUnknown("could not read the pull request's commits")
+    if len(commits) > 1:
+        last = json.loads(commits[-1])
+        if ((c.get("commit") or {}).get("message") or "") == last:
+            raise _AtMergeUnknown("a rebase merge of several commits: the branch before it is unknown")
+    return parents[0]
+
+
+def _comments_unsettled_at(repo: str, pr: int, merged_at: str, bots: Iterable[str]) -> str | None:
+    """Why the comments the rule read at the merge cannot be reconstructed now,
+    or None. A trusted comment written by the merge and edited at or after it
+    (an edit can remove a verdict as well as change one, so what the comment
+    says now is not looked at); a trusted comment in the same second as the
+    merge (timestamps are whole seconds, so its side of the merge is unknown);
+    any comment deleted at or after the merge (a deleted FAIL can uncover an
+    older PASS). GitHub's updated_at moves on an edit, not on a reaction."""
     rows = _gh_paginated_list([
         "gh", "api", "--paginate", f"repos/{repo}/issues/{pr}/comments", "--jq",
         '.[] | [.user.login, .author_association, .created_at, .updated_at] | @tsv'])
     if rows is None:
-        raise _AtMergeUnknown("could not read the pull request's comments")
+        return "could not read the pull request's comments"
     for row in rows:
         cols = row.split("\t")
         if len(cols) != 4:
-            raise _AtMergeUnknown("a comment row did not parse")
+            return "a comment row did not parse"
         login, assoc, created, updated = cols
-        if (assoc.upper() in _TRUSTED_ASSOCIATIONS and not _is_bot(login, bots)
-                and created <= merged_at and updated > created and updated >= merged_at):
-            return True
-    return False
+        if assoc.upper() not in _TRUSTED_ASSOCIATIONS or _is_bot(login, bots):
+            continue
+        if created == merged_at:
+            return "a trusted comment was written in the same second as the merge"
+        if created < merged_at and updated > created and updated >= merged_at:
+            return "a comment the rule reads was edited after the merge"
+    owner, _, name = repo.partition("/")
+    q = ("query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){"
+         "timelineItems(itemTypes:[COMMENT_DELETED_EVENT],first:100){pageInfo{hasNextPage} "
+         "nodes{... on CommentDeletedEvent{createdAt}}}}}}")
+    t = _gh_json(["gh", "api", "graphql", "-f", f"query={q}", "-f", f"o={owner}",
+                  "-f", f"n={name}", "-F", f"p={pr}"])
+    try:
+        items = t["data"]["repository"]["pullRequest"]["timelineItems"]
+        # totalCount ignores the itemTypes filter (it counted 19 on a PR with no
+        # deletion, 2026-11-28); whether the page is complete is hasNextPage.
+        if items["pageInfo"]["hasNextPage"] is not False:
+            return "too many deleted comments to read"
+        if any((n or {}).get("createdAt", "") >= merged_at for n in items["nodes"]):
+            return "a comment was deleted after the merge"
+    except (KeyError, TypeError):
+        return "could not read the pull request's deleted comments"
+    return None
 
 
-def _require_carry_forward_facts(repo: str, g: MergeGates, f: PRGateFacts) -> None:
+def _require_carry_forward_facts(g: MergeGates, f: PRGateFacts) -> None:
     """A passing verdict on an earlier commit is judged from three compare
-    reads. When one failed, the answer is unknown, not "not covered" -- unless
-    the reviewed commit is gone from the repository (history rewritten), which
-    the merge gate itself reads as not covering the head."""
+    reads. When one failed, the answer is unknown, not "not covered". The
+    merge gate reads a failed compare as a block because it must fail closed;
+    an observer that said "not covered" would report a fact it does not have."""
     m = latest_p20_marker(f.comments, g.review_bots)
     if (m is None or m.verdict != "PASS" or m.score < g.p20.pass_score
             or m.sha == f.head_sha):
         return
-    if (f.marker_is_ancestor is not None and f.marker_delta_files is not None
-            and f.reviewed_files is not None):
-        return
-    gone = subprocess.run(["gh", "api", f"repos/{repo}/commits/{m.sha}"],
-                          capture_output=True, text=True, timeout=60, check=False)
-    if gone.returncode != 0 and "404" in (gone.stderr or ""):
-        return
-    raise _AtMergeUnknown("could not compare the reviewed commit with the final head")
+    if (f.marker_is_ancestor is None or f.marker_delta_files is None
+            or f.reviewed_files is None):
+        raise _AtMergeUnknown("could not compare the reviewed commit with the final head")
 
 
 def p20_at_merge(g: MergeGates, f: PRGateFacts, merged_at: str) -> dict:
@@ -4301,19 +4341,22 @@ def cmd_p20_at_merge(args: argparse.Namespace) -> int:
     merged as one commit. Meant for a workflow on every push to the default
     branch, so every merge path is seen, whatever tool merged it. It blocks
     nothing. Exit 0 covered, 7 not covered (or no PR made the commit), 4 could
-    not tell, 2 policy unreadable. The line holds numbers and fixed words only."""
+    not tell, 2 policy unreadable. The line holds numbers and fixed words only.
+
+    The policy is the one on the branch just before the merge, as the merge
+    gate reads it; the checkout's copy (`--policy`, or the walk-up) is used only
+    when that commit has no policy file, so a merged change cannot supply the
+    policy that judges it."""
     sha = (args.commit or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         print("--commit must be a full 40-hex commit id", file=sys.stderr)
         return EXIT_USAGE
     repo = resolve_repo(args.repo)
     try:
-        g = load_policy(args.policy).auto_merge.gates
-    except PolicyError as e:
-        print(f"p20-at-merge: {e}", file=sys.stderr)
-        return EXIT_POLICY_ERROR
-    if g is None:
-        print("p20-at-merge: the policy has no auto_merge.gates block", file=sys.stderr)
+        local = load_policy(args.policy).auto_merge
+    except PolicyError:
+        # Its message can quote a policy value; the kind of failure is enough.
+        print("p20-at-merge: the local policy file is missing or malformed", file=sys.stderr)
         return EXIT_POLICY_ERROR
     try:
         found = _merged_pr(repo, sha)
@@ -4322,15 +4365,21 @@ def cmd_p20_at_merge(args: argparse.Namespace) -> int:
             print(json.dumps({"commit": sha, "pr": None, "covered": False,
                               "state": "no pull request"}) if args.json else line)
             return EXIT_AUTO_MERGE_BLOCKED
-        pr, merged_at, base_sha = found
+        pr, merged_at = found
+        before = _branch_before_merge(repo, sha, pr)
         listing = _gh_pr_listing(pr, repo)
-        f = gather_pr_gate_facts(pr, repo, g, listing=listing, base_sha=base_sha,
+        governing, _ = authoritative_auto_merge_policy(local, repo, before, listing.paths)
+        if governing is None or governing.gates is None:
+            raise _AtMergeUnknown("the policy before the merge is unreadable or has no gates")
+        g = governing.gates
+        unsettled = _comments_unsettled_at(repo, pr, merged_at, g.review_bots)
+        if unsettled:
+            raise _AtMergeUnknown(unsettled)
+        f = gather_pr_gate_facts(pr, repo, g, listing=listing, base_sha=before,
                                  comments_before=merged_at)
         if not f.head_sha or f.head_sha != listing.head_sha:
             raise _AtMergeUnknown("could not read the pull request")
-        if _comment_edited_after(repo, pr, merged_at, g.review_bots):
-            raise _AtMergeUnknown("a comment the rule reads was edited after the merge")
-        _require_carry_forward_facts(repo, g, f)
+        _require_carry_forward_facts(g, f)
     except _AtMergeUnknown as e:
         print(f"p20-at-merge: could not tell: {e}", file=sys.stderr)
         return EXIT_EXTERNAL_ERROR
@@ -6607,7 +6656,8 @@ def build_parser() -> argparse.ArgumentParser:
     pam.add_argument("--commit", required=True, help="Full SHA of a commit on the default branch")
     pam.add_argument("--repo", default=None)
     pam.add_argument("--policy", default=None,
-                     help="Policy file to judge by (default: the walk-up .control/policy.yaml)")
+                     help="Local policy, used only when the branch before the merge has none "
+                          "(default: the walk-up .control/policy.yaml)")
     pam.add_argument("--json", action="store_true")
     pam.set_defaults(func=cmd_p20_at_merge)
 

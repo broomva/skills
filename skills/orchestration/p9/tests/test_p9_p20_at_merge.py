@@ -19,24 +19,39 @@ MERGED_AT = "2026-09-26T12:00:00Z"
 PR = 900
 
 
-def _run(view, *, pulls=None, edited=None, extra_comments=(), **fake):
-    """The gate tests' fake, plus the two paginated reads only p20-at-merge
-    makes. `pulls` rows are (number, merge_commit_sha, merged_at, base_sha);
-    `edited` maps a comment's index to its updated_at; `extra_comments` are
-    REST-only rows (login, association, created_at, updated_at)."""
+def _run(view, *, pulls=None, edited=None, extra_comments=(), parents=(BASE,),
+         merge_message="squash message", pr_commits=("one",), deleted=(),
+         more_deleted=False, **fake):
+    """The gate tests' fake, plus the reads only p20-at-merge makes.
+    `pulls` rows are (number, merge_commit_sha, merged_at); `edited` maps a
+    comment's index to its updated_at; `extra_comments` are REST-only rows
+    (login, association, created_at, updated_at); `parents` are the merge
+    commit's; `pr_commits` the PR's commit messages; `deleted` the times of
+    comment deletions."""
     inner = _fake_gh(view, calls=[], **fake)
-    pulls = [(PR, MERGE, MERGED_AT, BASE)] if pulls is None else pulls
+    pulls = [(PR, MERGE, MERGED_AT)] if pulls is None else pulls
     edited = edited or {}
 
     def run(cmd, *a, **k):
-        if cmd[:3] == ["gh", "api", "--paginate"] and any(f"/commits/{MERGE}/pulls" in c for c in cmd):
-            return _Run("".join(f"{n}\t{m}\t{t}\t{b}\n" for n, m, t, b in pulls))
-        if cmd[:3] == ["gh", "api", "--paginate"] and any("/comments" in c for c in cmd):
+        joined = " ".join(cmd)
+        if cmd[:3] == ["gh", "api", "--paginate"] and f"/commits/{MERGE}/pulls" in joined:
+            return _Run("".join(f"{n}\t{m}\t{t}\n" for n, m, t in pulls))
+        if cmd[:3] == ["gh", "api", "--paginate"] and f"/pulls/{PR}/commits" in joined:
+            return _Run("".join(json.dumps(m) + "\n" for m in pr_commits))
+        if cmd[:3] == ["gh", "api", "--paginate"] and "/comments" in joined:
             rows = [f"{c['author']['login']}\t{c['authorAssociation']}\t{c['createdAt']}\t"
                     f"{edited.get(i, c['createdAt'])}\n"
                     for i, c in enumerate(view["comments"])]
             rows += ["\t".join(r) + "\n" for r in extra_comments]
             return _Run("".join(rows))
+        if cmd[:2] == ["gh", "api"] and cmd[-1] == f"repos/broomva/test/commits/{MERGE}":
+            return _Run(json.dumps({"sha": MERGE, "commit": {"message": merge_message},
+                                    "parents": [{"sha": x} for x in parents]}))
+        if cmd[:3] == ["gh", "api", "graphql"] and "COMMENT_DELETED_EVENT" in joined:
+            # As GitHub answers: totalCount counts every timeline item, filtered or not.
+            return _Run(json.dumps({"data": {"repository": {"pullRequest": {"timelineItems": {
+                "totalCount": 19, "pageInfo": {"hasNextPage": more_deleted},
+                "nodes": [{"createdAt": t} for t in deleted]}}}}}))
         return inner(cmd, *a, **k)
     return run
 
@@ -148,7 +163,7 @@ def test_a_pull_request_that_only_contains_the_commit_is_not_the_one(p9, monkeyp
     # commits/{sha}/pulls also lists PRs whose branch holds the commit; only a
     # merge_commit_sha equal to it names the PR that merged.
     monkeypatch.setattr(p9.subprocess, "run", _run(_view(), pulls=[
-        (5, "e" * 40, MERGED_AT, BASE)]))
+        (5, "e" * 40, MERGED_AT)]))
     rc, out, _ = _main(p9, capsys)
     assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and "no pull request merged" in out
 
@@ -276,24 +291,17 @@ def test_reviewed_files_are_read_against_the_pull_requests_base_not_the_branch(
     assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and "does not cover" in out, out
 
 
-@pytest.mark.parametrize("commit_read,want", [
-    (_Run(json.dumps({"sha": OLD})), "EXIT_EXTERNAL_ERROR"),                 # it exists: unknown
-    (_Run(returncode=1, stderr="gh: Not Found (HTTP 404)"), "EXIT_AUTO_MERGE_BLOCKED"),  # gone
-])
-def test_a_failed_compare_is_unknown_unless_the_reviewed_commit_is_gone(
-        p9, monkeypatch, capsys, commit_read, want):
+def test_a_failed_compare_is_unknown(p9, monkeypatch, capsys):
     view = _view(comments=[_comment(_marker(sha=OLD))])
     inner = _run(view)
 
     def run(cmd, *a, **k):
         if cmd[:2] == ["gh", "api"] and any(f"/compare/{OLD}...{HEAD}" in c for c in cmd):
-            return _Run(returncode=1, stderr="HTTP 502")
-        if cmd[:2] == ["gh", "api"] and any(c.endswith(f"/commits/{OLD}") for c in cmd):
-            return commit_read
+            return _Run(returncode=1, stderr="gh: Not Found (HTTP 404)")
         return inner(cmd, *a, **k)
     monkeypatch.setattr(p9.subprocess, "run", run)
-    rc, out, _ = _main(p9, capsys)
-    assert rc == getattr(p9, want), (rc, out)
+    rc, out, err = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR and out == "" and "could not compare" in err, (rc, out, err)
 
 
 def test_an_edit_after_the_merge_that_removed_the_verdict_text_cannot_be_told(
@@ -347,3 +355,90 @@ def test_a_head_that_moved_between_reads_cannot_be_told(p9, monkeypatch, capsys)
 ])
 def test_a_path_cannot_pose_as_another_trigger(p9, trigger, kind):
     assert p9._trigger_kind(trigger) == kind
+
+
+# ─── Round 2 of review (BRO-4175) ───
+
+def _policy_with_pass_score(n: int) -> str:
+    return _GATED.read_text().replace("pass_score: 7", f"pass_score: {n}")
+
+
+@pytest.mark.parametrize("before,local,want", [
+    (8, 7, "EXIT_AUTO_MERGE_BLOCKED"),   # the merge lowered the bar: judged by the bar before it
+    (7, 8, "EXIT_OK"),                   # the merge raised it: same rule
+])
+def test_the_policy_is_the_one_before_the_merge(p9, monkeypatch, capsys, tmp_path, before, local, want):
+    monkeypatch.delenv("BROOMVA_P9_POLICY", raising=False)
+    mine = tmp_path / "policy.yaml"
+    mine.write_text(_policy_with_pass_score(local))
+    view = _view(comments=[_comment(_marker(score=7))])
+    calls = []
+    inner = _run(view, base_policy=_policy_with_pass_score(before))
+
+    def run(cmd, *a, **k):
+        calls.append(" ".join(cmd))
+        return inner(cmd, *a, **k)
+    monkeypatch.setattr(p9.subprocess, "run", run)
+    rc, out, _ = _main(p9, capsys, "--policy", str(mine))
+    assert rc == getattr(p9, want), (rc, out)
+    assert any(f"/contents/.control/policy.yaml?ref={BASE}" in c for c in calls), calls
+
+
+def test_a_malformed_local_policy_prints_none_of_its_values(p9, monkeypatch, capsys, tmp_path):
+    bad = tmp_path / "policy.yaml"
+    bad.write_text(_GATED.read_text().replace("pass_score: 7", "pass_score: REVIEW_SENTINEL"))
+    rc, out, err = _main(p9, capsys, "--policy", str(bad))
+    assert rc == p9.EXIT_POLICY_ERROR and "REVIEW_SENTINEL" not in out + err, err
+
+
+@pytest.mark.parametrize("deleted,want", [
+    (("2026-09-26T12:30:00Z",), "EXIT_EXTERNAL_ERROR"),   # after the merge: a FAIL may be gone
+    ((MERGED_AT,), "EXIT_EXTERNAL_ERROR"),                # in the merge's second
+    (("2026-09-26T11:00:00Z",), "EXIT_OK"),               # before it: the gate saw the same comments
+])
+def test_a_comment_deleted_after_the_merge_cannot_be_told(p9, monkeypatch, capsys, deleted, want):
+    monkeypatch.setattr(p9.subprocess, "run", _run(_view(), deleted=deleted))
+    rc, _, _ = _main(p9, capsys)
+    assert rc == getattr(p9, want)
+
+
+def test_a_verdict_in_the_same_second_as_the_merge_cannot_be_told(p9, monkeypatch, capsys):
+    view = _view(comments=[_comment(_marker(verdict="FAIL", score=4)),
+                           _comment(_marker(), at=MERGED_AT)])
+    monkeypatch.setattr(p9.subprocess, "run", _run(view))
+    rc, _, err = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR and "same second" in err, err
+
+
+E2 = "e" * 40
+
+
+@pytest.mark.parametrize("parents,merge_message,pr_commits", [
+    ((E2, HEAD), "Merge pull request", ("a", "b")),   # merge commit: the first parent
+    ((E2,), "Title (#900)", ("a", "b")),              # squash of two commits
+    ((E2,), "only", ("only",)),                       # one commit: squash and rebase agree
+])
+def test_the_reviewed_files_are_read_against_the_branch_before_the_merge(
+        p9, monkeypatch, capsys, parents, merge_message, pr_commits):
+    # OLD touched src/gone.py, later dropped; only a base that predates the merge sees it.
+    view = _view(comments=[_comment(_marker(sha=OLD))])
+    monkeypatch.setattr(p9.subprocess, "run", _run(
+        view, parents=parents, merge_message=merge_message, pr_commits=pr_commits,
+        compare_map={f"{OLD}...{HEAD}": ["src/gone.py"],
+                     f"{E2}...{OLD}": ["src/a.py", "src/b.py", "src/gone.py"],
+                     f"{BASE}...{OLD}": []}))
+    rc, out, _ = _main(p9, capsys)
+    assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and "does not cover" in out, out
+
+
+def test_a_rebase_of_several_commits_cannot_be_told(p9, monkeypatch, capsys):
+    monkeypatch.setattr(p9.subprocess, "run", _run(
+        _view(), parents=(E2,), merge_message="second", pr_commits=("first", "second")))
+    rc, _, err = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR and "rebase" in err, err
+
+
+def test_more_deleted_comments_than_one_page_cannot_be_told(p9, monkeypatch, capsys):
+    monkeypatch.setattr(p9.subprocess, "run", _run(_view(), more_deleted=True))
+    rc, _, err = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR and "deleted comments" in err, err
