@@ -226,9 +226,9 @@ reference's peer-review adapter. Keep the scientific score separate from P20.
    allowed after the final score is that round's own ledger entry, and the
    report names both hashes: the text scored, and the text with its ledger.
 
-**Round budget.** Take the round *counting* from `/cross-review` (three free
-rounds, rounds 4 to 7 earned only by a continuation verdict that names a
-located, checkable defect, 8 or more a human's call), but **not its pass
+**Round budget.** Take the round *counting* from `/cross-review` (record each
+round, ask `cross-review round budget` before another and follow the status it
+returns; there is no fixed number of rounds), but **not its pass
 mark**: its 7/10 is for code. A design round passes only on `spec-contract`'s
 rule above. To log a design round with `cross-review round record-round`,
 decide pass or fail with `spec-contract`'s rule first, then pass `--score` as:
