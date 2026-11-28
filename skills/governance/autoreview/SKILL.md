@@ -249,11 +249,12 @@ detected, which is the writer's assertion, same as `--strata`.
 
 Pass `--defect=yes` when the round located at least one checkable defect in
 the text (a contradiction, a wrong number, a gate that cannot be checked as
-written), `no` otherwise. Two consecutive `no` rounds stop the budget, which is
-right: a score that stays low without a locatable defect is a structural
-problem, not a wording one. Keep `R1..R5` and the unscaled total in the
-ledger. When the budget
-is spent without a pass, stop: do not keep editing. Record the last round's
+written), `no` otherwise. Two consecutive `no` rounds raise a signal: the budget
+refuses another round until you record a decision (`cross-review round
+record-decision`), which is right: a score that stays low without a locatable
+defect is a structural problem, not a wording one. Keep `R1..R5` and the
+unscaled total in the ledger. When the budget returns STOP without a pass,
+stop: do not keep editing. Record the last round's
 objections as open, and the verdict follows the output contract.
 
 ### 6. Report
