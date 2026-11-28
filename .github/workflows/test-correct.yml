@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           python3 -I tests/test_correct.py > /tmp/correct.out 2>&1 || { cat /tmp/correct.out; exit 1; }
           grep -E '^(Ran |OK|FAILED)' /tmp/correct.out || true
-          grep -q '^Ran 111 tests' /tmp/correct.out || { echo "expected: Ran 111 tests"; exit 1; }
+          grep -q '^Ran 157 tests' /tmp/correct.out || { echo "expected: Ran 157 tests"; exit 1; }
           grep -q '^OK$' /tmp/correct.out || { echo "expected a bare OK (no skips)"; exit 1; }
 
       - name: Tests — the branch-first hook
@@ -87,12 +87,34 @@ jobs:
           test "$found" = 116
           grep -q '^all rules_canary tests passed$' /tmp/canary.out || { tail -20 /tmp/canary.out; exit 1; }
 
-      # Every promise correct.py and the manifest check make is broken once in a
-      # copy; the suite must notice each. The count is asserted so a dropped
-      # mutant cannot pass as "0 survived".
+  # Every promise correct.py and the manifest check make is broken once in a
+  # copy; the suite must notice each. One job ran them all until the run passed
+  # the job's time limit (BRO-4211); now each of four jobs runs every fourth
+  # mutant. The count of all mutants is asserted in every shard, so a dropped
+  # mutant cannot pass as "0 survived", and a shard must kill all it ran.
+  mutation:
+    name: mutation proof (shard ${{ matrix.shard }} of 4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML (user site)
+        run: python3 -m pip install --user pyyaml
+
       - name: Mutation proof — correct.py and tests/vendored.py
         run: |
           set -euo pipefail
-          python3 -I tests/mutate_correct.py > /tmp/mutate.out 2>&1 || { cat /tmp/mutate.out; exit 1; }
+          python3 -I tests/mutate_correct.py --shard ${{ matrix.shard }}/4 > /tmp/mutate.out 2>&1 || { cat /tmp/mutate.out; exit 1; }
           cat /tmp/mutate.out
-          grep -q '^100 killed, 0 survived$' /tmp/mutate.out
+          ran="$(sed -n 's|^shard ${{ matrix.shard }}/4: \([0-9][0-9]*\) of 195 mutants$|\1|p' /tmp/mutate.out)"
+          test -n "$ran" || { echo "expected: shard ${{ matrix.shard }}/4: <count> of 195 mutants"; exit 1; }
+          grep -q "^${ran} killed, 0 survived$" /tmp/mutate.out

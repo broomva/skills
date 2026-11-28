@@ -20,7 +20,7 @@ The method below is judgment. The registry it ends in is not: this skill ships
 the runner, so "the check holds" is a command's exit status and not a claim.
 
 ```
-python3 -I <skill>/scripts/correct.py init   [--root DIR] [--dry-run] [--force]
+python3 -I <skill>/scripts/correct.py init   [--root DIR] [--dry-run] [--force] [--pack FILE ...]
 python3 -I <skill>/scripts/correct.py check  [--root DIR] [--ci] [--json] [--only ID ...] [--base REF]
 python3 -I <skill>/scripts/correct.py canary [--root DIR] run | ...
 ```
@@ -71,13 +71,39 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   taken, `init` treats its own registry as one that was there, and replays it.
   For any other error it exits 2 with a complete registry on disk; it does not
   say whether the registry was written, and the next `init` finds what is there.
+- **`init --pack FILE`** also adds a pack's rows to the registry it writes. A pack
+  is the rows that prove hooks some other tool installed, shipped by that tool
+  (`pack`, `registry_version`, `rules`, and `hooks_not_rules` for its hooks that
+  enforce nothing). A pack is plain data: every key is a string, given once, and
+  written out (a merge key, `<<`, is refused, and so is a value that contains
+  itself). Before anything is written `init` checks that every row has an `id`
+  that is a string and not blank, and the shape of these fields of each row, and
+  no others: `level`, `enforcer`
+  and its `registered`, `target`, `proofs`, `controls`, `known_misses`,
+  `covers_hooks`, `hosts`, `occurrences` (a field written and left empty counts as
+  wrong). A wrong kind of value anywhere else in a row is not looked for. It
+  can stop the runner, or a later command such as `check --markdown`, after the
+  registry is written: `correct.py` then exits 2 and says that the tool stopped. It prescribes no repair. `init` never rewrites a
+  registry that exists, so such a row stays in the registry until it is corrected
+  there; a registry may hold rows of your own, which deleting it would lose. The
+  tool that installs the hooks ships the pack and passes it to `init`. `init`
+  installs nothing for a pack: it records the rows
+  after the starter's and replays them. A file that is not a pack, and packs that
+  disagree with each other, are refused with nothing written, whether or not a
+  registry exists. A pack row with the starter row's id is refused when `init`
+  writes the registry. A pack is never added to a registry that already exists: there `init`
+  lists the pack's rows and `hooks_not_rules` entries the registry lacks or holds
+  differently, replays what is there, and exits 3 when the replay passes and
+  something of the pack is absent. Copy those rows by hand, or keep your own rows
+  for the same hooks.
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
   registration. `--registry FILE` names another registry, read relative to the
   current directory. It also fails when a hard gate or a blocking hook has no row,
   and with `--base REF` when a row was lowered without a recorded reason. Exit 0
-  means every row held; 1 means one did not; 2 means the command could not run
+  means every row held; 1 means the replay did not pass (a row did not hold, or the
+  registry has no rules); 2 means the command could not run
   (no repository, no registry yet, git or PyYAML missing, or a registry whose
   `version:` this copy of the skill does not replay: it replays version 1, and
   refuses a later one instead of passing rows it would only half read).

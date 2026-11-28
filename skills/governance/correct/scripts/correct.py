@@ -1,14 +1,19 @@
 #!/usr/bin/env -S python3 -I
 """correct.py — set a repository up with a rule registry, and replay it.
 
-  correct.py init   [--root DIR] [--dry-run] [--force]
+  correct.py init   [--root DIR] [--dry-run] [--force] [--pack FILE ...]
       Give a repository its registry: the registry file with one proven rule
       (branch first), that rule's enforcer and its fixtures under scripts/, a
       governance policy file if there is none, and the hook entry in
       .claude/settings.json. Then replay the registry and exit with the replay's
       status. A repository that already has a registry gets nothing written and
       is replayed the same way. A repository whose existing gates and hooks have
-      no row yet exits 1 and lists them.
+      no row yet exits 1 and lists them. --pack FILE adds a pack's rows to the
+      registry init writes: a pack is the rows that prove hooks some other tool
+      installed, shipped by that tool.
+      init installs nothing for a pack; it only records and replays its rows.
+      On a repository that already has a registry, --pack changes nothing and
+      init says which of the pack's rows that registry holds.
   correct.py check  [--root DIR] [runner options ...]
       Replay every row against its real enforcer (scripts/rules_check.py in this
       skill): --ci, --json, --markdown, --only ID ..., --base REF, --replay-only.
@@ -21,7 +26,9 @@ else the git checkout the current directory is in. The runner and the canary run
 from this skill's directory, outside the repository they judge; the enforcers
 and the registry rows are the repository's own files.
 
-Exit codes: 0 done and the replay passed; 1 the replay failed; 2 the command
+Exit codes: 0 done and the replay passed; 1 the replay failed; 3 (init --pack on
+a repository that has a registry) the replay passed and the registry lacks part
+of a pack that was named; 2 the command
 could not run (no repository, no registry for check, git or PyYAML missing, a
 registry of a version this copy does not replay, an unreadable settings file,
 a file init would have to overwrite, a path that leaves the repository). On 2,
@@ -37,6 +44,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import site
 import stat
 import subprocess
@@ -133,6 +141,14 @@ def need_yaml() -> None:
                       "(python3 -m pip install --user pyyaml) and run the command again. Nothing written.")
 
 
+def yaml_module():
+    """PyYAML, found the way the runner finds it. need_yaml() has already said whether it is there."""
+    if site.getusersitepackages() not in sys.path:
+        sys.path.append(site.getusersitepackages())
+    import yaml  # noqa: PLC0415
+    return yaml
+
+
 # The registry versions this copy of the runner replays. A registry written for a later
 # version may carry fields this runner would ignore, and a row it ignores part of can pass
 # without being checked; so an unknown version is refused, not replayed.
@@ -159,11 +175,10 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
     replayable(registry)
 
 
-def replayable(registry: Path) -> None:
-    """The file is YAML, and a registry of a version this copy of the skill replays."""
-    if site.getusersitepackages() not in sys.path:
-        sys.path.append(site.getusersitepackages())
-    import yaml  # noqa: PLC0415  (need_yaml ran first)
+def replayable(registry: Path) -> dict:
+    """The file is YAML, and a registry of a version this copy of the skill replays. Returns
+    what it read: a mapping."""
+    yaml = yaml_module()
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
@@ -173,13 +188,314 @@ def replayable(registry: Path) -> None:
         raise Refused(f"{registry} says `version: {version!r}`, and this copy of the skill replays "
                       f"version {' or '.join(map(str, REGISTRY_VERSIONS))}. Update the skill, or correct "
                       "the registry's `version:`.")
+    return data
+
+
+CRASHED = 70
+# A tool is started through these lines so that an error it does not handle can be told from
+# its own exit 1 ("a row did not hold"): a Python traceback ends with 1 as well, and so does a
+# tool that stops with a message before it replays anything (`raise SystemExit("...")`, as
+# the runner does for a registry it refuses). Both are "could not run". A reader that closed
+# the pipe (`check --json | head`) is not such an error, and ends the tool as it did.
+REFUSED = 71
+RUN_TOOL = f"""import runpy, sys, traceback
+sys.argv = sys.argv[1:]
+try:
+    runpy.run_path(sys.argv[0], run_name="__main__")
+except SystemExit as stop:
+    if not isinstance(stop.code, str):
+        raise
+    print(stop.code, file=sys.stderr)
+    sys.exit({REFUSED})
+except BrokenPipeError:
+    raise
+except Exception:
+    traceback.print_exc()
+    sys.exit({CRASHED})
+"""
 
 
 def run_tool(script: str, root: Path, args: list[str]) -> int:
     env = dict(os.environ, RULES_CHECK_ROOT=str(root))
     sys.stdout.flush()  # what this command printed so far comes before the tool's own output
     sys.stderr.flush()
-    return subprocess.run([sys.executable, "-I", str(HERE / script), *args], env=env, check=False).returncode
+    status = subprocess.run([sys.executable, "-I", "-c", RUN_TOOL, str(HERE / script), *args],
+                            env=env, check=False).returncode
+    if status == REFUSED:  # the tool said why, and replayed nothing
+        return 2
+    if status == CRASHED:
+        # The runner has no schema for a row: a value of the wrong kind stops it where it is read.
+        print(f"\ncorrect: {script} stopped on an error it does not handle; the traceback is above. The "
+              "replay did not finish: this is not a failed row, and the command could not run (exit 2). The "
+              "usual cause is a registry row with a value of the wrong kind, a word where a mapping or a "
+              "list goes; the last lines of the traceback show the read that failed.", file=sys.stderr)
+        return 2
+    return status
+
+
+PACK_KEYS = {"pack", "registry_version", "rules", "hooks_not_rules"}
+PACK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+PACK_NOT_WHOLE = 3  # init: the registry exists, replays, and lacks part of a pack named with --pack
+
+
+def take_packs(args: list[str]) -> tuple[list[str], list[str]]:
+    """(the files named with --pack FILE or --pack=FILE, the remaining arguments)."""
+    named: list[str] = []
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--pack":
+            named.append(args[i + 1] if i + 1 < len(args) else "")
+            i += 2
+            continue
+        if arg.startswith("--pack="):
+            named.append(arg.split("=", 1)[1])
+        else:
+            rest.append(arg)
+        i += 1
+    if "" in named:
+        raise Refused("--pack needs a file")
+    return named, rest
+
+
+def pack_loader(yaml):  # noqa: ANN001, ANN201 - the lazily imported module, and a class made from it
+    """PyYAML's safe loader, held to what a pack is: plain data. Every key of every mapping is
+    a string, is given once, and is written out. Left alone PyYAML merges what it is given
+    without a word: of a key given twice it keeps the last (a pack with two `rules:` blocks
+    would lose a block of rows), `0` and `false` are one key to it, and a merge key (`<<`)
+    is dropped where a key of the same name follows."""
+    class PlainKeys(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=True):  # noqa: ANN001, ANN202
+            seen: set = set()
+            for key_node, _value in (node.value if isinstance(node, yaml.MappingNode) else ()):
+                refuse = None
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    refuse = "a pack does not use merge keys (`<<`); write the keys out"
+                else:
+                    key = self.construct_object(key_node, deep)
+                    if not isinstance(key, str):
+                        refuse = f"the key `{key}` is not a string (quote it if a word was meant)"
+                    elif key in seen:
+                        refuse = f"the key `{key}` is given twice in one mapping"
+                    else:
+                        seen.add(key)
+                if refuse:
+                    raise yaml.constructor.ConstructorError(None, None, refuse, key_node.start_mark)
+            return super().construct_mapping(node, deep)
+    return PlainKeys
+
+
+def same(a: object, b: object) -> bool:
+    """Equal, and of the same kind all the way down. Python holds False == 0 and 1 == 1.0; YAML
+    and the JSON a hook is sent do not."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        keys = {(type(k), k) for k in a}
+        return keys == {(type(k), k) for k in b} and all(same(v, b[k]) for k, v in a.items())
+    if isinstance(a, list):
+        return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+    return a == b
+
+
+def written_out(yaml, data: object) -> str:  # noqa: ANN001
+    """As YAML with every value written where it is used. PyYAML writes a value that is used
+    twice as an anchor and aliases, and names the first anchor of every dump `id001`: two
+    packs dumped into one registry would then share a name."""
+    class Plain(yaml.SafeDumper):
+        def ignore_aliases(self, data):  # noqa: ANN001, ANN202
+            return True
+    return yaml.dump(data, Dumper=Plain, sort_keys=False, width=110, allow_unicode=True)
+
+
+def pack_path(given: str) -> Path:
+    """Where a --pack argument points. `~user` with no such user is not a path (RuntimeError)."""
+    try:
+        return Path(given).expanduser().absolute()
+    except (OSError, RuntimeError) as exc:
+        raise Refused(f"--pack {given} is not a path this run can read ({exc})") from exc
+
+
+def load_pack(path: Path) -> dict:
+    """A pack file, checked. A pack is data another tool ships for the hooks IT installs:
+    {pack: name, registry_version: N, rules: [rows], hooks_not_rules: {script: why}}. Anything
+    else in the file is refused, because a key init does not carry over (hosts, retired ...)
+    would be dropped without a word."""
+    yaml = yaml_module()
+    try:
+        # Inside the guard: on Python 3.12 the look itself raises for a folder that cannot be entered.
+        if not path.is_file():
+            raise Refused(f"there is no pack at {path}")
+        data = yaml.load(path.read_text(encoding="utf-8"), Loader=pack_loader(yaml))  # noqa: S506 - a SafeLoader
+    # ValueError: PyYAML builds a date from `2026-11-31` and Python refuses the day.
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise Refused(f"{path} is not readable YAML ({exc})") from exc
+    if not isinstance(data, dict):
+        raise Refused(f"{path} is not a pack: it is not a mapping")
+    unknown = sorted(set(data) - PACK_KEYS)  # every key is a string: the loader refused the rest
+    if unknown:
+        raise Refused(f"{path} has key(s) a pack does not carry: {', '.join(unknown)} "
+                      f"(a pack has {', '.join(sorted(PACK_KEYS))})")
+    if not isinstance(data.get("pack"), str):
+        raise Refused(f"{path} does not name itself (`pack: <name>`)")
+    # The name goes into a comment line of the registry, so it is one plain word.
+    if not PACK_NAME.fullmatch(data["pack"]):
+        raise Refused(f"{path}: the pack name {data['pack']!r} is not a plain name "
+                      "(letters, digits, `.`, `_` and `-`, starting with a letter or digit)")
+    version = data.get("registry_version")
+    if type(version) is not int or version not in REGISTRY_VERSIONS:
+        raise Refused(f"{path} says `registry_version: {version!r}`, and this copy of the skill writes "
+                      f"registry version {' or '.join(map(str, REGISTRY_VERSIONS))}")
+    rules = data.get("rules")
+    if not isinstance(rules, list) or not rules or not all(
+            isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"].strip() for r in rules):
+        raise Refused(f"{path}: `rules` is not a list of rows that each have an `id`")
+    for row in rules:
+        problem = row_shape(row)
+        if problem:
+            raise Refused(f"{path}: the row `{row['id']}` cannot be replayed: {problem}")
+    not_rules = data.get("hooks_not_rules", {})
+    if not isinstance(not_rules, dict) or not all(
+            k.strip() and isinstance(v, str) and v.strip() for k, v in not_rules.items()):
+        raise Refused(f"{path}: `hooks_not_rules` is not a mapping of hook script to the reason it enforces no rule")
+    return data
+
+
+def row_shape(row: dict) -> str | None:
+    """What is wrong with the shape of a pack row, or None. The fields checked are the ones
+    below and no others: `level`, `enforcer` and its `registered`, `proofs`, `controls`,
+    `known_misses`, `covers_hooks`, `target`, `hosts`, `occurrences`. With one of these wrong
+    a row does not fail its replay, it can stop the runner, and by then init has written the
+    registry. This is not a schema of the registry: a wrong kind of value in any other field,
+    or inside a case, still stops the runner, and run_tool then says so. Whether a
+    well-shaped row holds is the replay's to say."""
+    if not (isinstance(row.get("level"), str) and row["level"].strip()):
+        return "`level` is not a word (hook, test, gap ...)"
+    # A field that is written and left empty (`proofs:` with nothing after it) is there, and
+    # is null: not the mapping or the list it should be. Only a field that is absent passes.
+    enforcer = row.get("enforcer")
+    if "enforcer" in row and not isinstance(enforcer, dict):
+        return "`enforcer` is not a mapping (`path:` and `registered:`)"
+    if isinstance(enforcer, dict) and "registered" in enforcer and not isinstance(enforcer["registered"], dict):
+        return "`enforcer.registered` is not a mapping (`event:`, `tools:`, `scope:`)"
+    for key in ("proofs", "controls", "known_misses"):
+        if key in row and not (isinstance(row[key], list) and all(isinstance(c, dict) for c in row[key])):
+            return f"`{key}` is not a list of cases"
+    if "covers_hooks" in row and not (isinstance(row["covers_hooks"], list)
+                                      and all(isinstance(h, str) for h in row["covers_hooks"])):
+        return "`covers_hooks` is not a list of hook names"
+    if "target" in row and not isinstance(row["target"], dict):
+        return "`target` is not a mapping (`level:` and `mechanism:`)"
+    if "hosts" in row and not (isinstance(row["hosts"], list) and all(isinstance(h, str) for h in row["hosts"])):
+        return "`hosts` is not a list of host group names"
+    if "occurrences" in row and not isinstance(row["occurrences"], list):
+        return "`occurrences` is not a list"
+    return None
+
+
+def hook_name(script: str) -> str:
+    """One hook command, however it is spaced: the runner splits a hook's command on whitespace."""
+    return " ".join(script.split())
+
+
+def packs_agree(packs: list[tuple[Path, dict]]) -> None:
+    """Refused when the packs given cannot all go into one registry: a row id that is in two of
+    them, or twice in one, or a hook two of them give different reasons. Asked before init
+    looks for a registry. On a registry that exists the two rows would otherwise be listed as
+    rows that differ, to be copied by hand, and copying either would make the other differ."""
+    seen: dict[str, Path] = {}
+    reasons: dict[str, str] = {}
+    for path, pack in packs:
+        for row in pack["rules"]:
+            if row["id"] in seen:
+                where = "twice in this pack" if seen[row["id"]] == path else f"in two packs (the other is {seen[row['id']]})"
+                raise Refused(f"{path}: the row id `{row['id']}` is {where}; a row id is in one pack, once")
+            seen[row["id"]] = path
+        for script, why in (pack.get("hooks_not_rules") or {}).items():
+            name = hook_name(script)
+            if reasons.get(name, why) != why:
+                raise Refused(f"{path}: `hooks_not_rules` gives {script} a reason another pack gives differently")
+            reasons[name] = why
+
+
+def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
+    """The starter registry with each pack's rows after its own row. The starter is kept byte
+    for byte (its header is the field reference a reader starts from); the packs' rows and
+    their `hooks_not_rules` are appended as YAML. The result is read back and compared, whole
+    document against whole document (the starter's keys unchanged, its rows followed by every
+    pack row value for value, the merged `hooks_not_rules`), before it is returned: what init
+    writes is what was asked for, or init refuses."""
+    template = (TEMPLATES / "rules.yaml").read_bytes()
+    yaml = yaml_module()
+    starter = yaml.safe_load(template)
+    ids = [r["id"] for r in starter["rules"]]
+    not_rules: dict[str, str] = {}
+    text = template.decode("utf-8").rstrip("\n") + "\n"
+    for path, pack in packs:
+        for row in pack["rules"]:
+            if row["id"] in ids:
+                raise Refused(f"{path}: the row id `{row['id']}` is the id of a row of the starter registry; "
+                              "rename it in the pack")
+        not_rules.update(pack.get("hooks_not_rules") or {})
+        text += (f"# Rows from the pack `{pack['pack']}` ({path.name}), added by `correct.py init --pack`.\n"
+                 + written_out(yaml, pack["rules"]))
+    if not_rules:
+        text += ("# Hooks registered on an event that could block, which enforce no rule (from the packs above).\n"
+                 + written_out(yaml, {"hooks_not_rules": not_rules}))
+    try:
+        back = yaml.safe_load(text)
+    except yaml.YAMLError:
+        back = None
+    expected = dict(starter, rules=starter["rules"] + [row for _path, pack in packs for row in pack["rules"]])
+    if not_rules:
+        expected["hooks_not_rules"] = not_rules
+    if back != expected:
+        raise Refused("the registry with the packs' rows does not read back as written; nothing written "
+                      "(this is a defect in correct.py or in the starter registry's layout)")
+    return text.encode("utf-8")
+
+
+def pack_report(registry: Path, data: dict, packs: list[tuple[Path, dict]]) -> tuple[list[str], bool]:
+    """What an existing registry, read by the caller as `data`, holds of each pack: (lines to
+    print, all of every pack present).
+
+    init never edits a registry that exists, so a pack that came later, or a newer copy of one,
+    is not in it. Saying nothing would leave two silent states: hooks no row owns (the replay
+    names those) and rows the tool has since added for hooks already owned (nothing names
+    those). A row counts as present when the registry has a row with its id and the same
+    content; a `hooks_not_rules` entry when the registry has the script with the same reason."""
+    rules = data.get("rules")
+    if not isinstance(rules, list):
+        # Not a failed row: nothing was replayed. The command could not run on this file.
+        raise Refused(f"{registry} does not read as a registry (a mapping whose `rules` is a list); "
+                      "nothing written and nothing replayed")
+    rows = {r.get("id"): r for r in rules if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    held = data.get("hooks_not_rules") if isinstance(data.get("hooks_not_rules"), dict) else {}
+    # Every (command, reason) the registry gives, the command by its words. A list of pairs, not
+    # a mapping: a registry edited by hand can hold one command under two spellings with two
+    # reasons, and a mapping would keep whichever came last.
+    held = [(hook_name(s), why) for s, why in held.items() if isinstance(s, str)]
+    lines, whole = [], True
+    for path, pack in packs:
+        missing = [r["id"] for r in pack["rules"] if r["id"] not in rows]
+        differ = [r["id"] for r in pack["rules"] if r["id"] in rows and not same(rows[r["id"]], r)]
+        hooks = [s for s, why in (pack.get("hooks_not_rules") or {}).items() if (hook_name(s), why) not in held]
+        if not (missing or differ or hooks):
+            lines.append(f"  pack   {pack['pack']}: all {len(pack['rules'])} row(s) are in this registry")
+            continue
+        whole = False
+        lines.append(f"  pack   {pack['pack']} ({path}) is NOT all in this registry:")
+        if missing:
+            lines.append(f"           row(s) missing: {', '.join(missing)}")
+        if differ:
+            lines.append(f"           row(s) that differ from the pack: {', '.join(differ)}")
+        if hooks:
+            lines.append(f"           hooks_not_rules missing or with another reason: {', '.join(hooks)}")
+    if not whole:
+        lines.append("  init does not edit a registry that exists: copy what is listed from the pack file by "
+                     "hand, or keep your own rows for those hooks and read this as a difference, not a defect.")
+    return lines, whole
 
 
 def governance_dir(root: Path) -> Path:
@@ -220,7 +536,7 @@ def enforcer_entry(settings: dict, settings_path: Path) -> bool:
     return len(others) != len(groups)
 
 
-def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
+def plan(root: Path, packs: list[tuple[Path, dict]] | None = None) -> tuple[list[Write], list[str], list[str]]:
     """(files to write, files left as they are, conflicts). The registry is the LAST write:
     its presence is what marks a repository as set up, so a run that stops early leaves a
     repository the next run still treats as not set up."""
@@ -270,7 +586,7 @@ def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
             data = (json.dumps(settings, indent=2) + "\n").encode("ascii")
         writes.append((settings_path, data, False))
 
-    writes.append((gov / "rules.yaml", (TEMPLATES / "rules.yaml").read_bytes(), False))
+    writes.append((gov / "rules.yaml", registry_with_packs(packs or []), False))
     return writes, kept, conflicts
 
 
@@ -395,34 +711,38 @@ def replay(root: Path, wrote: bool, registry: Path | None = None) -> int:
     status = run_tool("rules_check.py", root, ["--registry", str(registry)] if registry else [])
     if status == 0 and wrote:
         print("\ncorrect init: done. The starter rule is installed and its proofs and controls replay.\n"
-              "  - From now on an edit on main or master in this repository is refused; work on a branch.\n"
               "  - Commit the new files on a branch. In CI run this skill's correct.py with:\n"
               "      check --ci --base origin/main\n"
               "  - The starter row is replayed, not yet certified on the real harness: replace its\n"
               "    `canary: {none, ticket}` ticket with one of yours, or write canary cases and run\n"
               "    `correct.py canary run`.")
-    elif status != 0 and wrote:
-        print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
-              "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
-              "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
-              "run `correct.py check` again. Output with no rows means the runner itself stopped.",
+    # What follows is about a replay that exits 1. A runner that could not run (exit 2) has said
+    # why itself, and init adds nothing to it. Neither line names a repair: what did not hold
+    # is in the replay's output, and init does not know its cause.
+    elif status == 1 and wrote:
+        print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above.",
               file=sys.stderr)
-    elif status != 0:
+    elif status == 1:
         print(f"\ncorrect init: the replay exits {status}; its output is above. init does not change a "
-              "registry that is there, so it does not repair one either. If a row says `not registered` "
-              "or its script is missing, something init installed was removed: restore it from version "
-              "control, or delete the registry and run init again to write the starter files anew. "
-              "Otherwise fix the row or the enforcer the FAIL names.", file=sys.stderr)
+              "registry that is there, so it does not repair one either.", file=sys.stderr)
     return status
 
 
-def on_registry(root: Path) -> int:
-    """init on a registry that is there: replay it, write nothing. The status is the replay's."""
-    need_registry(root, [])
-    return replay(root, wrote=False)
+def on_registry(root: Path, registry: Path, data: dict, packs: list[tuple[Path, dict]], named: bool = False) -> int:
+    """init on a registry that is there, which the caller has read as `data`: compare it with
+    the packs, replay it, write nothing. With `named` (after a collision) the runner is told
+    this file's name; without, it finds the repository's registry itself, as `check` does."""
+    whole = True
+    if packs:
+        lines, whole = pack_report(registry, data, packs)
+        print("\n".join(lines))
+    status = replay(root, wrote=False, registry=registry if named else None)
+    # A replay that passes with a pack row absent is not the state the caller asked for.
+    return PACK_NOT_WHOLE if status == 0 and not whole else status
 
 
 def init(root: Path, args: list[str]) -> int:
+    pack_files, args = take_packs(args)
     unknown = [a for a in args if a not in ("--dry-run", "--force")]
     if unknown:
         raise Refused(f"init does not take {' '.join(unknown)}")
@@ -430,6 +750,9 @@ def init(root: Path, args: list[str]) -> int:
     if git_toplevel(root) != root:
         raise Refused(f"{root} is not the top of a git checkout; run init at the repository root")
     need_yaml()  # also on a dry run: it reports what the real run would do, and that run would stop here
+    # Read before anything else: a file that is not a pack is refused whether or not a registry exists.
+    packs = [(path, load_pack(path)) for path in map(pack_path, pack_files)]
+    packs_agree(packs)
     registry = governance_file(root, "rules.yaml")
     if registry.exists() and not registry.is_file():
         raise Refused(f"{registry.relative_to(root)} exists and is not a regular file; nothing written")
@@ -438,11 +761,14 @@ def init(root: Path, args: list[str]) -> int:
         # that exists and does not hold is not a success. That is true of a dry run too: with
         # nothing to write, the dry run and the real run are the same run.
         print(f"correct init: {registry.relative_to(root)} exists, so this repository already has a "
-              "registry. Nothing written.")
-        return on_registry(root)
+              "registry. Nothing written."
+              + (" A pack is added only to a registry init writes, so --pack changes nothing here."
+                 if packs else ""))
+        # Read first: a registry this skill does not read is compared with no pack.
+        return on_registry(root, registry, replayable(registry), packs)
 
     try:
-        writes, kept, conflicts = plan(root)
+        writes, kept, conflicts = plan(root, packs)
         stops = blocked(root, writes)
     except OSError as exc:
         raise Refused(f"could not read the repository's current state ({exc}); nothing written") from exc
@@ -456,6 +782,8 @@ def init(root: Path, args: list[str]) -> int:
         return 2
     for path, _content, _exe in writes:
         print(f"  {'would write' if dry else 'write'}  {path.relative_to(root)}")
+    for path, pack in packs:
+        print(f"  pack   {pack['pack']}: {len(pack['rules'])} row(s) from {path}")
     for line in kept:
         print(f"  keep   {line}")
     if dry:
@@ -490,8 +818,7 @@ def init(root: Path, args: list[str]) -> int:
                 raise Refused(f"there is no regular file at {name}.") from why
             # This file, at this name, from here on: read here, and the runner is told its name
             # (another governance folder may hold a registry too).
-            replayable(target)
-            return replay(root, wrote=False, registry=target)
+            return on_registry(root, target, replayable(target), packs, named=True)
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
@@ -499,6 +826,13 @@ def init(root: Path, args: list[str]) -> int:
                           ) from exc
         done.append(str(path.relative_to(root)))
         say_left(path.parent.relative_to(root), left)
+    # Said here, before the replay (run_tool flushes what was printed before it starts the
+    # runner): a caller that stops a slow replay must already have been told. It says what
+    # init did, not what the harness will do: settings can keep the harness from running the
+    # hook (disableAllHooks), and the replay is what finds that.
+    print("correct init: the starter rule's hook is written and registered in this repository's settings. "
+          "Where the harness runs it, an edit on main or master in this repository is refused; work on a "
+          "branch. The replay below checks the registration.")
     return replay(root, wrote=True)
 
 
