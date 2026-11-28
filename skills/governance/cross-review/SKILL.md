@@ -390,9 +390,8 @@ appended to it.
 - **`record-decision --reason` is the agent's own reasoning** (BRO-3963). The
   tool checks that it is not blank, not that it is right. `show` puts every
   decision and its reason in front of every reviewer.
-- **`--defect=yes` is the agent's own assertion.** The controller enforces that
-  two consecutive `no` rounds stop the arc; it cannot verify that a `yes` was
-  actually earned. That judgement belongs to the reviewer's findings.
+- **`--defect=yes` is the agent's own assertion.** The controller counts
+  consecutive `no` rounds; it cannot verify that a `yes` was actually earned. That judgement belongs to the reviewer's findings.
 - **One environment variable reopens the ledger path.**
   `ROUND_BUDGET_TEST_LEDGER=1 … --ledger=/tmp/fresh` starts a clean budget. The
   gate makes that a deliberate act rather than an accident; it does not prevent
@@ -713,7 +712,7 @@ Used outside the PR flow — e.g., when investigating a class of issues across a
 | Primitive | Composition role |
 |---|---|
 | **P4** PR Pipeline | P20 fires *before* P4 auto-merge — verdict + reasoning are part of the PR artifact |
-| **P7** CI Watcher (`broomva/p9`) | After P20 passes + PR is pushed, P7 watches CI; the two gates are sequential (P20 quality → P7 CI green) |
+| **P9** Wait (`broomva/p9`) | After P20 passes + PR is pushed, P9 watches CI; the two gates are sequential (P20 quality → P9 CI green) |
 | **P11** Empirical Feedback | Different dimension: P11 is "does it run" (interaction); P20 is "is it well-built" (review). Both fire pre-merge; both are mandatory for substantive work |
 | **P17** Lens-Routed Articulation | P17 lenses become P20 evaluator stances (security lens → security audit, frontend lens → UI critique, etc.) |
 | **P18** Format-Follows-Audience | P20 verdict is *agent-readable* (machine-parseable rubric output) AND *human-readable* (the PR comment); markdown is correct |
@@ -726,7 +725,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
 1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
 2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --axes=a,b,c,d,e --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did, and `A` or `B` alone for a knowledge-tier round. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
-2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
+2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class). A substantive diff that touches only knowledge material still fires, in the knowledge tier (§Stakes tiers). `pre-push` itself skips a diff of ≤3 files and ≤200 additions, while p9's merge gate wants a P20 pass for more than one file, so a 2-3 file knowledge diff needs `FORCE_GATE=1 cross-review pre-push`.
 4b. **When fixing review findings** — fix what blocks: zeroed dimensions, a total below 7, and any MAJOR covered by the agreement rule. Run each other unreproduced BLOCKER or MAJOR once: fix it if it reproduces, list it in the PR as unreproduced if it does not. Log MINORs as follow-ups or decline them with a reason. Do not spend a round on them.

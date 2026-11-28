@@ -78,7 +78,7 @@ State events append to `~/.config/broomva/persist/state.jsonl` (JSONL append-onl
 | primitive | composes via |
 |---|---|
 | **P5** Parallel Agents | run N persist loops, one per `git worktree` |
-| **P7** CI Watcher | each iteration's pushed PR uses `p9 watch` for productive-wait |
+| **P9** Wait | each iteration's pushed PR uses `p9 watch` for productive-wait |
 | **P10** Worktree Hygiene | clean tree before iteration; janitor after each merge |
 | **P11** Empirical Feedback | per-iteration validation; persist's success_condition is multi-modal evidence |
 | **P6** Bookkeeping | persist loops produce graph-relevant material → `bookkeeping replay` between loops |
