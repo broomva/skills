@@ -1,10 +1,10 @@
 {
-  "asset": "skill-eval-fixtures-2026-09-27.tar.gz",
-  "bytes": 5341197,
+  "asset": "skill-eval-fixtures-2026-11-27.tar.gz",
+  "bytes": 5958379,
   "files": 606,
   "note": "PUBLIC asset. Scrubbed and audited before publication; scrubbing is a blocklist and fails open. See scripts/skill_evals/scrub.py.",
-  "release_tag": "skill-eval-fixtures-2026-09-27",
-  "sha256": "202e67d6250b65d279962cefe7b675442f0af9a2258b466e36cbde9b0d2272ac",
+  "release_tag": "skill-eval-fixtures-2026-11-27",
+  "sha256": "f0dc917991727cfe09577a0cc1caba9b9a9f3c1220df596e9f8672c502b225eb",
   "skills": [
     "autonomous",
     "checkit",
@@ -13,5 +13,5 @@
     "kg",
     "skillify"
   ],
-  "url": "https://github.com/broomva/skills/releases/download/skill-eval-fixtures-2026-09-27/skill-eval-fixtures-2026-09-27.tar.gz"
+  "url": "https://github.com/broomva/skills/releases/download/skill-eval-fixtures-2026-11-27/skill-eval-fixtures-2026-11-27.tar.gz"
 }
