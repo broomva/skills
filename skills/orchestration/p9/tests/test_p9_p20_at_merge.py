@@ -12,28 +12,30 @@ import json
 import pytest
 
 from test_p9_merge_gates import (  # the gate tests' own fake GitHub
-    HEAD, OLD, _GATED, _Run, _comment, _fake_gh, _marker, _view, gates, p9)  # noqa: F401  (fixtures)
+    BASE, HEAD, OLD, _GATED, _Run, _comment, _fake_gh, _marker, _view, gates, p9)  # noqa: F401  (fixtures)
 
 MERGE = "d" * 40
 MERGED_AT = "2026-09-26T12:00:00Z"
 PR = 900
 
 
-def _run(view, *, pulls=None, edited=None, **fake):
-    """The gate tests' fake, plus the two reads only p20-at-merge makes."""
+def _run(view, *, pulls=None, edited=None, extra_comments=(), **fake):
+    """The gate tests' fake, plus the two paginated reads only p20-at-merge
+    makes. `pulls` rows are (number, merge_commit_sha, merged_at, base_sha);
+    `edited` maps a comment's index to its updated_at; `extra_comments` are
+    REST-only rows (login, association, created_at, updated_at)."""
     inner = _fake_gh(view, calls=[], **fake)
-    pulls = ([{"number": PR, "merge_commit_sha": MERGE, "merged_at": MERGED_AT}]
-             if pulls is None else pulls)
+    pulls = [(PR, MERGE, MERGED_AT, BASE)] if pulls is None else pulls
     edited = edited or {}
 
     def run(cmd, *a, **k):
-        if cmd[:2] == ["gh", "api"] and any(f"/commits/{MERGE}/pulls" in c for c in cmd):
-            return _Run(json.dumps(pulls))
+        if cmd[:3] == ["gh", "api", "--paginate"] and any(f"/commits/{MERGE}/pulls" in c for c in cmd):
+            return _Run("".join(f"{n}\t{m}\t{t}\t{b}\n" for n, m, t, b in pulls))
         if cmd[:3] == ["gh", "api", "--paginate"] and any("/comments" in c for c in cmd):
             rows = [f"{c['author']['login']}\t{c['authorAssociation']}\t{c['createdAt']}\t"
                     f"{edited.get(i, c['createdAt'])}\n"
-                    for i, c in enumerate(view["comments"])
-                    if "p20-verdict" in c["body"].lower()]
+                    for i, c in enumerate(view["comments"])]
+            rows += ["\t".join(r) + "\n" for r in extra_comments]
             return _Run("".join(rows))
         return inner(cmd, *a, **k)
     return run
@@ -57,7 +59,7 @@ def test_a_verdict_carried_across_a_base_update_is_covered(p9, monkeypatch, caps
     # The PR 1497 case: reviewed at OLD, then main was merged in (touching no PR file).
     view = _view(comments=[_comment(_marker(sha=OLD))])
     monkeypatch.setattr(p9.subprocess, "run", _run(view, compare_map={
-        f"{OLD}...{HEAD}": ["docs/other.md"], f"main...{OLD}": ["src/a.py", "src/b.py"]}))
+        f"{OLD}...{HEAD}": ["docs/other.md"], f"{BASE}...{OLD}": ["src/a.py", "src/b.py"]}))
     rc, out, _ = _main(p9, capsys)
     assert rc == p9.EXIT_OK and "carries to the final head" in out, out
 
@@ -66,7 +68,7 @@ def test_a_verdict_on_an_earlier_commit_that_later_code_changed_is_not_covered(
         p9, monkeypatch, capsys):
     view = _view(comments=[_comment(_marker(sha=OLD))])
     monkeypatch.setattr(p9.subprocess, "run", _run(view, compare_map={
-        f"{OLD}...{HEAD}": ["src/a.py"], f"main...{OLD}": ["src/a.py", "src/b.py"]}))
+        f"{OLD}...{HEAD}": ["src/a.py"], f"{BASE}...{OLD}": ["src/a.py", "src/b.py"]}))
     rc, out, _ = _main(p9, capsys)
     assert rc == p9.EXIT_AUTO_MERGE_BLOCKED
     assert "does not cover the final head" in out, out
@@ -146,7 +148,7 @@ def test_a_pull_request_that_only_contains_the_commit_is_not_the_one(p9, monkeyp
     # commits/{sha}/pulls also lists PRs whose branch holds the commit; only a
     # merge_commit_sha equal to it names the PR that merged.
     monkeypatch.setattr(p9.subprocess, "run", _run(_view(), pulls=[
-        {"number": 5, "merge_commit_sha": "e" * 40, "merged_at": MERGED_AT}]))
+        (5, "e" * 40, MERGED_AT, BASE)]))
     rc, out, _ = _main(p9, capsys)
     assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and "no pull request merged" in out
 
@@ -236,3 +238,112 @@ def test_a_pull_request_whose_view_cannot_be_read_cannot_be_told(p9, monkeypatch
     monkeypatch.setattr(p9.subprocess, "run", run)
     rc, out, err = _main(p9, capsys)
     assert rc == p9.EXIT_EXTERNAL_ERROR and out == "" and "could not read the pull request" in err
+
+
+# ─── Round 1 of review (BRO-4175): each finding, as the case that showed it ───
+
+def test_a_verdict_written_after_the_merge_does_not_choose_the_reviewed_commit(
+        p9, monkeypatch, capsys):
+    # Before the merge: PASS at OLD, and later commits changed a PR file (not carried).
+    # After the merge: a PASS at the head. The merge was not covered.
+    view = _view(comments=[_comment(_marker(sha=OLD)),
+                           _comment(_marker(sha=HEAD), at="2026-09-26T13:00:00Z")])
+    monkeypatch.setattr(p9.subprocess, "run", _run(view, compare_map={
+        f"{OLD}...{HEAD}": ["src/a.py"], f"{BASE}...{OLD}": ["src/a.py", "src/b.py"]}))
+    rc, out, _ = _main(p9, capsys)
+    assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and "does not cover" in out, out
+
+
+def test_a_comment_after_the_merge_does_not_break_a_carried_verdict(p9, monkeypatch, capsys):
+    view = _view(comments=[_comment(_marker(sha=OLD)),
+                           _comment("about the P20-VERDICT above", at="2026-09-26T13:00:00Z")])
+    monkeypatch.setattr(p9.subprocess, "run", _run(view, compare_map={
+        f"{OLD}...{HEAD}": ["docs/other.md"], f"{BASE}...{OLD}": ["src/a.py", "src/b.py"]}))
+    rc, out, _ = _main(p9, capsys)
+    assert rc == p9.EXIT_OK and "carries to the final head" in out, out
+
+
+def test_reviewed_files_are_read_against_the_pull_requests_base_not_the_branch(
+        p9, monkeypatch, capsys):
+    # OLD touched src/gone.py, a later commit dropped it again. After a merge
+    # commit, main...OLD returns no files; the PR's base commit still sees it.
+    view = _view(comments=[_comment(_marker(sha=OLD))])
+    monkeypatch.setattr(p9.subprocess, "run", _run(view, compare_map={
+        f"{OLD}...{HEAD}": ["src/gone.py"],
+        f"{BASE}...{OLD}": ["src/a.py", "src/b.py", "src/gone.py"],
+        f"main...{OLD}": []}))
+    rc, out, _ = _main(p9, capsys)
+    assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and "does not cover" in out, out
+
+
+@pytest.mark.parametrize("commit_read,want", [
+    (_Run(json.dumps({"sha": OLD})), "EXIT_EXTERNAL_ERROR"),                 # it exists: unknown
+    (_Run(returncode=1, stderr="gh: Not Found (HTTP 404)"), "EXIT_AUTO_MERGE_BLOCKED"),  # gone
+])
+def test_a_failed_compare_is_unknown_unless_the_reviewed_commit_is_gone(
+        p9, monkeypatch, capsys, commit_read, want):
+    view = _view(comments=[_comment(_marker(sha=OLD))])
+    inner = _run(view)
+
+    def run(cmd, *a, **k):
+        if cmd[:2] == ["gh", "api"] and any(f"/compare/{OLD}...{HEAD}" in c for c in cmd):
+            return _Run(returncode=1, stderr="HTTP 502")
+        if cmd[:2] == ["gh", "api"] and any(c.endswith(f"/commits/{OLD}") for c in cmd):
+            return commit_read
+        return inner(cmd, *a, **k)
+    monkeypatch.setattr(p9.subprocess, "run", run)
+    rc, out, _ = _main(p9, capsys)
+    assert rc == getattr(p9, want), (rc, out)
+
+
+def test_an_edit_after_the_merge_that_removed_the_verdict_text_cannot_be_told(
+        p9, monkeypatch, capsys):
+    # The comment no longer names P20-VERDICT; what it said at the merge is unknown.
+    monkeypatch.setattr(p9.subprocess, "run", _run(_view(), extra_comments=[
+        ("broomva", "OWNER", "2026-09-26T11:00:00Z", "2026-09-26T13:00:00Z")]))
+    rc, out, err = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR and "edited after the merge" in err, (rc, out, err)
+
+
+def test_an_edit_in_the_same_second_as_the_merge_counts(p9, monkeypatch, capsys):
+    monkeypatch.setattr(p9.subprocess, "run", _run(_view(), extra_comments=[
+        ("broomva", "OWNER", "2026-09-26T11:00:00Z", MERGED_AT)]))
+    rc, _, _ = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR
+
+
+def test_an_unparseable_file_row_prints_no_path(p9, monkeypatch, capsys):
+    # This P9Error quotes the row; the command must print the error's kind only.
+    view = _view(files=[{"path": "secret-client/a.py"}, {"path": "src/b.py"}])
+    inner = _run(view)
+
+    def run(cmd, *a, **k):
+        if cmd[:3] == ["gh", "api", "--paginate"] and any("/files" in c for c in cmd):
+            return _Run("secret-client/a.py\tbroken\nsrc/b.py\t\tmodified\t5\n")
+        return inner(cmd, *a, **k)
+    monkeypatch.setattr(p9.subprocess, "run", run)
+    rc, out, err = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR and out == ""
+    assert "secret-client" not in err and "P9Error" in err, err
+
+
+def test_a_head_that_moved_between_reads_cannot_be_told(p9, monkeypatch, capsys):
+    view = _view()
+    inner = _run(view)
+
+    def run(cmd, *a, **k):
+        if cmd[:3] == ["gh", "pr", "view"] and "-q" not in cmd and cmd[-1] != "headRefOid":
+            return _Run(json.dumps(dict(view, headRefOid=OLD)))
+        return inner(cmd, *a, **k)
+    monkeypatch.setattr(p9.subprocess, "run", run)
+    rc, _, err = _main(p9, capsys)
+    assert rc == p9.EXIT_EXTERNAL_ERROR and "could not read the pull request" in err
+
+
+@pytest.mark.parametrize("trigger,kind", [
+    ("always-review path schemas/12 LOC > 3.json", "an always-review path"),
+    ("unmeasured (binary) change img/9 files > 1.png", "a file with no counted lines"),
+    ("12 LOC > 3", "more changed lines than the threshold"),
+])
+def test_a_path_cannot_pose_as_another_trigger(p9, trigger, kind):
+    assert p9._trigger_kind(trigger) == kind

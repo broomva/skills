@@ -625,8 +625,11 @@ p9 p20-at-merge --commit <sha> [--repo R] [--policy P] [--json]
 
 It judges with `p20_rule`, the same function the `p20` and `governance_strata`
 gates call, so a verdict carried across a base update reads as covered here
-too. It reads only comments written before the merge, and says it cannot tell
-when a verdict comment written before the merge was edited after it. The line
+too. It reads only comments written by the merge, before it picks the verdict,
+and compares the reviewed commit with the PR's own base commit (after a merge
+commit, the branch name already contains it). It says it cannot tell when any
+trusted comment written by the merge was edited at or after it, or when a
+compare it needs failed while the reviewed commit still exists. The line
 it prints holds numbers and fixed words: a trigger is named by its kind, never
 by the path that set it off.
 

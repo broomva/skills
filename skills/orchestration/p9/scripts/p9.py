@@ -1928,10 +1928,13 @@ def _compare_files(repo: str, basehead: str) -> tuple[str | None, list | None]:
 
 def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
                          listing: "PRListing | None" = None,
-                         base_sha: str | None = None) -> PRGateFacts:
+                         base_sha: str | None = None,
+                         comments_before: str | None = None) -> PRGateFacts:
     """`listing` is the caller's COMPLETE file listing, pre-rename paths
     included (gh pr view caps its own at 100 and drops renames); without it, a
-    longer PR fails the `classifiable` gate."""
+    longer PR fails the `classifiable` gate. `comments_before` (an ISO time)
+    keeps only comments written at or before it, BEFORE the verdict marker is
+    chosen, so every carry-forward fact describes that marker (p20-at-merge)."""
     f = PRGateFacts(pr=pr)
     fields = ("state,isDraft,baseRefName,headRefOid,mergeStateStatus,mergeable,"
               "reviewDecision,reviews,comments,additions,deletions,"
@@ -1953,6 +1956,10 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
     f.review_decision = (view.get("reviewDecision") or "").upper()
     f.reviews = list(view.get("reviews") or [])
     f.comments = list(view.get("comments") or [])
+    if comments_before is not None:
+        # A comment with no time cannot be placed before the merge; drop it.
+        f.comments = [c for c in f.comments
+                      if (c.get("createdAt") or "\uffff") <= comments_before]
     f.additions = int(view.get("additions") or 0)
     f.deletions = int(view.get("deletions") or 0)
     f.files = [x.get("path") for x in view.get("files") or [] if x.get("path")]
@@ -4172,11 +4179,11 @@ def cmd_gate_check(args: argparse.Namespace) -> int:
 # ─── p20-at-merge: the review rule, read after a merge (BRO-4175) ───────────
 # What a trigger is, in fixed words. p20_triggers' own text names paths, which
 # a PR author chose; the at-merge line goes to a CI log and holds none of it.
-_TRIGGER_KINDS = (("LOC >", "more changed lines than the threshold"),
-                  ("files >", "more files than the threshold"),
-                  ("always-review path", "an always-review path"),
-                  ("unmeasured", "a file with no counted lines"),
-                  ("governance-class", "a governance path"))
+_TRIGGER_KINDS = ((r"\d+ LOC > \d+", "more changed lines than the threshold"),
+                  (r"\d+ files > \d+", "more files than the threshold"),
+                  (r"always-review path .*", "an always-review path"),
+                  (r"unmeasured \(binary\) change .*", "a file with no counted lines"),
+                  (r"governance-class", "a governance path"))
 
 
 class _AtMergeUnknown(P9Error):
@@ -4184,32 +4191,47 @@ class _AtMergeUnknown(P9Error):
 
 
 def _trigger_kind(trigger: str) -> str:
-    for needle, kind in _TRIGGER_KINDS:
-        if needle in trigger:
+    for pattern, kind in _TRIGGER_KINDS:
+        if re.fullmatch(pattern, trigger, flags=re.DOTALL):
             return kind
     return "another trigger"
 
 
-def _merged_pr(repo: str, sha: str) -> tuple[int, str] | None:
-    """The PR whose merge made this commit, and when it merged; None when no
-    PR did (a direct push). Raises P9Error when GitHub cannot be read."""
-    pulls = _gh_json(["gh", "api", f"repos/{repo}/commits/{sha}/pulls"])
-    if not isinstance(pulls, list):
+def _merged_pr(repo: str, sha: str) -> tuple[int, str, str] | None:
+    """The PR whose merge made this commit, when it merged, and the base commit
+    it was judged against; None when no PR did (a direct push). Raises
+    _AtMergeUnknown when GitHub cannot be read.
+
+    The base matters: after a merge commit or a fast-forward, every reviewed
+    commit is an ancestor of the moving branch, so comparing the branch NAME
+    with a reviewed commit returns no files. The PR's base commit predates it."""
+    rows = _gh_paginated_list([
+        "gh", "api", "--paginate", f"repos/{repo}/commits/{sha}/pulls", "--jq",
+        '.[] | [(.number|tostring), (.merge_commit_sha // ""), (.merged_at // ""),'
+        ' (.base.sha // "")] | @tsv'])
+    if rows is None:
         raise _AtMergeUnknown("could not read which pull request made this commit")
-    for pr in pulls:
-        if isinstance(pr, dict) and pr.get("merge_commit_sha") == sha and pr.get("merged_at"):
-            return int(pr["number"]), str(pr["merged_at"])
+    for row in rows:
+        cols = row.split("\t")
+        if len(cols) != 4:
+            raise _AtMergeUnknown("a pull request row did not parse")
+        number, merge_sha, merged_at, base = cols
+        if merge_sha == sha and merged_at:
+            if not re.fullmatch(r"[0-9a-f]{40}", base):
+                raise _AtMergeUnknown("the pull request's base commit is unreadable")
+            return int(number), merged_at, base
     return None
 
 
-def _verdict_edited_after(repo: str, pr: int, merged_at: str, bots: Iterable[str]) -> bool:
-    """Whether a comment the rule reads (trusted, not a bot, naming P20-VERDICT,
-    written before the merge) changed after it. Then what it said at the merge
-    is unknown. GitHub's updated_at moves on an edit."""
+def _comment_edited_after(repo: str, pr: int, merged_at: str, bots: Iterable[str]) -> bool:
+    """Whether a comment the rule could read (trusted, not a bot, written by the
+    merge) changed at or after the merge. Then what the PR said at the merge is
+    unknown: an edit can remove a verdict as well as change one, so the check
+    does not look at what the comment says now. GitHub's updated_at moves on an
+    edit and equals created_at on a comment never edited."""
     rows = _gh_paginated_list([
         "gh", "api", "--paginate", f"repos/{repo}/issues/{pr}/comments", "--jq",
-        '.[] | select(.body | ascii_downcase | contains("p20-verdict"))'
-        ' | [.user.login, .author_association, .created_at, .updated_at] | @tsv'])
+        '.[] | [.user.login, .author_association, .created_at, .updated_at] | @tsv'])
     if rows is None:
         raise _AtMergeUnknown("could not read the pull request's comments")
     for row in rows:
@@ -4217,12 +4239,29 @@ def _verdict_edited_after(repo: str, pr: int, merged_at: str, bots: Iterable[str
         if len(cols) != 4:
             raise _AtMergeUnknown("a comment row did not parse")
         login, assoc, created, updated = cols
-        # A comment written after the merge is not read at all (p20_at_merge),
-        # so only one written before it and changed after it is unknown.
         if (assoc.upper() in _TRUSTED_ASSOCIATIONS and not _is_bot(login, bots)
-                and created <= merged_at < updated):
+                and created <= merged_at and updated > created and updated >= merged_at):
             return True
     return False
+
+
+def _require_carry_forward_facts(repo: str, g: MergeGates, f: PRGateFacts) -> None:
+    """A passing verdict on an earlier commit is judged from three compare
+    reads. When one failed, the answer is unknown, not "not covered" -- unless
+    the reviewed commit is gone from the repository (history rewritten), which
+    the merge gate itself reads as not covering the head."""
+    m = latest_p20_marker(f.comments, g.review_bots)
+    if (m is None or m.verdict != "PASS" or m.score < g.p20.pass_score
+            or m.sha == f.head_sha):
+        return
+    if (f.marker_is_ancestor is not None and f.marker_delta_files is not None
+            and f.reviewed_files is not None):
+        return
+    gone = subprocess.run(["gh", "api", f"repos/{repo}/commits/{m.sha}"],
+                          capture_output=True, text=True, timeout=60, check=False)
+    if gone.returncode != 0 and "404" in (gone.stderr or ""):
+        return
+    raise _AtMergeUnknown("could not compare the reviewed commit with the final head")
 
 
 def p20_at_merge(g: MergeGates, f: PRGateFacts, merged_at: str) -> dict:
@@ -4283,13 +4322,15 @@ def cmd_p20_at_merge(args: argparse.Namespace) -> int:
             print(json.dumps({"commit": sha, "pr": None, "covered": False,
                               "state": "no pull request"}) if args.json else line)
             return EXIT_AUTO_MERGE_BLOCKED
-        pr, merged_at = found
+        pr, merged_at, base_sha = found
         listing = _gh_pr_listing(pr, repo)
-        f = gather_pr_gate_facts(pr, repo, g, listing=listing)
+        f = gather_pr_gate_facts(pr, repo, g, listing=listing, base_sha=base_sha,
+                                 comments_before=merged_at)
         if not f.head_sha or f.head_sha != listing.head_sha:
             raise _AtMergeUnknown("could not read the pull request")
-        if _verdict_edited_after(repo, pr, merged_at, g.review_bots):
-            raise _AtMergeUnknown("a verdict comment the rule reads was edited after the merge")
+        if _comment_edited_after(repo, pr, merged_at, g.review_bots):
+            raise _AtMergeUnknown("a comment the rule reads was edited after the merge")
+        _require_carry_forward_facts(repo, g, f)
     except _AtMergeUnknown as e:
         print(f"p20-at-merge: could not tell: {e}", file=sys.stderr)
         return EXIT_EXTERNAL_ERROR
