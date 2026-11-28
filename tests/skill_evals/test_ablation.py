@@ -670,11 +670,14 @@ BASE_ARGS = ["--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "
 
 
 def stubbed_main(tmp_path, *args, write_during=None, actions=None, outcome=None,
-                 baseline_outcome=None):
+                 baseline_outcome=None, background_during=None):
     """Run R.main with every trial stubbed; record each arm's config. A real
     RealStateWatch watches one file that `write_during` (an arm number) touches."""
     watched = tmp_path / "state"
     watched.write_text("before")
+    daemon = tmp_path / "fleet-meta"  # a declared background writer's directory (BRO-4219)
+    daemon.mkdir()
+    (daemon / "fleet-snapshot.json").write_text("{}")
     arms = []
     real_run_suite, real_watch = R.run_suite, R.jail_mod.RealStateWatch
 
@@ -692,13 +695,16 @@ def stubbed_main(tmp_path, *args, write_during=None, actions=None, outcome=None,
                      "jobs": cfg.jobs, "keep_workspaces": cfg.keep_workspaces})
         if write_during == len(arms):
             watched.write_text(f"written during arm {len(arms)}")
+        if background_during and len(arms) in background_during:
+            (daemon / "fleet-snapshot.json").write_text(f"census during arm {len(arms)}")
         if actions and len(arms) in actions:
             actions[len(arms)](watched)
         return real_run_suite(runner, prompts, cfg)
 
     out = io.StringIO()
     with patch.object(R, "run_suite", suite), patch.object(R, "run_case", case_runner), \
-         patch.object(R.jail_mod, "RealStateWatch", lambda: real_watch(paths=(str(watched),))), \
+         patch.object(R.jail_mod, "RealStateWatch", lambda: real_watch(paths=(str(watched), str(daemon)),
+                                                               background=(str(daemon / "*"),))), \
          patch.object(R.jail_mod, "prepare_jail"), \
          patch.object(R.jail_mod, "verify_jail", return_value=SimpleNamespace(holds=True)), \
          patch.object(R.jail_mod, "auth_material_missing", return_value=False), \
@@ -735,6 +741,34 @@ def test_a_state_change_during_an_ablation_arm_is_seen(tmp_path, arm):
                               write_during=arm)
     assert rep["meta"].get("real_state_changes"), arm
     assert rc != R.EXIT_OK
+
+
+@pytest.mark.parametrize("during", [{1}, {3}, {1, 2, 3}])
+def test_a_background_writer_during_an_arm_does_not_trip_the_flag(tmp_path, during):
+    """BRO-4219: the fleet loop writes its census during the arms of a live run on a
+    fleet host. That must be reported as background, and the flag must not fail the run."""
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              background_during=during)
+    assert rc == R.EXIT_OK, rep["meta"]
+    assert not rep["meta"].get("real_state_changes")
+    assert [c.split(": ")[0] for c in rep["meta"]["real_state_background"]] == ["modified"]
+
+
+def test_a_background_writer_in_a_run_without_ablation_is_still_reported(tmp_path):
+    """skills#350 r1: the primary arm's note was unpinned; every other test ran --ablate."""
+    base = [a for a in BASE_ARGS if a != "--ablate"]
+    with patch.object(sys.modules[__name__], "BASE_ARGS", base):
+        rc, rep, arms = stubbed_main(tmp_path, "--fail-on-real-state-change", background_during={1})
+    assert len(arms) == 1 and rc == R.EXIT_OK
+    assert [c.split(": ")[0] for c in rep["meta"]["real_state_background"]] == ["modified"]
+    assert not rep["meta"].get("real_state_changes")
+
+
+def test_a_leak_beside_a_background_writer_still_trips_the_flag(tmp_path):
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              background_during={1, 2, 3}, write_during=3)
+    assert rc != R.EXIT_OK
+    assert rep["meta"]["real_state_changes"] and rep["meta"]["real_state_background"]
 
 
 def test_noise_band_without_ablate_is_refused():

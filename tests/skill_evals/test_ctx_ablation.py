@@ -1364,3 +1364,42 @@ def test_a2_bars_met_only_when_every_bar_is_measured_and_cleared():
     assert q["qbar_fallback"]["meets_850_condition"] in (None, False)
     only_two = [r for r in data if r["task"] in ("heldout-p9-watch", "heldout-branch-first")]
     assert A2.bars(only_two)["qbar_fallback"]["meets_850_condition"] is not True
+
+
+_REAL_WATCH = R.jail_mod.RealStateWatch  # captured before any test patches it
+
+
+def _calibrate_with_a_background_write(tmp_path, monkeypatch, background):
+    """cmd_calibrate with the live setup stubbed: during the bare arm a declared host writer
+    moves one watched file. `background` is what the watch declares."""
+    from types import SimpleNamespace
+    store = tmp_path / "store"
+    store.mkdir(parents=True)
+    daemon = store / "fleet-snapshot.json"
+    daemon.write_text("{}")
+    monkeypatch.setattr(R.jail_mod, "RealStateWatch",
+                        lambda: _REAL_WATCH(paths=(str(store),), background=background))
+    settings = SimpleNamespace(out=None, model="haiku", cli_version="x", tasks_sha="t",
+                               corpus=SimpleNamespace(manifest={"sha256": "c"}))
+    monkeypatch.setattr(R, "_live_setup", lambda args, out: (settings, 0))
+
+    def suite(*a, **k):
+        daemon.write_text('{"observed_at": "later"}')
+        return {}
+    monkeypatch.setattr(R, "run_suite", suite)
+    args = SimpleNamespace(tasks=str(Path(R.__file__).parent / "tasks" / "pilot.json"), trials=1, jobs=1,
+                           dry_run=False, out=str(tmp_path / "out"), max_utilization=None, retry_void=False,
+                           seed=0, model="haiku", task=None)
+    R.cmd_calibrate(args)
+    return json.loads((tmp_path / "out" / "calibration.json").read_text()), tmp_path / "out"
+
+
+def test_calibration_keeps_a_declared_writer_apart_not_dropped(tmp_path, monkeypatch):
+    """skills#350 r1: background changes vanished from calibration; they are now counted
+    apart from leaks and listed in their own file."""
+    cal, out = _calibrate_with_a_background_write(
+        tmp_path, monkeypatch, background=(str(tmp_path / "store" / "fleet-snapshot.json"),))
+    assert (cal["real_state_changes"], cal["real_state_background"]) == (0, 1)
+    assert json.loads((out / "real-state-background.json").read_text())[0].startswith("modified: ")
+    cal, _ = _calibrate_with_a_background_write(tmp_path / "b", monkeypatch, background=())
+    assert (cal["real_state_changes"], cal["real_state_background"]) == (1, 0)

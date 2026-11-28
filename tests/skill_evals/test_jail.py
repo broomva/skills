@@ -484,6 +484,45 @@ def test_watch_tolerates_a_missing_store(tmp_path):
     assert watch.changes() == []
 
 
+def test_a_declared_background_writer_is_reported_apart_and_not_counted(tmp_path):
+    """BRO-4219: on a live fleet host the fleet loop and hooks write the watched store
+    all the time; those writes must not count as a leak, but a write beside them must."""
+    store = tmp_path / "store"
+    (store / "fleet" / "meta").mkdir(parents=True)
+    census = store / "fleet" / "meta" / "fleet-snapshot.json"
+    census.write_text("{}")
+    watch = J.RealStateWatch(paths=(str(store),), background=(str(store / "fleet" / "meta" / "*"),
+                                                              str(store / "fleet" / "meta" / "outcomes" / "*")))
+    watch.snapshot()
+    census.write_text('{"observed_at": "later"}')
+    (store / "fleet" / "meta" / "outcomes").mkdir()
+    (store / "fleet" / "meta" / "outcomes" / "maint.json").write_text("{}")  # its own glob
+    assert watch.changes() == []
+    assert sorted(c.split(": ")[0] for c in watch.background_seen) == ["created", "modified"]
+    (store / "p9").mkdir()
+    (store / "p9" / "queue.json").write_text("[]")  # a skill store beside it is still a leak
+    changes = watch.changes()
+    assert len(changes) == 1 and "p9/queue.json" in changes[0]
+    assert len(watch.background_seen) == 2  # seen once, not again on the second read
+
+
+def test_the_declared_writers_cover_the_fleet_paths_the_ticket_saw():
+    """The paths BRO-4219's live run reported, under the real default globs."""
+    watch = J.RealStateWatch()
+    home = os.path.expanduser("~/.config/broomva")
+    for leaf in ("fleet/meta/dispatch-gate.jsonl", "fleet/meta/fleet-snapshot.json",
+                 "fleet/meta/loop-health.json", "fleet/meta/outcomes/maint.json",
+                 "role/events.jsonl", "token-ledger/abc.json", "worktree-reaper/launchd.log",
+                 "p9/wait-marks/cc-c65d82c15fd336f9.json"):
+        assert watch.is_background(f"{home}/{leaf}"), leaf
+    # skills#350 r1: a lease a run takes in fleet/meta, and a nested file under the wait marks
+    for leaf in ("p9/queue.json", "p9/watchers.json", "p9/wait-marks/nested/x.json.bak",
+                 "fleet/meta/local-heavy.lock", "p9/wait-marks/archive/sample.json",
+                 "fleet/meta/outcomes/deep/x.json", "p9/wait-marks/cc-1.json/x",
+                 "role/other.jsonl", "fleet/hosts.json"):
+        assert not watch.is_background(f"{home}/{leaf}"), leaf
+
+
 # ---------------------------------------------------------------------------
 # the wiring — LiveRunner actually hands the jailed env to the process
 # ---------------------------------------------------------------------------
