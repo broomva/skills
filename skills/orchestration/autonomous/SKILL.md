@@ -91,8 +91,8 @@ The role contract's 10 execution requirements map to bstack primitives. The skil
 | 6. Step-by-step validation | **P11** (empirical feedback) | Log-tails + smoke + screenshots + deploy preview, captured in response |
 | 7. Scoped PRs | **P4** (PR pipeline) | One Linear ticket = one PR; HEREDOC body; test plan included |
 | 8. Publishing/integration | **P4** + **P11** deploy step | Vercel preview screenshot + production verification after merge |
-| 9. All validation passes | **P4** + **P9** (CI watcher) | `p9 watch --background` post-push; never `sleep` |
-| 10. Merge autonomously when green | **P4** + **P9** auto-merge | `p9 auto-merge <pr>` defers to `.control/policy.yaml` gates — **all tiers, including L3 governance, auto-merge when gates pass** (the gates are the trust) |
+| 9. All validation passes | **P4** + **P7** (CI watcher) | `p9 watch --background` post-push; never `sleep` |
+| 10. Merge autonomously when green | **P4** + **P7** auto-merge | `p9 auto-merge <pr>` defers to `.control/policy.yaml` gates — **all tiers, including L3 governance, auto-merge when gates pass** (the gates are the trust) |
 
 ## The bstack-added layer (what this skill provides beyond the prompt)
 
@@ -127,7 +127,7 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
 
    |  | Within session | Across sessions |
    |---|---|---|
-   | **External trigger** | P9 — `p9 watch --background` | P12 — `persist iterate PROMPT.md` |
+   | **External trigger** | P7 — `p9 watch --background` | P12 — `persist iterate PROMPT.md` |
    | **Internal trigger** | **`/goal <condition>`** | **`/loop <interval>`** |
 
    **N>1 plane** (parallel-agent work; the same two axes as bstack §P19):
@@ -139,13 +139,13 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
 
    Decision logic:
    1. Verifiable end state + bounded session + condition <4000 chars → invoke `/goal "<26-reflex-pipeline-completion-condition>"` as the first action; the goal owns the arc
-   2. External completion event blocking (CI green, deploy verified) → P9 `p9 watch <pr> --background`
+   2. External completion event blocking (CI green, deploy verified) → P7 `p9 watch <pr> --background`
    3. Cross-session work that should run unattended, or a fresh-context restart after ≥3 non-converging attempts (P12 trigger 2) → P12 `persist iterate PROMPT.md` (then per-iteration agent runs `/autonomous` under `/goal` for its sub-task). Work paused until a later session gets `PROMPT.md` and a `/handoff`, not a loop.
    4. Time-triggered recurring routine → `/loop`
    5. Independent in-session subtasks with no shared mutable writes → P5, multiple `Agent` calls in one message
    6. Inside the N>1 × across-sessions × external-trigger cell, the tiebreak is the worktree question: each peer needs its own branch and worktree (one plan file per peer: spec sub-phases, multi-crate work) → `bstack wave dispatch <plan...>`; peers coordinate in one worktree, which is one checked-out branch (a triage sweep over open incidents that files tickets, an adversarial reviewer beside the fixer, several read-heavy investigations, one collaborative change on a single branch) → `bstack fleet up <roster.jsonl>` (ships in bstack 0.40.0 under BRO-2454; a roster naming more than one worktree is wave's case, and nothing checks that for you today — keep the roster single-worktree; on an install where `bstack fleet --help` fails, fall back to wave with one plan per peer, which gives each peer its own worktree and branch, so the coordination the fleet case wanted is lost: split until no two plans write the same file, or run the peers one after another). A fleet or wave peer is a session like any other: steps 1, 1c and 1d fire before its first edit. What a peer owns of the rest of the pipeline — the step it stops at and the lane it owns — is set by what its spawner supplies (`bstack fleet up` writes a per-peer brief; `bstack wave dispatch` a plan file; BRO-2454), not by this file; the peer follows its brief, and the default `/goal` condition below is the orchestrator's. In a fleet the shared worktree is neither clean nor prunable while peers occupy it, so the orchestrator runs step 20 after the last peer has exited, and every peer stages by explicit path — never `git add -A` or `git commit -a` in a shared worktree, which would sweep another peer's lane into your commit.
 
-   **Default for `/autonomous` invocation on substantive in-session work** (an orchestrating or solo session; a fleet or wave peer follows its brief instead, per rule 6): set `/goal "26-reflex pipeline complete: final response leads with the handback ask block if anything is open, carries the 9-item receipt, PR merged, git status clean, no unresolved PR comments, no unblocked lane left unrun"`. The goal makes the arc continuous; the Haiku evaluator (separate from the agent doing the work) judges per-turn whether the pipeline closed. Composition: within the goal loop, fire P9 watchers for CI; spawn P5 parallel agents for independent streams.
+   **Default for `/autonomous` invocation on substantive in-session work** (an orchestrating or solo session; a fleet or wave peer follows its brief instead, per rule 6): set `/goal "26-reflex pipeline complete: final response leads with the handback ask block if anything is open, carries the 9-item receipt, PR merged, git status clean, no unresolved PR comments, no unblocked lane left unrun"`. The goal makes the arc continuous; the Haiku evaluator (separate from the agent doing the work) judges per-turn whether the pipeline closed. Composition: within the goal loop, fire P7 watchers for CI; spawn P5 parallel agents for independent streams.
 
    **State the chosen mechanism + 2×2×2 cell in your response.** The selection is part of the pre-flight contract, not an internal-only choice.
 
@@ -200,18 +200,18 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
 
 14. **Smoke tests pass (P11 sub-reflex)** — `make check` / project-specific smoke / `cargo check` / `bun typecheck`. Don't push red.
 15. **Bookkeeping (P6)** — if the session produced graph-relevant material (new concepts, decisions, patterns, names), run `python3 skills/bookkeeping/scripts/bookkeeping.py run` BEFORE committing. Reflexive.
-15.5. **Cross-model adversarial review (P20)** — if the diff is substantive (>200 LOC OR public API change OR multi-file OR governance-class), fire `cross-review pre-push --diff-base origin/main` before push. Auto-detects strata: Codex CLI → Strata A (true cross-vendor), else fresh `Agent` subagent → Strata B; Strata C (composed adversarial-review skills: `superpowers:constructive-dissent`, `devils-advocate`, `pr-review-toolkit:*`, `critique`, `premortem`, `plan-*-review`) always parallel. Anti-slop score ≥7/10 to pass; there is no fixed number of rounds: record each with `cross-review round record-round`, ask `cross-review round budget` before another and follow the status it returns, as the cross-review skill describes; verdict + round ledger logged in PR comment. Self-review by the writing model is forbidden as the *sole* verdict — the same model that wrote the code cannot be the final judge.
+15.5. **Cross-model adversarial review (P20)** — if the diff is substantive (>200 LOC OR public API change OR multi-file OR governance-class), fire `cross-review pre-push --diff-base origin/main` before push. Auto-detects strata: Codex CLI → Strata A (true cross-vendor), else fresh `Agent` subagent → Strata B; Strata C (composed adversarial-review skills: `superpowers:constructive-dissent`, `devils-advocate`, `pr-review-toolkit:*`, `critique`, `premortem`, `plan-*-review`) always parallel. Anti-slop score ≥7/10 to pass; the round budget is dynamic (3 free · 4–7 earned by a continuation verdict · ≥8 human, stops absorbing) — drive it with `cross-review round`; verdict + round ledger logged in PR comment. Self-review by the writing model is forbidden as the *sole* verdict — the same model that wrote the code cannot be the final judge.
 
 ### PR + merge phase
 
 16. **PR push (P4)** — `gh pr create` with Linear ID in body, summary, and test plan. Use `HEREDOC` for clean formatting. Include the cross-review verdict from Step 15.5 in the PR description or as the first comment.
-17. **CI watcher (P9)** — `python3 skills/p9/scripts/p9.py watch <pr> --background` *immediately* after push, same response. Never `sleep` on CI. Pull from `p9 wait-queue pop` while watcher runs.
+17. **CI watcher (P7)** — `python3 skills/p9/scripts/p9.py watch <pr> --background` *immediately* after push, same response. Never `sleep` on CI. Pull from `p9 wait-queue pop` while watcher runs.
 18. **PR comment loop (no primitive — invariant: comments resolved in same session, no silent ignoring)** — when reviewers (human or agent) leave comments, address each by **fix**, **accept-suggestion**, or **reject-with-reason**. The PR comment loop closes in the same session unless explicitly escalated.
-19. **Auto-merge (P4 + P9)** — when CI green and `.control/policy.yaml` allows, `p9 auto-merge <pr>` defers to the control metalayer for authorization. Never `gh pr merge` directly when auto-merge would have applied.
+19. **Auto-merge (P4 + P7)** — when CI green and `.control/policy.yaml` allows, `p9 auto-merge <pr>` defers to the control metalayer for authorization. Never `gh pr merge` directly when auto-merge would have applied.
 
 ### Post-merge
 
-20. **Janitor (P8, P10)** — `make janitor` immediately after merge. Worktree pruned, branch deleted, clean tree. **Concrete test**: `git status` is clean AND `git worktree list` shows no orphans AND the merged branch is gone from both `git branch` and `git branch -r`.
+20. **Janitor (P9, P10)** — `make janitor` immediately after merge. Worktree pruned, branch deleted, clean tree. **Concrete test**: `git status` is clean AND `git worktree list` shows no orphans AND the merged branch is gone from both `git branch` and `git branch -r`.
 
 21. **Dogfood receipt (P11)** — Final response contains the 9-item output contract with multi-modal evidence: screenshot, log snippet, deploy URL, transcript line, or PR diff. The receipt is the cohesion glue — what makes P11's "validate by interacting" durable across the session boundary.
 
@@ -252,7 +252,7 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 | "Skipping validation will be faster" | P11 exists because compile-time success ≠ deploy correctness. Skip = silent corruption. |
 | "I'll add docs after merge" | Docs-after-merge = docs-never. Update BEFORE push, in the same PR. |
 | "The spec has all the sections, so it's done" | Sections are shape. `spec_check.py` decides shape; the rubric decides whether the documented decisions are the expensive ones and whether the alternatives are real. A doc passing all fourteen checks can still be an implementation manual. |
-| "Just sleep until CI finishes" | P9 explicit ban. `p9 watch --background` + pull from wait-queue. |
+| "Just sleep until CI finishes" | P7 explicit ban. `p9 watch --background` + pull from wait-queue. |
 | "User can address PR comments themselves" | No — the agent owns the comment loop in the same session. |
 | "Worktrees are overkill for this little change" | Apply the P10 decision rule honestly. Default *yes* for substantive work. State the exception explicitly if no. |
 | "Bookkeeping can wait until after the PR" | Reflexive trigger. If the session produced graph-relevant material, run BEFORE committing. |
@@ -263,7 +263,7 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 | "User already verified locally, I can skip P11 deploy-time exercise" | Local verification ≠ deploy verification. P11 invariant: "compile-time success is not deploy-time correctness." The user's manual local test is *additional* signal, not a *substitute*. Run P11 on the deployed preview regardless. |
 | "Hotfix / time pressure means I can skip P14 or jump steps" | Time pressure is precisely when the discipline saves you. The fastest path to merged-and-correct goes through every gate; the fastest path to merged-and-broken skips them. There is no fast-and-correct shortcut that bypasses the pipeline. If genuinely emergent, escalate to user with explicit "skipping P14 because X" rationale — never silently skip. |
 | "User has authority / is in a rush, I should defer instead of applying discipline" | The user invoked `/autonomous` precisely to make the discipline non-negotiable. Deferring to authority-pressure is the inverse of what the cardinal rule demands. Apply the discipline; the user's authority operates on *what to build*, not *whether to bypass gates*. |
-| "I'll just return control between reflexes; the user can prompt me to continue" | That's the ritual P19 makes impossible. The autonomous arc is broken by between-reflex handoffs. Pick a mechanism from the 2×2×2 cube (`/goal`, P9 watcher, `/loop`, P12 persist, P5 fanout, `bstack wave dispatch`, `bstack fleet up`) and own the arc. "Continue please" handoffs are the daily-prompt failure mode that birthed this skill. |
+| "I'll just return control between reflexes; the user can prompt me to continue" | That's the ritual P19 makes impossible. The autonomous arc is broken by between-reflex handoffs. Pick a mechanism from the 2×2×2 cube (`/goal`, P7 watcher, `/loop`, P12 persist, P5 fanout, `bstack wave dispatch`, `bstack fleet up`) and own the arc. "Continue please" handoffs are the daily-prompt failure mode that birthed this skill. |
 | "Setting `/goal` is overhead; I'll just do the work and return control naturally" | The "natural" return is the failure mode. `/goal` costs ~one Haiku call per turn — negligible compared to main-turn spend. The arc-closure value massively dominates. Set the goal as pre-flight Step 0. |
 | "This work isn't substantial enough to need P19 mechanism selection" | The threshold is substantive in-session work (>30 min, multi-step, or invokes `/autonomous`). If the work crosses that line, mechanism selection is mandatory. Below it, mechanism selection is optional but rarely wrong to apply. |
 | "I'll switch mechanisms silently when the work shape changes mid-arc" | Mechanism boundary crossings (an in-session goal turns out to need more than one session) must be surfaced. The transition is the discipline — drift is the failure. Stop the `/goal`, write `PROMPT.md`, then spawn `persist iterate` if it continues unattended or hand it off if it pauses; surface the transition. |
@@ -282,7 +282,7 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 | Declaring work done with uncommitted files | "Is everything committed and pushed?" is a question that should never need asking. Pre-push checklist mandatory. | line 107, 111, 269, 432, 990 |
 | Leaving PR comments unaddressed | Other agents' comments require explicit fix/accept/reject in the same session. No silent ignoring. | line 137, 140, 1034 |
 | "I'll wait for the user to merge / I'll just open the PR" | Open ≠ done. Auto-merge when gates pass is the contract; manual merge is the violation. | line 311, 318, 374, 401, 990 (5 instances — meets rule-of-three by a wide margin) |
-| `sleep` on CI wait (the named footgun) | P9 explicit ban. The user wrote an entire paragraph about this on line 994-1004 — that's how this primitive was born. Never sleep; productive-wait via `p9 watch` + queue. | line 994-1004 (the event behind Wait, then numbered P7) |
+| `sleep` on CI wait (the named footgun) | P7 explicit ban. The user wrote an entire paragraph about this on line 994-1004 — that's how this primitive was born. Never sleep; productive-wait via `p9 watch` + queue. | line 994-1004 (the P7-origin event) |
 | Skipping docs updates before push | Docs are part of the PR diff, not a follow-up. Self-evolution protocol requires docs current at push time. | line 107, 217-218, 269, 1034 |
 | Skipping pre-commit hooks | The hooks are the gate. Skipping them via `--no-verify` is a P2 violation. | line 220, 269 |
 | Sequential execution where parallel was possible | "Are we using worktrees and parallel agents?" is the user catching the agent not parallelizing. Default to parallel for independent streams. | line 269-272, 920 |
@@ -330,13 +330,13 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 | 15 | P6 Bookkeeping | pre-push |
 | 15.5 | P20 Cross-Model Adversarial Review Gate | pre-push (substantive PRs only) |
 | 16 | P4 PR Pipeline | PR phase |
-| 17 | P9 CI Watcher | PR phase |
-| 19 | P4 + P9 Auto-merge | merge |
-| 20 | P8 + P10 Janitor | post-merge; in a fleet, orchestrator only — after the last peer has exited |
+| 17 | P7 CI Watcher | PR phase |
+| 19 | P4 + P7 Auto-merge | merge |
+| 20 | P9 + P10 Janitor | post-merge; in a fleet, orchestrator only — after the last peer has exited |
 | 21 | P11 Dogfood receipt | post-merge (response); orchestrator only — a peer's stopping step is set by its brief |
 | 22 | Handback (step 22, `skills/orchestration/handback`) | terminal turn; orchestrator only — a peer follows its brief |
 | — | P2 Control Gate | always active (PreToolUse hook) |
-| — | P7 Skill Freshness | always active (SessionStart hook) |
+| — | P8 Skill Freshness | always active (SessionStart hook) |
 | — | P13 Dream Cycle | invoked when consolidating across tier boundaries |
 | — | P16 Bstack Engine | not invoked per-call — invoked when a NEW pattern recurs ≥3 times |
 
@@ -363,7 +363,7 @@ The **final response** provides the 9-item final summary from the canonical prom
 5. **PRs created** — URL(s); base branch; review state
 6. **Publishing / deployment actions taken** — npm publish, deploy preview URL, prod commit hash (if any)
 7. **Validation and CI/CD results** — test runs, lint, typecheck, build, P11 multi-modal evidence (screenshots, log snippets, browser session transcripts)
-8. **Merge result** — branch merged, branch deleted, worktree pruned (P8, P10); auto-merge gate decision (P4 + P9)
+8. **Merge result** — branch merged, branch deleted, worktree pruned (P9, P10); auto-merge gate decision (P4 + P7)
 9. **Remaining follow-up items** — tickets created, candidates logged in `bstack-engine.md` ledger, knowledge promoted (P6)
 
 > Measurement behind the ordering clause (BRO-2179): of 100 long sessions, **18 halted the arc on a human** and **none of the 18** carried an ask block a person could act on; 5% said what happens if the human stays silent. The broader "31 mention a blocker" figure counts healthy receipts that merely describe something being blocked, and is not the number this contract keys on.
