@@ -12,7 +12,7 @@ This is the canonical scoring rubric for `cross-review` adversarial verdicts. Ev
 | **Failure modes named explicitly** | 2 | What happens on bad input, network fail, race condition, empty state, very large input, concurrent access — surfaced in code or docs, not implicit |
 | **Rerunnable evidence** | 2 | Tests cover the change, and each new check is shown able to fail (a mutation, a replayed real past mistake, a model-checker counterexample); claims rest on commands and output a reviewer can rerun |
 
-**Total: 10 points. PASS at ≥7 AND no dimension at 0. LOOP if <7. After three failed rounds a continuation review decides whether another runs (SKILL.md, round budget).**
+**Total: 10 points. PASS at ≥7 AND no dimension at 0. LOOP if <7. Whether another round may run is `round budget`'s answer (SKILL.md, "The round budget is dynamic").**
 
 ### A zero on any dimension caps the round (BRO-2636)
 
