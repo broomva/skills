@@ -108,6 +108,7 @@ class Init(CorrectCase):
         again = self.run_correct("init")
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertIn("already has a registry", again.stdout)
+        self.assertNotIn("--pack", again.stdout)
         self.assertEqual(tree(self.repo), before)
 
     def test_an_existing_registry_is_never_replaced_even_with_force(self) -> None:
@@ -1126,6 +1127,7 @@ PACK = {
         "canary": {"none": "a test fixture", "ticket": "T-1"},
     }],
 }
+COPY_BY_HAND = "init does not edit a registry that exists: copy what is listed from the pack file by hand"
 LATER = {"pack": "later", "registry_version": 1, "rules": [{
     "id": "later-gap", "rule": "Prove the later thing.", "source": "a test", "level": "gap",
     "ticket": "T-2", "target": {"level": "hook", "mechanism": "a replay"}}]}
@@ -1172,6 +1174,14 @@ class Packs(CorrectCase):
         self.assertTrue(written.startswith(starter))  # the starter and its header, byte for byte
         self.assertIn(b"# Rows from the pack `demo` (pack.yaml)", written)
         self.assertEqual(yaml.safe_load(written)["hooks_not_rules"], PACK["hooks_not_rules"])
+        self.assertIn("correct init: done. The starter rule is installed", proc.stdout)
+
+    def test_a_packs_rows_are_written_in_the_packs_key_order_and_letters(self) -> None:
+        row = dict(PACK["rules"][0], rule="Nunca ejecutes BAD: está prohibido.")
+        proc = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[row]))))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        written = (self.repo / ".control" / "rules.yaml").read_text(encoding="utf-8")
+        self.assertIn("- id: no-bad\n  rule: 'Nunca ejecutes BAD: está prohibido.'\n  source: ", written)
 
     def test_a_packs_rows_are_replayed_not_only_recorded(self) -> None:
         self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
@@ -1204,6 +1214,9 @@ class Packs(CorrectCase):
         self.assertIn("pack   later", proc.stdout)
         self.assertIn("is NOT all in this registry", proc.stdout)
         self.assertIn(f"row(s) missing: {LATER['rules'][0]['id']}", proc.stdout)
+        self.assertIn(COPY_BY_HAND, proc.stdout)
+        # The registry was there from the start, so the runner finds it itself, as `check` does.
+        self.assertIn("correct init: replaying the registry (correct.py check)", proc.stdout)
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
 
     def test_a_registry_that_holds_the_whole_pack_says_so_and_exits_0(self) -> None:
@@ -1213,6 +1226,7 @@ class Packs(CorrectCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("pack   demo: all 1 row(s) are in this registry", proc.stdout)
             self.assertNotIn("NOT all", proc.stdout)
+            self.assertNotIn(COPY_BY_HAND, proc.stdout)
 
     def test_a_hook_command_spaced_another_way_is_the_hook_the_registry_holds(self) -> None:
         """A later copy of a pack respaces a hook's command. The registry holds that hook with
@@ -1259,6 +1273,91 @@ class Packs(CorrectCase):
         proc = self.run_correct("init", "--pack", str(self.pack(neither, "neither.yaml")))
         self.assertEqual(proc.returncode, correct.PACK_NOT_WHOLE, proc.stdout + proc.stderr)
 
+    def starter_only(self) -> Path:
+        """This repository with no other tool's hooks, set up by `init` with no pack."""
+        (self.repo / ".claude" / "settings.json").unlink()
+        self.assertEqual(self.run_correct("init").returncode, 0)
+        return correct.governance_file(self.repo, "rules.yaml")
+
+    def test_a_pack_compared_with_the_starter_registry_lists_its_rows_as_missing(self) -> None:
+        """The ordinary order: `init`, and `init --pack` later. The starter registry has no
+        `hooks_not_rules`, and one edited by hand can hold it as an empty list or as nothing."""
+        registry = self.starter_only()
+        written = registry.read_text()
+        self.assertNotIn("hooks_not_rules", yaml.safe_load(written))
+        for held in ("", "hooks_not_rules: []\n", "hooks_not_rules:\n"):
+            with self.subTest(held=held):
+                registry.write_text(written + held)
+                before = tree(self.repo)
+                proc = self.run_correct("init", "--pack", str(self.pack(LATER, "later.yaml")))
+                self.assertNotIn("Traceback", proc.stderr)
+                self.assertEqual(proc.returncode, correct.PACK_NOT_WHOLE, proc.stdout + proc.stderr)
+                self.assertIn("row(s) missing: later-gap", proc.stdout)
+                # Only what is absent is listed: no line for rows that differ, none for hooks.
+                self.assertNotIn("differ from the pack", proc.stdout)
+                self.assertNotIn("hooks_not_rules missing", proc.stdout)
+                self.assertIn(COPY_BY_HAND, proc.stdout)
+                self.assertIn("PASS     test         registry-completeness", proc.stdout)
+                self.assertEqual(tree(self.repo), before)
+
+    def test_a_replay_that_fails_is_exit_1_whatever_a_pack_lacks(self) -> None:
+        """Exit 3 says the replay passed and a pack is not all there. With a failed row and a
+        missing pack row at once, the status is the replay's."""
+        self.starter_only()
+        (self.repo / ".claude" / "settings.json").write_text('{"hooks": {}}')  # the starter hook's entry, gone
+        proc = self.run_correct("init", "--pack", str(self.pack(LATER, "later.yaml")))
+        self.assertIn("row(s) missing: later-gap", proc.stdout)
+        self.assertIn("not registered", proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def test_one_pack_that_is_all_there_does_not_hide_one_that_is_not(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        there, absent = str(self.pack()), str(self.pack(LATER, "later.yaml"))
+        for order in ((absent, there), (there, absent)):
+            with self.subTest(first=Path(order[0]).name):
+                proc = self.run_correct("init", "--pack", order[0], "--pack", order[1])
+                self.assertIn("pack   demo: all 1 row(s) are in this registry", proc.stdout)
+                self.assertIn("row(s) missing: later-gap", proc.stdout)
+                self.assertEqual(proc.returncode, correct.PACK_NOT_WHOLE, proc.stdout + proc.stderr)
+
+    def test_a_row_with_a_key_more_or_less_or_a_longer_or_shorter_list_differs(self) -> None:
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        row = PACK["rules"][0]
+        for what, other in (("a key the registry's row lacks", dict(row, note="added in a later release")),
+                            ("a key only the registry's row has", {k: v for k, v in row.items() if k != "source"}),
+                            ("a list the registry's begins", dict(row, runs_in=[*row["runs_in"], "ci"])),
+                            ("a list that begins the registry's", dict(row, runs_in=[]))):
+            with self.subTest(what=what):
+                proc = self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[other]), "other.yaml")))
+                self.assertNotIn("Traceback", proc.stderr)
+                self.assertIn(f"row(s) that differ from the pack: {row['id']}", proc.stdout)
+                self.assertEqual(proc.returncode, correct.PACK_NOT_WHOLE, proc.stdout + proc.stderr)
+
+    def test_a_list_of_two_changed_in_one_entry_differs(self) -> None:
+        row = dict(PACK["rules"][0], seen_in=["one place", "another"])
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack(dict(PACK, rules=[row])))).returncode, 0)
+        other = dict(PACK, rules=[dict(row, seen_in=["one place", "a third"])])
+        proc = self.run_correct("init", "--pack", str(self.pack(other, "other.yaml")))
+        self.assertIn(f"row(s) that differ from the pack: {row['id']}", proc.stdout)
+        self.assertEqual(proc.returncode, correct.PACK_NOT_WHOLE, proc.stdout + proc.stderr)
+
+    def test_a_pack_whose_rows_use_the_checked_fields_well_is_accepted(self) -> None:
+        """The shape check refuses a field in the wrong shape; this is the other half, the same
+        fields in the right one: lists of names, a list of occurrences, a list of known misses,
+        and an enforcer that names no registration (a test, not a hook)."""
+        row, gap = PACK["rules"][0], LATER["rules"][0]
+        well = dict(PACK, rules=[
+            dict(row, hosts=["mac", "ci"], occurrences=[{"date": "2026-11-01", "what": "ran BAD"}],
+                 known_misses=[{"why": "BAD spelled another way", "ticket": "T-3",
+                                "event": {"tool_name": "Bash", "tool_input": {"command": "run B-A-D"}}}]),
+            {"id": "a-test", "rule": "The suite runs.", "source": "a test", "level": "test",
+             "enforcer": {"path": "tests/test_demo.py"}},
+            dict(gap, covers_hooks=["notify.sh"])])
+        proc = self.run_correct("init", "--dry-run", "--pack", str(self.pack(well)))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("pack   demo: 3 row(s)", proc.stdout)
+        self.assertIn("correct init: dry run, nothing written.", proc.stdout)
+
     def test_a_registry_whose_row_differs_from_the_pack_is_reported(self) -> None:
         self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
         row = PACK["rules"][0]
@@ -1295,6 +1394,12 @@ class Packs(CorrectCase):
         registry = correct.governance_file(self.repo, "rules.yaml")
         registry.write_text("version: 1\nrules: 42\n")
         self.refused("does not read as a registry", "--pack", str(self.pack()))
+        # With no pack there is nothing to compare, and the refusal is the runner's, as on main.
+        proc = self.run_correct("init")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("must be a mapping with a `rules:` list", proc.stderr)
+        self.assertNotIn("does not read as a registry", proc.stderr)
+        self.assertNotIn("\n\n\n", proc.stdout)  # and no empty report is printed
 
     def test_a_key_given_twice_in_a_pack_is_refused(self) -> None:
         """PyYAML keeps the last of two `rules:` blocks and drops the first without a word."""
@@ -1420,6 +1525,20 @@ class Packs(CorrectCase):
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules=["notify.sh"])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"notify.sh": 3})),
                 ("`rules` is not a list of rows", dict(PACK, rules=["no-bad"])),
+                ("`rules` is not a list of rows", "pack: demo\nregistry_version: 1\nrules: 1\n"),
+                # Every row, not one of them: a first row that is well does not carry a second.
+                ("`rules` is not a list of rows", dict(PACK, rules=[row, {k: v for k, v in row.items() if k != "id"}])),
+                ("`rules` is not a list of rows", dict(PACK, rules=[row, dict(row, id="   ")])),
+                ("`registry_version: True`", dict(PACK, registry_version=True)),
+                ("expected a mapping node", "pack: demo\nregistry_version: 1\nrules: [!!map [a, b]]\n"),
+                ("does not name itself", dict(PACK, pack=7)),
+                ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"   ": "a reason for no script"})),
+                # A key that is a list is read whole before it is refused, and named as it was written.
+                ("the key `['a', 'b']` is not a string", "pack: demo\nregistry_version: 1\nrules: [{id: a, level: gap, [a, b]: x}]\n"),
+                ("the key `['a', 'b']` is not a string", "pack: demo\nregistry_version: 1\nrules: [{id: a, level: gap}]\n[a, b]: x\n"),
+                # A row, or a list in one, that contains itself: refused where the pack is read.
+                ("found unconstructable recursive node", "pack: demo\nregistry_version: 1\nrules:\n- &r {id: a, level: gap, self: *r}\n"),
+                ("found unconstructable recursive node", "pack: demo\nregistry_version: 1\nrules:\n- {id: a, level: gap, notes: &n [*n]}\n"),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"": "a reason for no script"})),
                 ("the key `0` is not a string", "pack: demo\nregistry_version: 1\nrules: []\nhooks_not_rules: {0: a, false: b}\n"),
                 # Shapes the runner reads without looking: written, they stop it with a traceback
@@ -1448,8 +1567,8 @@ class Packs(CorrectCase):
         that is exit 2 with its diagnostic, not a traceback from the comparison."""
         self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
         registry = correct.governance_file(self.repo, "rules.yaml")
-        registry.write_text(registry.read_text().replace("\nrules:\n", "\nrules:\n- a bare word\n", 1))
-        self.assertIn("a bare word", yaml.safe_load(registry.read_text())["rules"])
+        registry.write_text(registry.read_text().replace("\nrules:\n", "\nrules:\n- a bare word\n- id: [1, 2]\n", 1))
+        self.assertEqual(yaml.safe_load(registry.read_text())["rules"][:2], ["a bare word", {"id": [1, 2]}])
         proc = self.run_correct("init", "--pack", str(self.pack()))
         self.assertIn("pack   demo: all 1 row(s) are in this registry", proc.stdout)
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
@@ -1466,7 +1585,8 @@ class Packs(CorrectCase):
             ("`enforcer` is not a mapping", dict(row, enforcer=["scripts/gate.py"])),
             ("`enforcer.registered` is not a mapping", dict(row, enforcer=dict(row["enforcer"], registered=["PreToolUse"]))),
             *[(f"`{key}` is not a list of cases", dict(row, **{key: value}))
-              for key in ("proofs", "controls", "known_misses") for value in ("a case", ["a case"], {"event": {}})],
+              for key in ("proofs", "controls", "known_misses")
+              for value in ("a case", ["a case"], [{"event": {}}, "a case"], {"event": {}})],
             ("`covers_hooks` is not a list of hook names", dict(gap, covers_hooks={"notify.sh": True})),
             ("`covers_hooks` is not a list of hook names", dict(gap, covers_hooks=["notify.sh", 3])),
             ("`target` is not a mapping", dict(gap, target=["hook"])),
@@ -1486,6 +1606,22 @@ class Packs(CorrectCase):
         self.refused("--pack needs a file", "--pack=")
         # `~user` for a user this machine does not have: expanding it raises, before any file is looked for.
         self.refused("is not a path this run can read", "--pack", "~no-such-user-bro4147/pack.yaml")
+
+    def test_a_pack_named_relative_to_the_current_directory_is_said_in_full(self) -> None:
+        proc = self.run_correct("init", "--root", str(self.repo), "--pack", "nowhere.yaml", cwd=self.tmp)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn(f"there is no pack at {self.tmp / 'nowhere.yaml'}", proc.stderr)
+
+    def test_a_pack_path_that_cannot_be_made_is_refused(self) -> None:
+        """A relative path needs the current directory, and a directory that has been removed
+        has no name (FileNotFoundError); `~user` for a user who is not there is RuntimeError."""
+        with unittest.mock.patch("os.getcwd", side_effect=FileNotFoundError(2, "No such file or directory")):
+            with self.assertRaises(correct.Refused) as refusal:
+                correct.pack_path("pack.yaml")
+        self.assertIn("--pack pack.yaml is not a path this run can read", str(refusal.exception))
+        with self.assertRaises(correct.Refused):
+            correct.pack_path("~no-such-user-bro4147/pack.yaml")
+        self.assertEqual(correct.pack_path(str(self.tmp / "pack.yaml")), self.tmp / "pack.yaml")
 
     def test_a_pack_in_a_folder_that_cannot_be_entered_is_refused_not_a_traceback(self) -> None:
         """Looking for the file can itself fail. A review got a traceback and exit 1 on Python
@@ -1653,6 +1789,17 @@ class CheckCanFail(CorrectCase):
 
 
 class Wrapper(CorrectCase):
+    def test_the_users_packages_are_put_on_the_path_once_however_often_pyyaml_is_asked_for(self) -> None:
+        """`python3 -I` leaves the user's packages off the path, and `pip install --user pyyaml`
+        puts PyYAML there. The runner adds that folder; correct.py finds PyYAML the same way."""
+        user = site.getusersitepackages()
+        kept = list(sys.path)
+        self.addCleanup(sys.path.__setitem__, slice(None), kept)
+        sys.path[:] = [entry for entry in kept if entry != user]
+        self.assertIs(correct.yaml_module(), yaml)
+        self.assertIs(correct.yaml_module(), yaml)
+        self.assertEqual(sys.path.count(user), 1, sys.path)
+
     def test_check_outside_a_checkout_exits_2_and_says_what_to_pass(self) -> None:
         proc = self.run_correct("check", cwd=self.tmp)
         self.assertEqual(proc.returncode, 2)

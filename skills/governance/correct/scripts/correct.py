@@ -10,7 +10,7 @@
       is replayed the same way. A repository whose existing gates and hooks have
       no row yet exits 1 and lists them. --pack FILE adds a pack's rows to the
       registry init writes: a pack is the rows that prove hooks some other tool
-      installed (bstack ships one for the hooks `bstack bootstrap` installs).
+      installed, shipped by that tool.
       init installs nothing for a pack; it only records and replays its rows.
       On a repository that already has a registry, --pack changes nothing and
       init says which of the pack's rows that registry holds.
@@ -175,8 +175,9 @@ def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
     replayable(registry)
 
 
-def replayable(registry: Path) -> None:
-    """The file is YAML, and a registry of a version this copy of the skill replays."""
+def replayable(registry: Path) -> dict:
+    """The file is YAML, and a registry of a version this copy of the skill replays. Returns
+    what it read: a mapping."""
     yaml = yaml_module()
     try:
         data = yaml.safe_load(registry.read_text(encoding="utf-8"))
@@ -187,6 +188,7 @@ def replayable(registry: Path) -> None:
         raise Refused(f"{registry} says `version: {version!r}`, and this copy of the skill replays "
                       f"version {' or '.join(map(str, REGISTRY_VERSIONS))}. Update the skill, or correct "
                       "the registry's `version:`.")
+    return data
 
 
 CRASHED = 70
@@ -264,14 +266,14 @@ def pack_loader(yaml):  # noqa: ANN001, ANN201 - the lazily imported module, and
     would lose a block of rows), `0` and `false` are one key to it, and a merge key (`<<`)
     is dropped where a key of the same name follows."""
     class PlainKeys(yaml.SafeLoader):
-        def construct_mapping(self, node, deep=False):  # noqa: ANN001, ANN202
+        def construct_mapping(self, node, deep=True):  # noqa: ANN001, ANN202
             seen: set = set()
             for key_node, _value in (node.value if isinstance(node, yaml.MappingNode) else ()):
                 refuse = None
                 if key_node.tag == "tag:yaml.org,2002:merge":
                     refuse = "a pack does not use merge keys (`<<`); write the keys out"
                 else:
-                    key = self.construct_object(key_node, deep=True)
+                    key = self.construct_object(key_node, deep)
                     if not isinstance(key, str):
                         refuse = f"the key `{key}` is not a string (quote it if a word was meant)"
                     elif key in seen:
@@ -335,7 +337,7 @@ def load_pack(path: Path) -> dict:
     if unknown:
         raise Refused(f"{path} has key(s) a pack does not carry: {', '.join(unknown)} "
                       f"(a pack has {', '.join(sorted(PACK_KEYS))})")
-    if not isinstance(data.get("pack"), str) or not data["pack"].strip():
+    if not isinstance(data.get("pack"), str):
         raise Refused(f"{path} does not name itself (`pack: <name>`)")
     # The name goes into a comment line of the registry, so it is one plain word.
     if not PACK_NAME.fullmatch(data["pack"]):
@@ -355,7 +357,7 @@ def load_pack(path: Path) -> dict:
             raise Refused(f"{path}: the row `{row['id']}` cannot be replayed: {problem}")
     not_rules = data.get("hooks_not_rules", {})
     if not isinstance(not_rules, dict) or not all(
-            isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip() for k, v in not_rules.items()):
+            k.strip() and isinstance(v, str) and v.strip() for k, v in not_rules.items()):
         raise Refused(f"{path}: `hooks_not_rules` is not a mapping of hook script to the reason it enforces no rule")
     return data
 
@@ -364,7 +366,7 @@ def row_shape(row: dict) -> str | None:
     """What is wrong with the shape of a pack row, or None. The fields checked are the ones
     below and no others: `level`, `enforcer` and its `registered`, `proofs`, `controls`,
     `known_misses`, `covers_hooks`, `target`, `hosts`, `occurrences`. With one of these wrong
-    a row does not fail its replay, it stops the runner, and by then init has written the
+    a row does not fail its replay, it can stop the runner, and by then init has written the
     registry. This is not a schema of the registry: a wrong kind of value in any other field,
     or inside a case, still stops the runner, and run_tool then says so. Whether a
     well-shaped row holds is the replay's to say."""
@@ -425,8 +427,6 @@ def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
     pack row value for value, the merged `hooks_not_rules`), before it is returned: what init
     writes is what was asked for, or init refuses."""
     template = (TEMPLATES / "rules.yaml").read_bytes()
-    if not packs:
-        return template
     yaml = yaml_module()
     starter = yaml.safe_load(template)
     ids = [r["id"] for r in starter["rules"]]
@@ -456,20 +456,16 @@ def registry_with_packs(packs: list[tuple[Path, dict]]) -> bytes:
     return text.encode("utf-8")
 
 
-def pack_report(registry: Path, packs: list[tuple[Path, dict]]) -> tuple[list[str], bool]:
-    """What an existing registry holds of each pack: (lines to print, all of every pack present).
+def pack_report(registry: Path, data: dict, packs: list[tuple[Path, dict]]) -> tuple[list[str], bool]:
+    """What an existing registry, read by the caller as `data`, holds of each pack: (lines to
+    print, all of every pack present).
 
     init never edits a registry that exists, so a pack that came later, or a newer copy of one,
     is not in it. Saying nothing would leave two silent states: hooks no row owns (the replay
     names those) and rows the tool has since added for hooks already owned (nothing names
     those). A row counts as present when the registry has a row with its id and the same
     content; a `hooks_not_rules` entry when the registry has the script with the same reason."""
-    yaml = yaml_module()
-    try:
-        data = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError):
-        data = None
-    rules = data.get("rules") if isinstance(data, dict) else None
+    rules = data.get("rules")
     if not isinstance(rules, list):
         # Not a failed row: nothing was replayed. The command could not run on this file.
         raise Refused(f"{registry} does not read as a registry (a mapping whose `rules` is a list); "
@@ -732,13 +728,13 @@ def replay(root: Path, wrote: bool, registry: Path | None = None) -> int:
     return status
 
 
-def on_registry(root: Path, registry: Path, packs: list[tuple[Path, dict]], named: bool = False) -> int:
-    """init on a registry that is there, which the caller has read: compare it with the packs,
-    replay it, write nothing. With `named` (after a collision) the runner is told this file's
-    name; without, it finds the repository's registry itself, as `check` does."""
+def on_registry(root: Path, registry: Path, data: dict, packs: list[tuple[Path, dict]], named: bool = False) -> int:
+    """init on a registry that is there, which the caller has read as `data`: compare it with
+    the packs, replay it, write nothing. With `named` (after a collision) the runner is told
+    this file's name; without, it finds the repository's registry itself, as `check` does."""
     whole = True
     if packs:
-        lines, whole = pack_report(registry, packs)
+        lines, whole = pack_report(registry, data, packs)
         print("\n".join(lines))
     status = replay(root, wrote=False, registry=registry if named else None)
     # A replay that passes with a pack row absent is not the state the caller asked for.
@@ -768,8 +764,8 @@ def init(root: Path, args: list[str]) -> int:
               "registry. Nothing written."
               + (" A pack is added only to a registry init writes, so --pack changes nothing here."
                  if packs else ""))
-        need_registry(root, [])  # first: a registry this skill does not read is compared with no pack
-        return on_registry(root, registry, packs)
+        # Read first: a registry this skill does not read is compared with no pack.
+        return on_registry(root, registry, replayable(registry), packs)
 
     try:
         writes, kept, conflicts = plan(root, packs)
@@ -822,8 +818,7 @@ def init(root: Path, args: list[str]) -> int:
                 raise Refused(f"there is no regular file at {name}.") from why
             # This file, at this name, from here on: read here, and the runner is told its name
             # (another governance folder may hold a registry too).
-            replayable(target)
-            return on_registry(root, target, packs, named=True)
+            return on_registry(root, target, replayable(target), packs, named=True)
         except OSError as exc:
             raise Refused(f"could not write {path.relative_to(root)} ({exc}). Written before it: "
                           f"{', '.join(done) or 'nothing'}. The registry is written last and was not "
@@ -831,12 +826,13 @@ def init(root: Path, args: list[str]) -> int:
                           ) from exc
         done.append(str(path.relative_to(root)))
         say_left(path.parent.relative_to(root), left)
-    # Said here, before the replay, and flushed: a caller that stops a slow replay must already
-    # have been told. It says what init did, not what the harness will do: settings can keep
-    # the harness from running the hook (disableAllHooks), and the replay is what finds that.
+    # Said here, before the replay (run_tool flushes what was printed before it starts the
+    # runner): a caller that stops a slow replay must already have been told. It says what
+    # init did, not what the harness will do: settings can keep the harness from running the
+    # hook (disableAllHooks), and the replay is what finds that.
     print("correct init: the starter rule's hook is written and registered in this repository's settings. "
           "Where the harness runs it, an edit on main or master in this repository is refused; work on a "
-          "branch. The replay below checks the registration.", flush=True)
+          "branch. The replay below checks the registration.")
     return replay(root, wrote=True)
 
 

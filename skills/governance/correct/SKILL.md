@@ -75,16 +75,19 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   is the rows that prove hooks some other tool installed, shipped by that tool
   (`pack`, `registry_version`, `rules`, and `hooks_not_rules` for its hooks that
   enforce nothing). A pack is plain data: every key is a string, given once, and
-  written out (a merge key, `<<`, is refused). Before anything is written `init`
-  checks the shape of these fields of each row, and no others: `level`, `enforcer`
+  written out (a merge key, `<<`, is refused, and so is a value that contains
+  itself). Before anything is written `init` checks that every row has an `id`
+  that is a string and not blank, and the shape of these fields of each row, and
+  no others: `level`, `enforcer`
   and its `registered`, `target`, `proofs`, `controls`, `known_misses`,
   `covers_hooks`, `hosts`, `occurrences` (a field written and left empty counts as
   wrong). A wrong kind of value anywhere else in a row is not looked for. It
   can stop the runner, or a later command such as `check --markdown`, after the
   registry is written: `correct.py` then exits 2 and says that the tool stopped. It prescribes no repair. `init` never rewrites a
   registry that exists, so such a row stays in the registry until it is corrected
-  there; a registry may hold rows of your own, which deleting it would lose. bstack ships one for the hooks `bstack bootstrap` installs,
-  and bootstrap passes it. `init` installs nothing for a pack: it records the rows
+  there; a registry may hold rows of your own, which deleting it would lose. The
+  tool that installs the hooks ships the pack and passes it to `init`. `init`
+  installs nothing for a pack: it records the rows
   after the starter's and replays them. A file that is not a pack, and packs that
   disagree with each other, are refused with nothing written, whether or not a
   registry exists. A pack row with the starter row's id is refused when `init`
