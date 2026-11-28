@@ -599,6 +599,25 @@ def test_documents_finding_rejects_a_write_to_a_non_document_path():
     assert fn(doc).passed is True
 
 
+def test_a_document_that_mentions_the_skills_path_still_counts():
+    """BRO-4220: three live real-trace-03 trials wrote a correct handoff whose content
+    named `.claude/skills/<skill>` (the only thing in the case workspace). The write was
+    excluded as "aimed at the skill" and documents_finding failed a correct run."""
+    fn = checks_mod.CHECK_REGISTRY["documents_finding"]
+    body = "State: the workspace holds only .claude/skills/demo/SKILL.md; branch unknown."
+    wrote = ctx_for(ndjson(ev_init(),
+                           ev_tool_use("Write", {"file_path": "/tmp/ws/docs/handoffs/2026-11-27-x.md",
+                                                 "content": body}),
+                           ev_result(BLAND)))
+    assert fn(wrote).passed is True
+    # a write INTO the skill's own copy is still not evidence
+    into = ctx_for(ndjson(ev_init(),
+                          ev_tool_use("Write", {"file_path": "/tmp/ws/.claude/skills/demo/notes.md",
+                                                "content": "x"}),
+                          ev_result(BLAND)))
+    assert fn(into).passed is False
+
+
 def test_reading_the_skills_own_file_never_counts_as_ingesting_the_artifact():
     """Resolves the contradiction: this exact Read is what DEFINES the RECOVERED leak."""
     stream = ndjson(ev_init(),

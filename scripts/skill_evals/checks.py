@@ -182,7 +182,12 @@ def _candidate_tool_uses(ctx: CheckContext) -> list["ToolUse"]:
     for tu in ctx.transcript.tool_uses():
         if not ctx.transcript.executed(tu):
             continue
-        blob = json.dumps(tu.input, ensure_ascii=False)
+        # A write is judged by WHERE it writes. Its content may quote the skill's own
+        # path: a handoff written in a workspace that holds nothing but the skill says
+        # so, and that excluded every correct handoff from documents_finding (BRO-4220,
+        # three live trials of real-trace-03). Writing about the skill is not reading it.
+        aimed_at = _target(tu) if tu.name in _WRITE_TOOLS else tu.input
+        blob = json.dumps(aimed_at, ensure_ascii=False)
         if refers_to_skill_content(ctx.skill, blob, ctx.workspace):
             continue
         out.append(tu)

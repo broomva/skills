@@ -1,6 +1,6 @@
 {
   "graded_trials_total": 301,
-  "recorded_at_sweep": "2026-09-27",
+  "recorded_at_sweep": "2026-11-27",
   "skills": {
     "autonomous": {
       "errors": 0,
@@ -55,9 +55,9 @@
         "passes": 18,
         "trials": 18
       },
-      "passes": 38,
+      "passes": 50,
       "positive": {
-        "passes": 20,
+        "passes": 32,
         "trials": 33
       },
       "trials": 51
