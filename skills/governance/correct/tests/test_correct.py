@@ -1418,6 +1418,8 @@ class Packs(CorrectCase):
                 ("`rules` is not a list of rows", dict(PACK, rules={"no-bad": row})),
                 ("`rules` is not a list of rows", dict(PACK, rules=[{k: v for k, v in row.items() if k != "id"}])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules=["notify.sh"])),
+                ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"notify.sh": 3})),
+                ("`rules` is not a list of rows", dict(PACK, rules=["no-bad"])),
                 ("`hooks_not_rules` is not a mapping", dict(PACK, hooks_not_rules={"": "a reason for no script"})),
                 ("the key `0` is not a string", "pack: demo\nregistry_version: 1\nrules: []\nhooks_not_rules: {0: a, false: b}\n"),
                 # Shapes the runner reads without looking: written, they stop it with a traceback
@@ -1439,6 +1441,19 @@ class Packs(CorrectCase):
                 ("the row id `branch-first` is the id of a row of the starter registry", dict(PACK, rules=[dict(row, id="branch-first")])),
         ):
             self.refused(needle, "--pack", str(self.pack(data)))
+
+    def test_a_registry_row_that_is_no_mapping_does_not_stop_the_comparison(self) -> None:
+        """A registry edited by hand holds an entry under `rules:` that is a bare word. Comparing
+        a pack with it skips that entry; the runner, which has no schema, then stops on it, and
+        that is exit 2 with its diagnostic, not a traceback from the comparison."""
+        self.assertEqual(self.run_correct("init", "--pack", str(self.pack())).returncode, 0)
+        registry = correct.governance_file(self.repo, "rules.yaml")
+        registry.write_text(registry.read_text().replace("\nrules:\n", "\nrules:\n- a bare word\n", 1))
+        self.assertIn("a bare word", yaml.safe_load(registry.read_text())["rules"])
+        proc = self.run_correct("init", "--pack", str(self.pack()))
+        self.assertIn("pack   demo: all 1 row(s) are in this registry", proc.stdout)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("rules_check.py stopped on an error it does not handle", proc.stderr)
 
     def test_each_condition_of_the_row_shape_check_refuses_a_pack_on_its_own(self) -> None:
         """One pack for each condition `row_shape` tests, so that taking any one of them out is
